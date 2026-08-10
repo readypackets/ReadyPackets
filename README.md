@@ -4,6 +4,13 @@ A self-hosted customer website and customer portal for ReadyPackets, built as a 
 
 The application is designed for a small VPS or a Docker host. It requires nothing beyond Node.js, MySQL, and a reverse proxy. There are no third-party analytics scripts, no CDN dependencies, no external font hosts, no software-as-a-service integrations, and no platform-specific runtime hooks of any kind. Payment capture through Stripe and outbound email through SMTP are both optional and disabled until credentials are supplied.
 
+> **Deployed instance.** This application is running in production at
+> <https://myportal.readypackets.com>, installed with `deploy/install.sh` on a
+> two-core Ubuntu 22.04 VPS behind nginx with a Let's Encrypt certificate. That
+> deployment is the reference for the instructions below: every step here has been
+> executed on a clean host rather than described from intention. See section 11 of
+> `SESSION_LOG.md` for what a first real installation exposed.
+
 ## What the system does
 
 The portal implements the ReadyPackets delivery model: a customer selects one or more packets from the product catalogue, completes a structured Phase I intake questionnaire, and receives a synthesised deliverable set through a controlled download channel. Eight packet groups are represented, including the institutional Capital and Valuation packet that is not published on the public catalogue, and the All-In bundle rule that applies a fifteen percent discount once a selection spans six or more distinct packet groups.
@@ -92,7 +99,7 @@ Because host validation is strict, requests must present the configured hostname
 Two independent suites run against the code and against the running service.
 
 ```bash
-pnpm exec vitest run                                   # 106 unit tests
+pnpm exec vitest run                                   # 112 unit tests
 pnpm exec tsx scripts/verify-security.ts               # 46 live security checks
 pnpm exec tsc --noEmit                                 # type check
 ```

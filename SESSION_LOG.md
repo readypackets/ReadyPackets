@@ -194,7 +194,7 @@ Three gates, all passing, all reproducible:
 
 ```bash
 pnpm exec tsc --noEmit                      # 0 errors
-pnpm exec vitest run                        # 106 passed
+pnpm exec vitest run                        # 112 passed
 pnpm exec tsx scripts/verify-security.ts    # 46/46 passed
 ```
 
@@ -214,7 +214,7 @@ A CI workflow runs all three gates on every push, provisioning MySQL as a servic
 | Security | Nonce CSP with no `unsafe-*`, three-layer CSRF, `__Host-` cookies, Argon2id, mandatory administrative MFA, AES-256-GCM with row binding and blind indexes, six-category rate limiting, magic-byte upload validation, single-use download tickets, dual audit trails |
 | Deployment | Four-stage Dockerfile, hardened docker-compose, nginx site, systemd unit with syscall filtering, idempotent VPS installer, backup and restore with checksums and a safety dump, log rotation, nightly backup timer |
 | Documentation | README, architecture, security, deployment, administrator guide, customer guide, gap analysis response, this session log |
-| Verification | 106 unit tests, 46 live security checks, CI workflow, plus a full browser walkthrough of all three surfaces |
+| Verification | 112 unit tests, 46 live security checks, CI workflow, plus a full browser walkthrough of all three surfaces |
 
 ---
 
@@ -243,6 +243,73 @@ The **accessibility position should be confirmed by audit** rather than by const
 **Load behaviour should be measured** on the target VPS. Argon2id at 64 MB per verification is the binding constraint under a login burst, and knowing the actual ceiling is better than inferring it.
 
 Finally, **the audit logs should be read weekly**, and a restore should be tested quarterly. The system generates good evidence and takes good backups; both are worthless unattended.
+
+---
+
+## 11. Permanent deployment to production
+
+### 11.1 Request
+
+> Turn it into a permanent website.
+
+A remote persistent virtual machine was attached to the session at the same time. The request was interpreted as deploying the application to that machine so it continues serving after the session ends, rather than as extending the temporary preview.
+
+### 11.2 Hostname decision
+
+The application validates the `Host` header and scopes cookies and origin checks to a single hostname, so the domain could not be deferred. Two options were put to the operator: a real domain with a Let's Encrypt certificate, or the bare address over plain HTTP with a documented upgrade path. The operator chose `myportal.readypackets.com` and created the A record, which was already resolving on both public resolvers by the time deployment began, so the site went straight to HTTPS without an interim insecure phase.
+
+### 11.3 Host preparation
+
+The instance is Ubuntu 22.04 with two virtual cores, 958 MB of memory, and no swap. That is not enough for MySQL and Node concurrently, so a 2 GB swap file was added with a reduced swappiness, and MySQL was tuned down to a 192 MB buffer pool with reduced connection and log buffers. Without both changes the out-of-memory killer would eventually have reaped one of the two processes, which on a 1 GB instance is a matter of when rather than whether. The recommendation to the operator is a 4 GB instance if the site takes real traffic; the tuning makes the small instance genuinely workable rather than merely bootable.
+
+Source was transferred as a signed archive of the committed tree rather than by cloning, because that keeps GitHub credentials off the production host, and because deploying from the committed tree rather than the working directory is the only way to discover packaging defects. It found three.
+
+### 11.4 Defects found by deploying from the repository
+
+Eleven further defects surfaced during this phase, none of which could have been found any other way. They are recorded individually because the pattern matters more than any single instance: **every one of them was invisible in development and fatal, or nearly so, on a fresh host.**
+
+| # | Defect | Consequence if shipped |
+| --- | --- | --- |
+| 1 | `.gitignore` excluded `*.sql`, which swallowed the schema migration | The repository could not create its own database. A clone produced a complete application with no way to build its 72 tables. |
+| 2 | Installer granted database privileges to `user@localhost` but connected to `127.0.0.1` | MySQL treats those as different hosts, so the grant never matched. Migrations failed with access denied on every clean install. |
+| 3 | Seed data resolved relative to the script's own directory, and was not copied beside the bundle | Fresh installs created empty tables: no catalogue, no policies, no MNDA. |
+| 4 | nginx config used `http2 on;`, valid only from nginx 1.25 | On Ubuntu 22.04's nginx 1.18 the entire configuration failed to load, and nginx silently kept its previous config — which is why the site appeared to work while serving the wrong thing. |
+| 5 | Installer ran certbot after writing a config that referenced a certificate not yet issued | Certificate provisioning failed, and the failure was masked by defect 4. |
+| 6 | Installer reset the firewall after opening ports for the ACME challenge | Ordering hazard that would have closed port 80 mid-provisioning. |
+| 7 | Host allowlist templating used an escaped-regex pattern that the substitution could not match | nginx rejected the very hostname it was configured to serve, returning 421 for all traffic. Fixing it exposed two further faults in the same substitution: a sequential-overlap collision producing `mymyportal`, and `sed` consuming the backslashes so the dots stopped being literal. |
+| 8 | The installer's own guard used an unanchored pattern | It matched the correctly substituted hostname and rejected a valid configuration. |
+| 9 | Backup unit declared `ReadWritePaths` on a directory nothing created | systemd failed the unit at namespace setup, before `ExecStart`. Nightly backups would have produced nothing, and the only evidence would have been a journal entry nobody reads until a restore. |
+| 10 | `mysqldump --events --routines` required privileges the application user deliberately lacks | The dump aborted. Resolved by removing the flags rather than widening the grant: the schema has no events and no stored procedures, so the flags requested privileges in order to dump objects that do not exist. |
+| 11 | Backup manifest read `schema_migrations.name`; the column is `filename` | Every archive recorded its schema version as "unknown" — precisely the field needed during a restore. |
+
+The installer now runs one backup during installation and reports the artefact, on the principle that an untested backup is not a backup, and that installation is a better time to discover this than a restore.
+
+### 11.5 Findings from the live security suite
+
+Running the suite against the real HTTPS deployment rather than a loopback development server produced three more results.
+
+The **`Server: nginx` header** was a genuine finding. The application strips its own identifying headers, but the proxy then added its own on the way out, and `server_tokens off` removes only the version. It is now cleared with `more_clear_headers`, which requires the headers-more module; since an unknown directive is fatal to the whole configuration, the installer substitutes it only when nginx actually has the module.
+
+**Duplicate HSTS** was a subtler problem. Both nginx and the application asserted `Strict-Transport-Security`, so every response carried two identical copies. Neither was wrong, which is why nothing caught it until a response was inspected on a real proxied deployment. Browsers disagree on how to treat duplicates, and ambiguity is a poor property for a security header, so the application now suppresses its own copy when it detects a proxy in front.
+
+The **host-validation failure was the test's fault**, and worth recording as such. The probe fetched the base URL and expected rejection, which holds only when that URL is a loopback address the server does not serve. Against a real domain the base URL *is* the canonical hostname, so a 200 was the correct answer and a healthy deployment failed its own check. A false negative that trains an operator to ignore the suite is worse than no check, so the probe now sends a hostname the deployment does not serve, and reports an unreachable server as a failure rather than banking it as a pass. Real host-header poisoning was confirmed independently to be refused.
+
+A final cosmetic defect was caught by looking at the live homepage: the hero read "From —" on every cold load, because reducing an empty array with an infinite seed returns infinity, and the catalogue is empty on the first paint. The page therefore contradicted the cards directly beneath it, which already showed the correct entry price. The loading state is now distinguished from a genuinely priceless catalogue. The adjacent "7 packet groups" figure was hardcoded and is now derived from the same query, so an administrator adding an eighth group does not have to edit code for the headline to agree with the catalogue.
+
+### 11.6 Production state
+
+| Property | Value |
+| --- | --- |
+| URL | `https://myportal.readypackets.com` |
+| TLS | Let's Encrypt, TLS 1.3, `TLS_AES_256_GCM_SHA384`, HTTP/2, HTTP redirecting to HTTPS, automatic renewal verified by dry run |
+| Application | Loopback-bound on port 8080, reachable only through nginx; port 8080 and 3306 are not exposed |
+| Firewall | 22, 80, 443 only; fail2ban on SSH and nginx authentication |
+| Persistence | All services enabled at boot; nightly backup timer armed and verified by a real run |
+| Verification | 46/46 live security checks against the production HTTPS site; 112 unit tests; type check clean |
+
+An `AGENTS.md` operations record was written to the machine documenting every system-level change, the deployment procedure, and the cautions specific to this application — particularly that the encryption and index keys are not recoverable, and that backup archives contain them and are therefore equivalent to the customer database in plaintext.
+
+Mandatory administrative MFA was confirmed working in production: the portal refuses to reach the administrative surface until an authenticator is enrolled. Enrolment was deliberately left to the operator so the second factor belongs to them.
 
 ---
 

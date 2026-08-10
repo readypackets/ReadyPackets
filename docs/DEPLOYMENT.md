@@ -21,6 +21,41 @@ Memory is the binding constraint rather than CPU, because Argon2id is deliberate
 
 Before starting, point an A record (and an AAAA record if you have IPv6) at the server, and confirm that ports 80 and 443 are reachable. Certificate issuance depends on it.
 
+### Running on a 1 GB host
+
+The reference deployment runs on a 1 GB instance, which is below the stated minimum and works only because two adjustments were made first. Both are necessary rather than advisable: without them the kernel's out-of-memory killer will eventually reap either MySQL or the application, and on a 1 GB host that is a question of when rather than whether.
+
+```bash
+# Swap, since a 1 GB instance typically ships with none.
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-readypackets.conf
+
+# MySQL sized for the host rather than for the defaults, which assume a far larger machine.
+sudo tee /etc/mysql/mysql.conf.d/99-readypackets.cnf >/dev/null <<'CNF'
+[mysqld]
+innodb_buffer_pool_size = 192M
+innodb_log_buffer_size  = 8M
+max_connections         = 40
+bind-address            = 127.0.0.1
+CNF
+sudo systemctl restart mysql
+```
+
+A 1 GB host is adequate for evaluation and light production. Move to 4 GB before a launch or a marketing push.
+
+### Ubuntu 22.04 and nginx 1.18
+
+Ubuntu 22.04 ships nginx 1.18, which predates the `http2 on;` directive. The supplied configuration uses the `listen ... http2` form, which is valid on both 1.18 and 1.25 or later, so no change is needed. What does matter is that **nginx keeps its last valid configuration when a reload fails**, so a configuration error can leave the previous version serving while appearing to have applied. Always confirm a reload took effect rather than trusting its exit status:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+curl -sI https://your.domain/ | head -1   # confirm the new behaviour is live
+```
+
+The installer also depends on `nginx-extras` for the headers-more module, which removes the `Server` header. On a base nginx install the header remains; the site still works, and the installer detects this rather than emitting a directive that would fail the whole configuration.
+
 ## Option A: VPS with systemd
 
 The installer is the supported path. It is idempotent, so it is safe to re-run after a configuration change or an upgrade.
@@ -28,8 +63,11 @@ The installer is the supported path. It is idempotent, so it is safe to re-run a
 ```bash
 git clone <repository-url> readypackets
 cd readypackets
-sudo ./deploy/install.sh --domain portal.readypackets.com --email ops@readypackets.com --tls
+sudo COREPACK_ENABLE_DOWNLOAD_PROMPT=0 ./deploy/install.sh \
+  --domain portal.readypackets.com --email ops@readypackets.com --tls
 ```
+
+The `COREPACK_ENABLE_DOWNLOAD_PROMPT=0` prefix is not optional in an unattended run. Without it corepack prompts for confirmation before fetching pnpm, and the installer blocks on standard input with no indication of why.
 
 The installer performs the following, in order:
 
@@ -45,7 +83,8 @@ The installer performs the following, in order:
 10. Configures `ufw` to allow only SSH, 80, and 443. **Port 3000 is never opened**; the application is reachable only through the proxy.
 11. Configures fail2ban for SSH and for nginx rate-limit violations.
 12. Installs log rotation and the nightly backup timer.
-13. Verifies that the service is active and the readiness probe succeeds.
+13. Runs one backup immediately and reports the artefact, because an untested backup is not a backup, and installation is a better time to discover a broken one than a restore.
+14. Verifies that the service is active and the readiness probe succeeds.
 
 ### Create the first administrator
 
@@ -56,6 +95,8 @@ sudo runuser -u readypackets -- \
 ```
 
 The command prints a generated password once. Sign in, then **enrol multi-factor authentication immediately** — administrative procedures require a satisfied factor challenge, so until enrolment completes the account can reach only the enrolment flow.
+
+Two practical notes. The script accepts `--generate-password`, which is preferable to `--password`, since a password on the command line lands in shell history. And if the account is created before `EMAIL_INDEX_KEY` is set in the environment, its email blind index is computed under a different key and the account becomes **unfindable at sign-in** — not insecure, but unreachable. Always create administrators using the same environment the service runs with, exactly as above.
 
 ### Installer options
 
