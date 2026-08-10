@@ -293,14 +293,73 @@ async function checkAuthorisation(): Promise<void> {
 
 async function checkHostValidation(): Promise<void> {
   console.log("\nHost header validation");
-  // Addressed to the loopback socket without the canonical hostname, which is
-  // how a host-header poisoning attempt or a stray scanner appears.
-  const response = await fetch(`${BASE}/api/health`, { redirect: "manual" });
+
+  // The probe has to present a hostname the deployment does not serve. Fetching
+  // BASE unmodified only achieves that when BASE is a loopback address, which is
+  // not a served hostname; against a real domain BASE *is* the canonical host, so
+  // 200 is the correct response and this check would fail on a healthy site.
+  const isLoopback =
+    target.hostname === "127.0.0.1" ||
+    target.hostname === "::1" ||
+    target.hostname === "localhost";
+
+  let status: number;
+  let how: string;
+
+  if (isLoopback) {
+    // Addressed to the loopback socket without the canonical hostname, which is
+    // how a host-header poisoning attempt or a stray scanner appears.
+    status = (await fetch(`${BASE}/api/health`, { redirect: "manual" })).status;
+    how = "loopback address as Host";
+  } else {
+    // fetch() refuses to set Host, so the request is issued through the standard
+    // library, which does allow it. No extra dependency: http/https are built in.
+    // TLS verification is off for this one probe because the certificate quite
+    // correctly does not cover the bogus name -- that is what is being tested.
+    how = "unserved hostname in the Host header";
+    const isHttps = target.protocol === "https:";
+    const { request: nodeRequest } = await import(isHttps ? "node:https" : "node:http");
+
+    try {
+      status = await new Promise<number>((resolve, reject) => {
+        const probe = nodeRequest(
+          {
+            host: target.hostname,
+            port: target.port || (isHttps ? 443 : 80),
+            path: "/api/health",
+            method: "GET",
+            headers: { Host: "not-a-served-host.example" },
+            servername: target.hostname,
+            rejectUnauthorized: false,
+            timeout: 15_000,
+          },
+          (response: import("node:http").IncomingMessage) => {
+            response.resume();
+            resolve(response.statusCode ?? 0);
+          },
+        );
+        probe.on("timeout", () => probe.destroy(new Error("timed out")));
+        probe.on("error", reject);
+        probe.end();
+      });
+    } catch (error) {
+      // A refused connection is not the application rejecting the host, so it is
+      // reported rather than quietly counted as a pass.
+      record(
+        "host",
+        "Unrecognised Host header is refused",
+        false,
+        `Probe could not reach the server (${how}): ${(error as Error).message}`,
+      );
+      return;
+    }
+  }
+
   record(
     "host",
     "Unrecognised Host header is refused",
-    response.status === 421 || response.status === 400,
-    `Expected 421, received ${response.status}.`,
+    status === 421 || status === 400 || status === 404,
+    `Expected 421/400/404 via ${how}, received ${status}.`,
   );
 }
 

@@ -75,7 +75,7 @@ if [[ "$SKIP_PACKAGES" == "false" ]]; then
   apt-get update -qq
   apt-get install -y --no-install-recommends \
     ca-certificates curl gnupg git build-essential python3 \
-    mysql-server nginx ufw fail2ban unzip
+    mysql-server nginx nginx-extras ufw fail2ban unzip
 
   if ! command -v node >/dev/null 2>&1 || \
      [[ "$(node --version | sed 's/v\([0-9]*\).*/\1/')" -lt "$NODE_MAJOR" ]]; then
@@ -356,8 +356,19 @@ write_hardened_site() {
   # character, but it would accept "myportalXreadypackets.com" too. Doubling them
   # means one backslash survives into the file.
   local host_regex="${DOMAIN//./\\\\.}"
+
+  # `more_clear_headers` comes from the headers-more module, present in
+  # nginx-extras but not in the base nginx package. Emitting the directive
+  # unconditionally would make the whole configuration fail to load on a stock
+  # install, so it is enabled only when nginx actually has the module.
+  local clear_headers="# headers-more module not installed; \"Server: nginx\" is still sent."
+  if nginx -V 2>&1 | grep -q 'headers-more'; then
+    clear_headers="more_clear_headers 'Server';"
+  fi
+
   sed -e "s/portal\.readypackets\.com/${DOMAIN}/g" \
       -e "s/__RP_HOST_REGEX__/${host_regex}/g" \
+      -e "s|# __RP_MORE_CLEAR_HEADERS__|${clear_headers}|g" \
       "${APP_DIR}/deploy/nginx.conf" > "$NGINX_SITE"
 
   if grep -q '__RP_' "$NGINX_SITE"; then
