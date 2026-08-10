@@ -1,0 +1,14 @@
+[Unit]
+Description=Run the ReadyPackets Portal backup nightly
+Documentation=file:/opt/readypackets/docs/DEPLOYMENT.md
+
+[Timer]
+# 02:30 local time, with a spread so several hosts do not dump simultaneously.
+OnCalendar=*-*-* 02:30:00
+RandomizedDelaySec=900
+# If the machine was powered off at the scheduled time, run on next boot.
+Persistent=true
+Unit=readypackets-backup.service
+
+[Install]
+WantedBy=timers.target

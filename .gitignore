@@ -1,0 +1,43 @@
+# Dependencies and build output
+node_modules/
+dist/
+client/dist/
+*.tsbuildinfo
+
+# Local runtime state: uploaded files, coverage, caches
+var/
+coverage/
+.vite/
+
+# Secrets. The example file is committed; a real environment file never is.
+.env
+.env.*
+!.env.example
+
+# TLS material
+deploy/tls/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Backups may contain the encryption key and the full customer database
+*.sql
+*.sql.gz
+*.tar.gz
+*.age
+*.gpg
+backups/
+
+# Logs
+*.log
+logs/
+
+# Editor and OS noise
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

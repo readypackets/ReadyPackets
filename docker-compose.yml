@@ -1,0 +1,164 @@
+# ReadyPackets Portal — container deployment
+#
+# Two services: the application and MySQL. Nothing else is required, and no
+# third-party service is contacted at any point.
+#
+# Hardening applied to every container:
+#   * unprivileged user, no new privileges
+#   * read-only root filesystem with explicit tmpfs for the few writable paths
+#   * all Linux capabilities dropped
+#   * the database port is never published to the host
+#   * the application listens only on the internal network; the reverse proxy
+#     on the host (or the optional proxy profile) terminates TLS
+#
+# Quick start:
+#   cp .env.example .env      # then fill in the secrets
+#   docker compose up -d
+#   docker compose exec app node dist/migrate.js
+#   docker compose exec app node dist/seed.js
+#   docker compose exec app node dist/create-admin.js --email you@example.com
+
+name: readypackets
+
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=caching_sha2_password
+      # Binary logging is not needed for a single-node install and doubles the
+      # write volume; point-in-time recovery is provided by scheduled dumps.
+      - --skip-log-bin
+      - --max-connections=100
+      - --innodb-buffer-pool-size=512M
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-readypackets}
+      MYSQL_USER: ${MYSQL_USER:-readypackets}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set in .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be set in .env}
+    volumes:
+      - db-data:/var/lib/mysql
+    networks:
+      - internal
+    # Deliberately not published: the database is reachable only from the
+    # application container.
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mysqladmin ping -h 127.0.0.1 -u root -p"$$MYSQL_ROOT_PASSWORD" --silent
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      # Binds to all interfaces inside the container only; the port is exposed
+      # to the host on loopback, so the internet cannot reach it directly.
+      BIND_HOST: 0.0.0.0
+      APP_URL: ${APP_URL:?APP_URL must be set in .env}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      DATABASE_URL: mysql://${MYSQL_USER:-readypackets}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-readypackets}
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET must be set in .env}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?DATA_ENCRYPTION_KEY must be set in .env}
+      EMAIL_INDEX_KEY: ${EMAIL_INDEX_KEY:?EMAIL_INDEX_KEY must be set in .env}
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
+      BEHIND_CLOUDFLARE: ${BEHIND_CLOUDFLARE:-false}
+      SESSION_TTL_MINUTES: ${SESSION_TTL_MINUTES:-720}
+      SESSION_IDLE_TIMEOUT_MINUTES: ${SESSION_IDLE_TIMEOUT_MINUTES:-120}
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      STORAGE_LOCAL_ROOT: /var/lib/readypackets/storage
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-no-reply@readypackets.com}
+      SMTP_REPLY_TO: ${SMTP_REPLY_TO:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      SAML_ENABLED: ${SAML_ENABLED:-false}
+      SAML_ENTRY_POINT: ${SAML_ENTRY_POINT:-}
+      SAML_ISSUER: ${SAML_ISSUER:-}
+      SAML_IDP_CERT: ${SAML_IDP_CERT:-}
+      ADMIN_IP_ALLOWLIST: ${ADMIN_IP_ALLOWLIST:-}
+      SYSLOG_TARGET: ${SYSLOG_TARGET:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Used by the container health check, which must satisfy host validation.
+      HEALTHCHECK_HOST: ${HEALTHCHECK_HOST:-localhost}
+    ports:
+      # Loopback only. A reverse proxy on the host terminates TLS and forwards
+      # here. Change to "3000:3000" only if you run the proxy profile below.
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - storage-data:/var/lib/readypackets/storage
+    networks:
+      - internal
+    user: "node"
+    read_only: true
+    tmpfs:
+      # Node needs a writable temp directory for multipart upload buffering.
+      - /tmp:rw,noexec,nosuid,size=128m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "10"
+
+  # Optional: run nginx in a container instead of on the host.
+  # Enable with:  docker compose --profile proxy up -d
+  proxy:
+    image: nginx:1.27-alpine
+    profiles: ["proxy"]
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/readypackets.conf:ro
+      - ./deploy/tls:/etc/nginx/tls:ro
+      - nginx-cache:/var/cache/nginx
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  db-data:
+  storage-data:
+  nginx-cache:

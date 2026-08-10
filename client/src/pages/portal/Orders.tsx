@@ -1,0 +1,491 @@
+/**
+ * Order list and the new-order configurator.
+ *
+ * The configurator never computes a price itself: each change re-requests a quote
+ * from the server, which is the same code path that prices the order on
+ * submission. That guarantees the figure the customer agrees to is the figure
+ * recorded, including the bundle discount.
+ */
+import { useMemo, useState } from "react";
+import { Link, useLocation } from "wouter";
+import {
+  ArrowRight,
+  Check,
+  Info,
+  Package,
+  Percent,
+  Search,
+  ShoppingCart,
+  Trash2,
+} from "lucide-react";
+import { trpc, errorMessage } from "@/lib/trpc";
+import { formatDate, formatMoney } from "@/lib/utils";
+import { Button, LinkButton } from "@/components/ui/Button";
+import { Input, Select } from "@/components/ui/Field";
+import {
+  Alert,
+  Badge,
+  Card,
+  CardHeader,
+  EmptyState,
+  Skeleton,
+} from "@/components/ui/Surface";
+import { DataTable, ProgressBar, type Column } from "@/components/ui/DataDisplay";
+import { useToast } from "@/components/ui/Toast";
+import { PageHeader } from "@/components/layout/PortalLayout";
+import { PAYMENT_LABELS, PAYMENT_TONES, STATUS_LABELS, STATUS_TONES } from "./orderStatus";
+
+interface OrderRow {
+  id: number;
+  orderNumber: string;
+  status: string;
+  paymentStatus: string;
+  projectName: string | null;
+  totalCents: number;
+  bundleApplied: boolean;
+  completionPercent: number;
+  createdAt: string | Date;
+  dueAt: string | Date | null;
+  itemCount: number;
+}
+
+export function OrdersListPage() {
+  const orders = trpc.orders.list.useQuery();
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  const rows = useMemo(() => {
+    const list = (orders.data ?? []) as unknown as OrderRow[];
+    const needle = search.trim().toLowerCase();
+    return list.filter((order) => {
+      if (statusFilter !== "all" && order.status !== statusFilter) return false;
+      if (!needle) return true;
+      return (
+        order.orderNumber.toLowerCase().includes(needle) ||
+        (order.projectName ?? "").toLowerCase().includes(needle)
+      );
+    });
+  }, [orders.data, search, statusFilter]);
+
+  const columns: Column<OrderRow>[] = [
+    {
+      key: "order",
+      header: "Order",
+      cell: (order) => (
+        <div className="min-w-0">
+          <span className="font-mono text-xs font-semibold text-muted">{order.orderNumber}</span>
+          <p className="mt-0.5 truncate font-medium text-ink">
+            {order.projectName ?? "Untitled project"}
+          </p>
+          <p className="mt-0.5 text-xs text-muted sm:hidden">
+            {STATUS_LABELS[order.status] ?? order.status} · {formatMoney(order.totalCents)}
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      hideOnMobile: true,
+      cell: (order) => (
+        <div className="space-y-1.5">
+          <Badge tone={STATUS_TONES[order.status] ?? "neutral"}>
+            {STATUS_LABELS[order.status] ?? order.status}
+          </Badge>
+          {order.completionPercent > 0 && order.completionPercent < 100 ? (
+            <ProgressBar value={order.completionPercent} className="w-28" />
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      key: "payment",
+      header: "Payment",
+      hideOnMobile: true,
+      cell: (order) => (
+        <Badge tone={PAYMENT_TONES[order.paymentStatus] ?? "neutral"}>
+          {PAYMENT_LABELS[order.paymentStatus] ?? order.paymentStatus}
+        </Badge>
+      ),
+    },
+    {
+      key: "placed",
+      header: "Placed",
+      hideOnMobile: true,
+      cell: (order) => <span className="text-xs text-muted">{formatDate(order.createdAt)}</span>,
+    },
+    {
+      key: "total",
+      header: "Total",
+      align: "right",
+      cell: (order) => (
+        <div className="text-right">
+          <p className="font-semibold tabular-nums text-ink">{formatMoney(order.totalCents)}</p>
+          {order.bundleApplied ? (
+            <Badge tone="gold" className="mt-1">
+              Bundle
+            </Badge>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      key: "go",
+      header: <span className="sr-only">View</span>,
+      align: "right",
+      cell: (order) => (
+        <Link
+          href={`/portal/orders/${order.id}`}
+          className="inline-flex items-center gap-1 text-sm font-semibold text-teal-dark no-underline hover:text-teal"
+          aria-label={`View order ${order.orderNumber}`}
+        >
+          View
+          <ArrowRight className="size-4" aria-hidden="true" />
+        </Link>
+      ),
+    },
+  ];
+
+  return (
+    <>
+      <PageHeader
+        title="My orders"
+        description="Every engagement you have placed, with its current phase and payment state."
+        actions={
+          <LinkButton
+            href="/portal/orders/new"
+            leadingIcon={<Package className="size-4" aria-hidden="true" />}
+          >
+            New order
+          </LinkButton>
+        }
+      />
+
+      <Card className="mb-5">
+        <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
+          <Input
+            label="Search"
+            placeholder="Order number or project name"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            leadingIcon={<Search className="size-4" aria-hidden="true" />}
+          />
+          <Select
+            label="Status"
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+            className="sm:w-56"
+            options={[
+              { value: "all", label: "All statuses" },
+              ...Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+            ]}
+          />
+        </div>
+      </Card>
+
+      {orders.isLoading ? (
+        <div className="space-y-3">
+          {Array.from({ length: 5 }, (_, index) => (
+            <Skeleton key={index} className="h-16 w-full" />
+          ))}
+        </div>
+      ) : (
+        <DataTable
+          caption="Your orders"
+          columns={columns}
+          rows={rows}
+          rowKey={(order) => order.id}
+          empty={
+            (orders.data ?? []).length === 0 ? (
+              <EmptyState
+                icon={Package}
+                title="You have not placed an order yet"
+                description="Choose the packet groups and tiers that match where your business is now."
+                action={<LinkButton href="/portal/orders/new">Configure an order</LinkButton>}
+              />
+            ) : (
+              <EmptyState
+                icon={Search}
+                title="No orders match your filters"
+                description="Try a different search term or clear the status filter."
+                action={
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setSearch("");
+                      setStatusFilter("all");
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                }
+              />
+            )
+          }
+        />
+      )}
+    </>
+  );
+}
+
+const TIER_ORDER = ["basic", "standard", "premium", "custom", "institutional"] as const;
+
+export function NewOrderPage() {
+  const [, navigate] = useLocation();
+  const toast = useToast();
+  const catalog = trpc.public.catalog.useQuery();
+  const [selections, setSelections] = useState<Record<number, number>>({});
+  const [projectName, setProjectName] = useState("");
+
+  const selectionList = useMemo(
+    () =>
+      Object.entries(selections)
+        .filter(([, productId]) => productId > 0)
+        .map(([, productId]) => ({ productId, quantity: 1 })),
+    [selections],
+  );
+
+  const quote = trpc.orders.quote.useQuery(
+    { selections: selectionList },
+    { enabled: selectionList.length > 0, staleTime: 0 },
+  );
+
+  const create = trpc.orders.create.useMutation({
+    onSuccess(result) {
+      toast.success(
+        `Order ${result.orderNumber} created`,
+        result.requiresCustomQuote
+          ? "We will prepare a custom quote and contact you shortly."
+          : "Next: sign the mutual NDA and complete your Phase I intake.",
+      );
+      navigate(`/portal/orders/${result.orderId}`);
+    },
+    onError(error) {
+      toast.error("Could not create the order", errorMessage(error));
+    },
+  });
+
+  const groups = (catalog.data ?? []).filter((group) => group.groupNumber <= 6);
+  const selectedGroupCount = groups.filter((group) =>
+    group.products.some((product) => selections[group.id] === product.id),
+  ).length;
+
+  const bundleEligible = selectedGroupCount >= 6;
+
+  const setTier = (groupId: number, productId: number | null) => {
+    setSelections((current) => {
+      const next = { ...current };
+      if (productId === null) delete next[groupId];
+      else next[groupId] = productId;
+      return next;
+    });
+  };
+
+  return (
+    <>
+      <PageHeader
+        title="Configure your order"
+        description="Choose a tier for each packet group you need. Commit to all six and a 15% reduction is applied automatically."
+        breadcrumb={{ href: "/portal/orders", label: "My orders" }}
+      />
+
+      <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr] lg:items-start">
+        <div className="space-y-5">
+          <Card>
+            <Input
+              label="Project name"
+              help="Optional. Helps you identify this engagement later."
+              value={projectName}
+              onChange={(event) => setProjectName(event.target.value)}
+              maxLength={190}
+              placeholder="e.g. Series A data room, or Widget patent filing"
+            />
+          </Card>
+
+          {catalog.isLoading
+            ? Array.from({ length: 3 }, (_, index) => (
+                <Skeleton key={index} className="h-52 w-full rounded-[var(--radius-card)]" />
+              ))
+            : groups.map((group) => {
+                const selectedProductId = selections[group.id];
+                const sorted = [...group.products].sort(
+                  (left, right) =>
+                    TIER_ORDER.indexOf(left.tier as (typeof TIER_ORDER)[number]) -
+                    TIER_ORDER.indexOf(right.tier as (typeof TIER_ORDER)[number]),
+                );
+
+                return (
+                  <Card key={group.id}>
+                    <CardHeader
+                      title={`Packet ${group.groupNumber} — ${group.name}`}
+                      description={group.summary ?? undefined}
+                      actions={
+                        selectedProductId ? (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setTier(group.id, null)}
+                            leadingIcon={<Trash2 className="size-4" aria-hidden="true" />}
+                          >
+                            Remove
+                          </Button>
+                        ) : null
+                      }
+                    />
+
+                    <fieldset className="mt-4">
+                      <legend className="sr-only">Choose a tier for {group.name}</legend>
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        {sorted.map((product) => {
+                          const selected = selectedProductId === product.id;
+                          return (
+                            <label
+                              key={product.id}
+                              className={`cursor-pointer rounded-lg border p-3.5 transition-colors ${
+                                selected
+                                  ? "border-teal bg-teal/5 ring-1 ring-teal/25"
+                                  : "border-line hover:border-muted"
+                              }`}
+                            >
+                              <span className="flex items-start justify-between gap-2">
+                                <input
+                                  type="radio"
+                                  name={`group-${group.id}`}
+                                  value={product.id}
+                                  checked={selected}
+                                  onChange={() => setTier(group.id, product.id)}
+                                  className="mt-0.5 size-4 accent-teal"
+                                />
+                                {selected ? (
+                                  <Check className="size-4 text-teal" aria-hidden="true" />
+                                ) : null}
+                              </span>
+                              <span className="mt-2 block text-sm font-semibold capitalize text-ink">
+                                {product.tier}
+                              </span>
+                              <span className="mt-1 block text-lg font-semibold tabular-nums text-ink">
+                                {formatMoney(product.priceCents)}
+                              </span>
+                              <span className="mt-1 block text-xs text-muted">
+                                {product.deliveryEstimate}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </fieldset>
+                  </Card>
+                );
+              })}
+        </div>
+
+        {/* Quote panel */}
+        <Card className="lg:sticky lg:top-24">
+          <CardHeader
+            title={
+              <span className="flex items-center gap-2">
+                <ShoppingCart className="size-4 text-teal" aria-hidden="true" />
+                Your quote
+              </span>
+            }
+          />
+
+          {selectionList.length === 0 ? (
+            <p className="mt-5 text-sm text-body">
+              Select a tier for at least one packet group to see your quote.
+            </p>
+          ) : quote.isLoading ? (
+            <div className="mt-5 space-y-2">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-2/3" />
+              <Skeleton className="mt-4 h-8 w-1/2" />
+            </div>
+          ) : quote.data ? (
+            <div className="mt-5">
+              <ul className="space-y-2.5 border-b border-line pb-4">
+                {quote.data.lines.map((line) => (
+                  <li key={line.productId} className="flex items-start justify-between gap-3 text-sm">
+                    <span className="min-w-0">
+                      <span className="block truncate text-ink">{line.name}</span>
+                      <span className="text-xs capitalize text-muted">{line.tier}</span>
+                    </span>
+                    <span className="shrink-0 tabular-nums text-ink">
+                      {line.unitPriceCents === 0
+                        ? "Custom"
+                        : formatMoney(line.lineTotalCents)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+
+              <dl className="mt-4 space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <dt className="text-body">Subtotal</dt>
+                  <dd className="tabular-nums text-ink">{formatMoney(quote.data.subtotalCents)}</dd>
+                </div>
+                {quote.data.discountCents > 0 ? (
+                  <div className="flex justify-between text-success">
+                    <dt className="flex items-center gap-1.5">
+                      <Percent className="size-3.5" aria-hidden="true" />
+                      Bundle reduction
+                    </dt>
+                    <dd className="tabular-nums">−{formatMoney(quote.data.discountCents)}</dd>
+                  </div>
+                ) : null}
+                <div className="flex justify-between border-t border-line pt-3 text-base font-semibold">
+                  <dt className="text-ink">Total</dt>
+                  <dd className="tabular-nums text-ink">{formatMoney(quote.data.totalCents)}</dd>
+                </div>
+              </dl>
+
+              {quote.data.requiresCustomQuote ? (
+                <Alert tone="info" className="mt-4">
+                  One or more selections are priced per engagement. We will prepare a written quote
+                  before any work begins.
+                </Alert>
+              ) : null}
+
+              {!bundleEligible && selectedGroupCount > 0 ? (
+                <Alert tone="info" className="mt-4">
+                  <span className="flex items-start gap-1.5">
+                    <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                    <span>
+                      {selectedGroupCount} of 6 packet groups selected. Choose a tier in all six to
+                      unlock the 15% bundle reduction.
+                    </span>
+                  </span>
+                </Alert>
+              ) : null}
+
+              {bundleEligible ? (
+                <Alert tone="success" className="mt-4" title="Bundle reduction applied">
+                  All six packet groups are selected, so the 15% All-In reduction has been applied.
+                </Alert>
+              ) : null}
+
+              <Button
+                fullWidth
+                className="mt-5"
+                busy={create.isPending}
+                onClick={() =>
+                  create.mutate({
+                    selections: selectionList,
+                    projectName: projectName.trim() || undefined,
+                  })
+                }
+              >
+                Place order
+              </Button>
+
+              <p className="mt-3 text-xs text-muted">
+                Placing an order does not begin work. You will be asked to sign the mutual NDA and
+                complete the Phase I intake form first, and no card details are ever stored on our
+                servers.
+              </p>
+            </div>
+          ) : null}
+        </Card>
+      </div>
+    </>
+  );
+}

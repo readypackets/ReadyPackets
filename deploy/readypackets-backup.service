@@ -1,0 +1,33 @@
+[Unit]
+Description=ReadyPackets Portal nightly backup
+Documentation=file:/opt/readypackets/docs/DEPLOYMENT.md
+After=mysql.service
+Wants=mysql.service
+
+[Service]
+Type=oneshot
+# Runs as root because it reads the environment file and the storage directory,
+# both of which are deliberately not world-readable.
+User=root
+ExecStart=/usr/local/sbin/readypackets-backup --output /var/backups/readypackets --retention 30
+
+# Backups are I/O heavy; keep them from starving the web service.
+IOSchedulingClass=idle
+Nice=15
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+# Needs write access only to the backup destination.
+ProtectSystem=full
+ReadWritePaths=/var/backups/readypackets
+
+TimeoutStartSec=3600
+
+[Install]
+WantedBy=multi-user.target

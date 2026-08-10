@@ -1,0 +1,585 @@
+/**
+ * Phase I intake form and mutual NDA signature.
+ *
+ * The form is deliberately sectioned and saved as a draft, because the questions
+ * demand considered answers rather than a single sitting. Drafts save without
+ * validation; the minimum lengths are enforced only at submission, which is also
+ * where the server re-validates every field.
+ */
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useLocation } from "wouter";
+import {
+  CheckCircle2,
+  ClipboardCheck,
+  FileSignature,
+  Save,
+  Send,
+  ShieldCheck,
+} from "lucide-react";
+import { INTEGRITY_CHOICE_LABELS } from "@shared/domain";
+import { BRAND } from "@shared/brand";
+import { trpc, errorMessage } from "@/lib/trpc";
+import { formatDateTime } from "@/lib/utils";
+import { Markdown } from "@/lib/markdown";
+import { Button, LinkButton } from "@/components/ui/Button";
+import { Checkbox, Input, Textarea } from "@/components/ui/Field";
+import { Alert, Badge, Card, CardHeader, Skeleton } from "@/components/ui/Surface";
+import { ProgressBar } from "@/components/ui/DataDisplay";
+import { useToast } from "@/components/ui/Toast";
+import { PageHeader } from "@/components/layout/PortalLayout";
+
+export function IntakePage() {
+  const params = useParams<{ id: string }>();
+  const orderId = Number(params.id);
+  const toast = useToast();
+  const [, navigate] = useLocation();
+
+  const questions = trpc.intake.questions.useQuery();
+  const outcomes = trpc.intake.outcomes.useQuery();
+  const existing = trpc.intake.get.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
+  const mnda = trpc.intake.mndaStatus.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
+
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [projectName, setProjectName] = useState("");
+  const [desiredOutcomes, setDesiredOutcomes] = useState<string[]>([]);
+  const [integrityChoice, setIntegrityChoice] = useState<string>("");
+  const [confirmAccurate, setConfirmAccurate] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [dirty, setDirty] = useState(false);
+  const hydrated = useRef(false);
+
+  // Hydrate the form once from the saved draft.
+  useEffect(() => {
+    if (hydrated.current || !existing.data) return;
+    hydrated.current = true;
+    setAnswers(existing.data.answers ?? {});
+    setProjectName(existing.data.projectName ?? "");
+    setDesiredOutcomes(existing.data.desiredOutcomes ?? []);
+    setIntegrityChoice(existing.data.integrityChoice ?? "");
+  }, [existing.data]);
+
+  const save = trpc.intake.save.useMutation({
+    async onSuccess() {
+      setDirty(false);
+      await existing.refetch();
+    },
+    onError(error) {
+      toast.error("Could not save your draft", errorMessage(error));
+    },
+  });
+
+  const submit = trpc.intake.submit.useMutation({
+    async onSuccess() {
+      await existing.refetch();
+      toast.success(
+        "Intake submitted",
+        "Your Phase II Logic Synthesis call will be scheduled shortly.",
+      );
+      navigate(`/portal/orders/${orderId}`);
+    },
+    onError(error) {
+      toast.error("Could not submit your intake", errorMessage(error));
+    },
+  });
+
+  const sections = useMemo(() => {
+    const grouped = new Map<string, typeof questions.data>();
+    for (const question of questions.data ?? []) {
+      const list = grouped.get(question.section) ?? [];
+      grouped.set(question.section, [...(list ?? []), question] as typeof questions.data);
+    }
+    return [...grouped.entries()];
+  }, [questions.data]);
+
+  const submitted = existing.data?.status === "submitted";
+  const readOnly = submitted;
+
+  const totalRequired = (questions.data ?? []).filter((question) => question.required).length;
+  const completedRequired = (questions.data ?? []).filter(
+    (question) =>
+      question.required && (answers[question.key] ?? "").trim().length >= question.minLength,
+  ).length;
+
+  const setAnswer = (key: string, value: string) => {
+    setAnswers((current) => ({ ...current, [key]: value }));
+    setErrors((current) => ({ ...current, [key]: "" }));
+    setDirty(true);
+  };
+
+  const saveDraft = () => {
+    save.mutate({
+      orderId,
+      projectName: projectName.trim() || undefined,
+      desiredOutcomes: desiredOutcomes as never,
+      integrityChoice: (integrityChoice || undefined) as never,
+      answers,
+    });
+  };
+
+  // Autosave a dirty draft every 45 seconds so a long session is not lost.
+  useEffect(() => {
+    if (readOnly || !dirty) return;
+    const timer = setTimeout(saveDraft, 45_000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dirty, answers, projectName, desiredOutcomes, integrityChoice, readOnly]);
+
+  const validateAndSubmit = () => {
+    const next: Record<string, string> = {};
+    for (const question of questions.data ?? []) {
+      const value = (answers[question.key] ?? "").trim();
+      if (question.required && value.length === 0) {
+        next[question.key] = "This answer is required.";
+      } else if (value.length > 0 && value.length < question.minLength) {
+        next[question.key] = `Please expand this answer to at least ${question.minLength} characters (currently ${value.length}).`;
+      }
+    }
+    if (desiredOutcomes.length === 0) {
+      next.desiredOutcomes = "Choose at least one desired outcome.";
+    }
+    if (!integrityChoice) {
+      next.integrityChoice = "Choose how we should proceed under the Integrity Clause.";
+    }
+    if (!confirmAccurate) {
+      next.confirmAccurate = "Please confirm your answers are accurate.";
+    }
+    setErrors(next);
+    if (Object.keys(next).length > 0) {
+      const firstKey = Object.keys(next)[0];
+      document.getElementById(`intake-${firstKey}`)?.scrollIntoView({ block: "center" });
+      toast.error("Some answers need attention", "Review the highlighted fields and try again.");
+      return;
+    }
+    // Persist the final state, then submit.
+    save.mutate(
+      {
+        orderId,
+        projectName: projectName.trim() || undefined,
+        desiredOutcomes: desiredOutcomes as never,
+        integrityChoice: integrityChoice as never,
+        answers,
+      },
+      {
+        onSuccess() {
+          submit.mutate({ orderId, confirmAccurate: true });
+        },
+      },
+    );
+  };
+
+  if (questions.isLoading || existing.isLoading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-10 w-64" />
+        <Skeleton className="h-96 w-full" />
+      </div>
+    );
+  }
+
+  if (!mnda.data?.accepted && !submitted) {
+    return (
+      <>
+        <PageHeader
+          title="Phase I intake"
+          breadcrumb={{ href: `/portal/orders/${orderId}`, label: "Back to order" }}
+        />
+        <Card className="max-w-2xl">
+          <h2 className="flex items-center gap-2 text-base font-semibold text-ink">
+            <ShieldCheck className="size-4 text-teal" aria-hidden="true" />
+            Sign the mutual NDA first
+          </h2>
+          <p className="mt-2 text-sm leading-relaxed text-body">
+            The intake form asks for confidential detail about your concept. We require a mutual NDA
+            to be in place before you provide it — that protects you, and it is why we ask for the
+            signature first.
+          </p>
+          <LinkButton
+            href={`/portal/orders/${orderId}/nda`}
+            className="mt-5"
+            leadingIcon={<FileSignature className="size-4" aria-hidden="true" />}
+          >
+            Review and sign the NDA
+          </LinkButton>
+        </Card>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <PageHeader
+        title="Phase I — Intake form"
+        description="These answers are the raw material for your analysis. Considered answers produce a materially better packet."
+        breadcrumb={{ href: `/portal/orders/${orderId}`, label: "Back to order" }}
+        actions={
+          readOnly ? (
+            <Badge tone="success">Submitted {formatDateTime(existing.data?.submittedAt ?? null)}</Badge>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                busy={save.isPending}
+                onClick={saveDraft}
+                leadingIcon={<Save className="size-4" aria-hidden="true" />}
+              >
+                Save draft
+              </Button>
+              <Button
+                busy={submit.isPending}
+                onClick={validateAndSubmit}
+                leadingIcon={<Send className="size-4" aria-hidden="true" />}
+              >
+                Submit intake
+              </Button>
+            </>
+          )
+        }
+      />
+
+      {readOnly ? (
+        <Alert tone="success" className="mb-6" title="This intake has been submitted">
+          Your answers are locked. If something needs to change, add a message to the order and the
+          team will amend the record.
+        </Alert>
+      ) : (
+        <Card className="mb-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-ink">
+                {completedRequired} of {totalRequired} required answers complete
+              </p>
+              <p className="mt-0.5 text-xs text-muted">
+                Drafts save automatically. Nothing is submitted until you choose to submit.
+              </p>
+            </div>
+            {dirty ? <Badge tone="warning">Unsaved changes</Badge> : <Badge tone="neutral">Saved</Badge>}
+          </div>
+          <ProgressBar className="mt-3" value={completedRequired} max={Math.max(totalRequired, 1)} />
+        </Card>
+      )}
+
+      <div className="max-w-3xl space-y-6">
+        <Card>
+          <CardHeader title="Project" />
+          <Input
+            label="Project name"
+            className="mt-4"
+            value={projectName}
+            onChange={(event) => {
+              setProjectName(event.target.value);
+              setDirty(true);
+            }}
+            disabled={readOnly}
+            maxLength={190}
+            help="Optional. A short internal label for this engagement."
+          />
+        </Card>
+
+        {sections.map(([section, sectionQuestions]) => (
+          <Card key={section}>
+            <CardHeader title={section} />
+            <div className="mt-5 space-y-6">
+              {(sectionQuestions ?? []).map((question) => {
+                const value = answers[question.key] ?? "";
+                const belowMinimum =
+                  value.trim().length > 0 && value.trim().length < question.minLength;
+                return (
+                  <div key={question.key} id={`intake-${question.key}`}>
+                    <Textarea
+                      label={question.label}
+                      help={
+                        question.help
+                          ? `${question.help} Minimum ${question.minLength} characters.`
+                          : `Minimum ${question.minLength} characters.`
+                      }
+                      value={value}
+                      onChange={(event) => setAnswer(question.key, event.target.value)}
+                      error={errors[question.key] || undefined}
+                      required={question.required}
+                      disabled={readOnly}
+                      rows={5}
+                      maxLength={question.maxLength}
+                      showCount
+                    />
+                    {!readOnly && belowMinimum && !errors[question.key] ? (
+                      <p className="mt-1 text-xs text-warning">
+                        {question.minLength - value.trim().length} more characters needed.
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        ))}
+
+        <Card id="intake-desiredOutcomes">
+          <CardHeader
+            title="Section 7 — Desired outcomes"
+            description="What are you trying to achieve with this packet? Choose everything that applies."
+          />
+          <div className="mt-4 space-y-2.5">
+            {(outcomes.data?.desiredOutcomes ?? []).map((outcome) => (
+              <Checkbox
+                key={outcome}
+                label={outcome}
+                checked={desiredOutcomes.includes(outcome)}
+                disabled={readOnly}
+                onChange={(event) => {
+                  setDesiredOutcomes((current) =>
+                    event.target.checked
+                      ? [...current, outcome]
+                      : current.filter((item) => item !== outcome),
+                  );
+                  setDirty(true);
+                  setErrors((current) => ({ ...current, desiredOutcomes: "" }));
+                }}
+              />
+            ))}
+          </div>
+          {errors.desiredOutcomes ? (
+            <p className="mt-2 text-sm text-danger">{errors.desiredOutcomes}</p>
+          ) : null}
+        </Card>
+
+        <Card id="intake-integrityChoice" className="border-gold/35">
+          <CardHeader
+            title="Section 8 — The Integrity Clause"
+            description="If our analysis concludes the concept cannot work as described, we will not write a favourable report. Choose now how you would like us to proceed."
+          />
+          <fieldset className="mt-4 space-y-3">
+            <legend className="sr-only">Integrity clause choice</legend>
+            {(outcomes.data?.integrityChoices ?? []).map((choice) => (
+              <label
+                key={choice}
+                className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3.5 ${
+                  integrityChoice === choice
+                    ? "border-gold bg-gold/5 ring-1 ring-gold/25"
+                    : "border-line hover:border-muted"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="integrity-choice"
+                  value={choice}
+                  checked={integrityChoice === choice}
+                  disabled={readOnly}
+                  onChange={() => {
+                    setIntegrityChoice(choice);
+                    setDirty(true);
+                    setErrors((current) => ({ ...current, integrityChoice: "" }));
+                  }}
+                  className="mt-0.5 size-4 shrink-0 accent-gold"
+                />
+                <span className="text-sm text-ink">
+                  {INTEGRITY_CHOICE_LABELS[choice as keyof typeof INTEGRITY_CHOICE_LABELS] ?? choice}
+                </span>
+              </label>
+            ))}
+          </fieldset>
+          {errors.integrityChoice ? (
+            <p className="mt-2 text-sm text-danger">{errors.integrityChoice}</p>
+          ) : null}
+        </Card>
+
+        {!readOnly ? (
+          <Card id="intake-confirmAccurate">
+            <Checkbox
+              label="I confirm that the information I have provided is accurate and complete to the best of my knowledge."
+              checked={confirmAccurate}
+              onChange={(event) => {
+                setConfirmAccurate(event.target.checked);
+                setErrors((current) => ({ ...current, confirmAccurate: "" }));
+              }}
+              error={errors.confirmAccurate || undefined}
+            />
+            <div className="mt-5 flex flex-wrap gap-2">
+              <Button
+                busy={submit.isPending || save.isPending}
+                onClick={validateAndSubmit}
+                leadingIcon={<Send className="size-4" aria-hidden="true" />}
+              >
+                Submit intake
+              </Button>
+              <Button variant="outline" busy={save.isPending} onClick={saveDraft}>
+                Save and finish later
+              </Button>
+            </div>
+            <p className="mt-3 text-xs text-muted">
+              Submitting moves your order into Phase II and locks these answers. {BRAND.companyShortName}{" "}
+              will then schedule your Logic Synthesis call.
+            </p>
+          </Card>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+export function MndaPage() {
+  const params = useParams<{ id: string }>();
+  const orderId = Number.isFinite(Number(params.id)) ? Number(params.id) : undefined;
+  const toast = useToast();
+  const [, navigate] = useLocation();
+
+  const document = trpc.intake.mndaDocument.useQuery();
+  const status = trpc.intake.mndaStatus.useQuery({ orderId });
+
+  const [signatureName, setSignatureName] = useState("");
+  const [confirmAuthority, setConfirmAuthority] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const accept = trpc.intake.acceptMnda.useMutation({
+    async onSuccess() {
+      await status.refetch();
+      toast.success("NDA signed", "You can now complete your Phase I intake form.");
+      if (orderId) navigate(`/portal/orders/${orderId}/intake`);
+    },
+    onError(error) {
+      setFormError(errorMessage(error));
+    },
+  });
+
+  const alreadySigned = status.data?.accepted;
+
+  return (
+    <>
+      <PageHeader
+        title="Mutual non-disclosure agreement"
+        description="Both parties are bound: you protect our methodology, and we protect your concept."
+        breadcrumb={
+          orderId
+            ? { href: `/portal/orders/${orderId}`, label: "Back to order" }
+            : { href: "/portal", label: "Back to portal" }
+        }
+        actions={
+          alreadySigned ? (
+            <Badge tone="success">Signed {formatDateTime(status.data?.acceptedAt ?? null)}</Badge>
+          ) : null
+        }
+      />
+
+      <div className="grid max-w-6xl gap-6 lg:grid-cols-[1.5fr_1fr] lg:items-start">
+        <Card>
+          {document.isLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-6 w-1/2" />
+              <Skeleton className="h-64 w-full" />
+            </div>
+          ) : document.isError || !document.data ? (
+            <Alert tone="danger" title="The agreement could not be loaded">
+              Please contact us at {BRAND.emails.compliance} and we will provide a copy directly.
+            </Alert>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-4">
+                <h2 className="text-lg font-semibold text-ink">{document.data.title}</h2>
+                <span className="text-xs text-muted">
+                  Version {document.data.version} · effective {document.data.effectiveDate}
+                </span>
+              </div>
+              {/*
+                The agreement is rendered in a scrollable region rather than a
+                separate download, so the signature is captured against text the
+                signer has actually been shown.
+              */}
+              <div
+                className="prose-rp mt-5 max-h-[32rem] overflow-y-auto rounded-lg border border-line bg-surface-soft p-5 text-sm"
+                tabIndex={0}
+                role="region"
+                aria-label="Agreement text"
+              >
+                <Markdown source={document.data.bodyMarkdown} />
+              </div>
+            </>
+          )}
+        </Card>
+
+        <Card className="lg:sticky lg:top-24">
+          <CardHeader
+            title={alreadySigned ? "Signature on file" : "Sign the agreement"}
+            description={
+              alreadySigned
+                ? "A copy of this agreement and your signature record is retained in your account."
+                : "Type your full legal name to sign electronically."
+            }
+          />
+
+          {alreadySigned ? (
+            <div className="mt-5">
+              <p className="flex items-center gap-2 text-sm text-success">
+                <CheckCircle2 className="size-4" aria-hidden="true" />
+                Signed on {formatDateTime(status.data?.acceptedAt ?? null)}
+              </p>
+              {orderId ? (
+                <LinkButton
+                  href={`/portal/orders/${orderId}/intake`}
+                  fullWidth
+                  className="mt-5"
+                  leadingIcon={<ClipboardCheck className="size-4" aria-hidden="true" />}
+                >
+                  Continue to Phase I intake
+                </LinkButton>
+              ) : null}
+            </div>
+          ) : (
+            <form
+              className="mt-5 space-y-5"
+              noValidate
+              onSubmit={(event) => {
+                event.preventDefault();
+                setFormError(null);
+                if (signatureName.trim().length < 3) {
+                  setFormError("Enter your full legal name as your signature.");
+                  return;
+                }
+                if (!confirmAuthority) {
+                  setFormError("Confirm that you are authorised to sign this agreement.");
+                  return;
+                }
+                accept.mutate({
+                  orderId,
+                  signatureName: signatureName.trim(),
+                  confirmAuthority,
+                });
+              }}
+            >
+              {formError ? <Alert tone="danger">{formError}</Alert> : null}
+
+              <Input
+                label="Full legal name"
+                value={signatureName}
+                onChange={(event) => setSignatureName(event.target.value)}
+                autoComplete="name"
+                required
+                maxLength={120}
+                help="This is recorded as your electronic signature."
+              />
+
+              <Checkbox
+                label="I have read the agreement above, I agree to be bound by it, and I am authorised to sign on behalf of the disclosing party."
+                checked={confirmAuthority}
+                onChange={(event) => setConfirmAuthority(event.target.checked)}
+              />
+
+              <Button
+                type="submit"
+                fullWidth
+                busy={accept.isPending}
+                leadingIcon={<FileSignature className="size-4" aria-hidden="true" />}
+              >
+                Sign agreement
+              </Button>
+
+              <p className="text-xs leading-relaxed text-muted">
+                Your signature is recorded with a timestamp, the agreement version, your IP address,
+                and your browser's user agent, which is what makes the record evidentiary. Governing
+                law is Maryland, with venue in Baltimore County.
+              </p>
+            </form>
+          )}
+        </Card>
+      </div>
+    </>
+  );
+}

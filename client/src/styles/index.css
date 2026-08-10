@@ -1,0 +1,306 @@
+@import "tailwindcss";
+
+/*
+ * Self-hosted Inter. `font-display: swap` keeps first paint fast, and because
+ * the files are served from our own origin there is no third-party request and
+ * no privacy leak to a font CDN.
+ */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/inter-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/inter-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/inter-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/inter-700.woff2") format("woff2");
+}
+
+/* Brand tokens from Brand Kit v2.0. */
+@theme {
+  --font-sans: "Inter", "Helvetica Neue", Arial, sans-serif;
+
+  --color-navy: #0d1b2a;
+  --color-navy-raised: #12263a;
+  --color-navy-elevated: #17304a;
+  --color-navy-border: #1f3a56;
+
+  --color-teal: #20a090;
+  --color-teal-dark: #1a7a6e;
+  --color-teal-light: #2ec4b6;
+
+  --color-gold: #c9a84c;
+  --color-gold-dark: #a98c36;
+
+  --color-ink: #0d1b2a;
+  --color-body: #4a5568;
+  --color-muted: #6b7a90;
+  --color-line: #dfe5ec;
+  --color-surface: #ffffff;
+  --color-surface-soft: #f5f7fa;
+  --color-surface-sunken: #eef2f7;
+
+  --color-success: #157f52;
+  --color-warning: #b9791d;
+  --color-danger: #b3261e;
+  --color-info: #1a6fa8;
+
+  --radius-card: 0.75rem;
+  --shadow-card: 0 1px 2px rgb(13 27 42 / 0.06), 0 8px 24px -12px rgb(13 27 42 / 0.14);
+  --shadow-raised: 0 2px 4px rgb(13 27 42 / 0.08), 0 16px 40px -20px rgb(13 27 42 / 0.2);
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  /* Respect a user's reduced-motion preference across the whole application. */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    line-height: 1.6;
+    color: var(--color-body);
+    background-color: var(--color-surface);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    color: var(--color-ink);
+    font-weight: 600;
+    line-height: 1.25;
+    letter-spacing: -0.011em;
+    margin: 0;
+  }
+
+  a {
+    color: var(--color-teal-dark);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
+
+  a:hover {
+    color: var(--color-teal);
+  }
+
+  /*
+   * A single, highly visible focus ring everywhere. Focus visibility is a
+   * WCAG 2.1 AA requirement and must never be removed for aesthetics.
+   */
+  :focus-visible {
+    outline: 2px solid var(--color-teal);
+    outline-offset: 2px;
+    border-radius: 0.25rem;
+  }
+
+  /* Disable the ring for mouse users only, never for keyboard users. */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  ::selection {
+    background-color: color-mix(in srgb, var(--color-teal) 25%, transparent);
+    color: var(--color-ink);
+  }
+
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  /* Remove the number spinner: money and quantity fields use explicit controls. */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+
+  hr {
+    border: 0;
+    border-top: 1px solid var(--color-line);
+    margin: 2rem 0;
+  }
+
+  code,
+  pre,
+  kbd,
+  samp {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: 0.9em;
+  }
+
+  /* Print: drop chrome and let the content flow. */
+  @media print {
+    body {
+      background: #fff;
+      color: #000;
+    }
+    header nav,
+    footer,
+    [data-print="hide"] {
+      display: none !important;
+    }
+  }
+}
+
+@layer components {
+  /* Skip link: visually hidden until focused. */
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+    top: 0;
+    z-index: 100;
+    padding: 0.75rem 1.25rem;
+    background: var(--color-navy);
+    color: #fff;
+    border-radius: 0 0 0.5rem 0;
+    font-weight: 600;
+  }
+
+  .skip-link:focus {
+    left: 0;
+  }
+
+  .prose-rp {
+    color: var(--color-body);
+    max-width: 72ch;
+  }
+
+  .prose-rp h1 {
+    font-size: 1.875rem;
+    margin: 0 0 1rem;
+  }
+
+  .prose-rp h2 {
+    font-size: 1.375rem;
+    margin: 2.25rem 0 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--color-line);
+  }
+
+  .prose-rp h3 {
+    font-size: 1.0625rem;
+    margin: 1.75rem 0 0.5rem;
+  }
+
+  .prose-rp p {
+    margin: 0 0 1rem;
+  }
+
+  .prose-rp ul,
+  .prose-rp ol {
+    margin: 0 0 1rem;
+    padding-left: 1.5rem;
+  }
+
+  .prose-rp li {
+    margin: 0 0 0.375rem;
+  }
+
+  .prose-rp strong {
+    color: var(--color-ink);
+    font-weight: 600;
+  }
+
+  .prose-rp table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 1.5rem;
+    font-size: 0.9375rem;
+  }
+
+  .prose-rp th,
+  .prose-rp td {
+    border: 1px solid var(--color-line);
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .prose-rp th {
+    background: var(--color-surface-soft);
+    color: var(--color-ink);
+    font-weight: 600;
+  }
+
+  .prose-rp blockquote {
+    margin: 0 0 1rem;
+    padding: 0.75rem 1rem;
+    border-left: 3px solid var(--color-teal);
+    background: var(--color-surface-soft);
+    color: var(--color-ink);
+  }
+}
+
+@layer utilities {
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .text-pretty {
+    text-wrap: pretty;
+  }
+}

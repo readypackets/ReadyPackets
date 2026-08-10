@@ -1,0 +1,419 @@
+[
+  {
+    "groupNumber": 1,
+    "name": "Idea & IP Protection",
+    "category": "Intellectual Property",
+    "summary": "This packet group helps entrepreneurs document, structure, and protect their ideas and inventions before filing with an attorney or moving to the next stage of development.",
+    "products": [
+      {
+        "sku": "RP-P1-BASIC",
+        "tierLabel": "Basic",
+        "tier": "basic",
+        "priceCents": 45000,
+        "customPricing": false,
+        "deliveryEstimate": "48\u201372 hours",
+        "description": "A clear, organized invention summary that turns an idea into something concrete and ready to move forward.",
+        "features": [
+          "20\u201350 Minute Intake Session",
+          "Core Invention Architecture (5\u20138 pages)",
+          "1 Simple Logic Figure (Line Diagram)",
+          "Core Feature List + Alternatives",
+          "Basic Friction Analysis",
+          "Filing Checklist + Next Steps"
+        ]
+      },
+      {
+        "sku": "RP-P1-STANDARD",
+        "tierLabel": "Standard",
+        "tier": "standard",
+        "priceCents": 135000,
+        "customPricing": false,
+        "deliveryEstimate": "4\u20136 business days",
+        "description": "A structured, defensible invention packet suitable for patent discussions, partners, or next-stage development.",
+        "features": [
+          "Everything in Basic, plus",
+          "Full Inventor Packet (8\u201314 pages)",
+          "1\u20133 Complex Figures",
+          "\"Teaching-Away\" Argument",
+          "Residual Risk Matrix",
+          "Alternative Embodiments (A-B-C Options)",
+          "Light Prior-Art Scan (Standard)"
+        ]
+      },
+      {
+        "sku": "RP-P1-PREMIUM",
+        "tierLabel": "Premium",
+        "tier": "premium",
+        "priceCents": 245000,
+        "customPricing": false,
+        "deliveryEstimate": "7\u201310 business days",
+        "description": "A polished, attorney-ready invention package designed to maximize protection options and reduce future rework.",
+        "features": [
+          "Everything in Standard, plus",
+          "Attorney-Ready Patent Dossier (15+ pages)",
+          "1\u20135 High-Fidelity Diagrams",
+          "Preliminary FTO (Freedom-To-Operate) Analysis",
+          "Claim-Theme Map",
+          "Strategic Pivot Recommendations",
+          "Deep \"Teaching-Away\" Analysis",
+          "Two Revision Rounds"
+        ]
+      }
+    ]
+  },
+  {
+    "groupNumber": 2,
+    "name": "Business Foundation",
+    "category": "Business Formation",
+    "summary": "This packet group provides the foundational strategic documents every new business needs to launch with clarity, structure, and investor-ready confidence.",
+    "products": [
+      {
+        "sku": "RP-P2-BASIC",
+        "tierLabel": "Basic",
+        "tier": "basic",
+        "priceCents": 150000,
+        "customPricing": false,
+        "deliveryEstimate": "48\u201372 hours",
+        "description": "A clean, executable 30-day roadmap that eliminates launch-phase uncertainty.",
+        "features": [
+          "Comprehensive Intake Session",
+          "Core Business Concept Map (5\u20138 pages)",
+          "Core Value Proposition Architecture",
+          "Target Audience Avatar",
+          "Basic Logic Stress Test",
+          "30-Day Prioritized Action Roadmap"
+        ]
+      },
+      {
+        "sku": "RP-P2-STANDARD",
+        "tierLabel": "Standard",
+        "tier": "standard",
+        "priceCents": 350000,
+        "customPricing": false,
+        "deliveryEstimate": "3\u20135 business days",
+        "description": "A deeper plan that structures your build, launch, and early operations with professional confidence.",
+        "features": [
+          "Everything in Basic, plus",
+          "Comprehensive Foundation Dossier (8\u201314 pages)",
+          "MVP Scope (Minimum Viable Product)",
+          "Basic Go-To-Market (GTM) Strategy",
+          "Corporate Governance & Formation Roadmap",
+          "Competitor Friction Analysis",
+          "90-Day Strategic Execution Roadmap"
+        ]
+      },
+      {
+        "sku": "RP-P2-PREMIUM",
+        "tierLabel": "Premium",
+        "tier": "premium",
+        "priceCents": 649000,
+        "customPricing": false,
+        "deliveryEstimate": "5\u20137 business days",
+        "description": "A robust, long-range strategic dossier providing the modeling and capital alignment needed to execute and scale.",
+        "features": [
+          "Everything in Standard, plus",
+          "Investor-Grade Foundation Dossier (15+ pages)",
+          "Unit Economics Audit",
+          "Competitive Positioning & Differentiation Matrix",
+          "Scalable Team & Operations Planning Framework",
+          "Investor-Readiness & Capital Alignment",
+          "12-Month Phased Strategic Dossier",
+          "Two Revision Rounds"
+        ]
+      }
+    ]
+  },
+  {
+    "groupNumber": 3,
+    "name": "Business Plans",
+    "category": "Business Planning",
+    "summary": "Professional business plan documents structured for lenders, investors, and institutional stakeholders.",
+    "products": [
+      {
+        "sku": "RP-P3-BASIC",
+        "tierLabel": "Basic",
+        "tier": "basic",
+        "priceCents": 91000,
+        "customPricing": false,
+        "deliveryEstimate": "48\u201372 hours",
+        "description": "A professional, structured funding narrative designed to capture lender interest and provide clarity on your financial mission.",
+        "features": [
+          "Comprehensive Narrative Intake",
+          "Narrative Architecture (5\u20138 pages)",
+          "Executive Summary Tailored to Funding Goals",
+          "Core Mission, Vision, & Value Prop Architecture",
+          "1-Year Pro-Forma Financial Summary",
+          "Basic Marketing & Sales Strategy Logic"
+        ]
+      },
+      {
+        "sku": "RP-P3-STANDARD",
+        "tierLabel": "Standard",
+        "tier": "standard",
+        "priceCents": 299000,
+        "customPricing": false,
+        "deliveryEstimate": "3\u20135 business days",
+        "description": "A complete, lender-ready business plan with financial modeling and market positioning.",
+        "features": [
+          "Everything in Basic, plus",
+          "Full Business Plan Dossier (8\u201314 pages)",
+          "3-Year Pro-Forma Financial Model",
+          "Market Size & Opportunity Analysis",
+          "Competitive Landscape Assessment",
+          "Operations & Management Summary",
+          "One Revision Round"
+        ]
+      },
+      {
+        "sku": "RP-P3-PREMIUM",
+        "tierLabel": "Premium",
+        "tier": "premium",
+        "priceCents": 500000,
+        "customPricing": false,
+        "deliveryEstimate": "5\u20137 business days",
+        "description": "A full-spectrum institutional capital package designed for angel, VC, and institutional stakeholders.",
+        "features": [
+          "Everything in Standard, plus",
+          "60+ Page Strategic Business Dossier",
+          "Full-Spectrum Capital Package (15+ pages)",
+          "In-Depth Industry Data & Benchmarking",
+          "Investor Narrative & Valuation Logic",
+          "Executive Summary Tailored for VC/Institutional Review",
+          "Two Revision Rounds"
+        ]
+      }
+    ]
+  },
+  {
+    "groupNumber": 4,
+    "name": "Operating Design",
+    "category": "Operations",
+    "summary": "Operational frameworks and systems design documents that give businesses the structure to scale efficiently.",
+    "products": [
+      {
+        "sku": "RP-P4-BASIC",
+        "tierLabel": "Basic",
+        "tier": "basic",
+        "priceCents": 77000,
+        "customPricing": false,
+        "deliveryEstimate": "48\u201372 hours",
+        "description": "A clean operational framework that documents how your business actually runs day-to-day.",
+        "features": [
+          "20\u201350 min Intake Session",
+          "Core Operations Architecture (5\u20138 pages)",
+          "Core Process & Workflow Map",
+          "Basic Role & Responsibility Matrix",
+          "Standard Operating Procedure (SOP) Template",
+          "Basic KPI & Performance Tracking Framework"
+        ]
+      },
+      {
+        "sku": "RP-P4-STANDARD",
+        "tierLabel": "Standard",
+        "tier": "standard",
+        "priceCents": 199500,
+        "customPricing": false,
+        "deliveryEstimate": "3\u20135 business days",
+        "description": "A structured operational playbook that enables delegation, consistency, and scalable growth.",
+        "features": [
+          "Everything in Basic, plus",
+          "Full Operations Dossier (8\u201314 pages)",
+          "Detailed Process Documentation (3\u20135 Core Workflows)",
+          "Organizational Chart & Staffing Plan",
+          "Vendor & Partner Management Framework",
+          "Technology Stack & Tool Recommendations",
+          "Editable SOP Source Files"
+        ]
+      },
+      {
+        "sku": "RP-P4-PREMIUM",
+        "tierLabel": "Premium",
+        "tier": "premium",
+        "priceCents": 455000,
+        "customPricing": false,
+        "deliveryEstimate": "5\u20137 business days",
+        "description": "An enterprise-grade operations architecture built for rapid scaling and institutional review.",
+        "features": [
+          "Everything in Standard, plus",
+          "Investor-Grade Operations Package (15+ pages)",
+          "Full Department-Level SOP Library",
+          "Risk Management & Business Continuity Framework",
+          "Compliance & Regulatory Checklist",
+          "Advanced KPI Dashboard Architecture",
+          "Two Revision Rounds"
+        ]
+      }
+    ]
+  },
+  {
+    "groupNumber": 5,
+    "name": "Execution & Partnerships",
+    "category": "Execution & Growth",
+    "summary": "Bid packets, partnership frameworks, and execution documents for contractors, consultants, and project-based businesses.",
+    "products": [
+      {
+        "sku": "RP-P5-BASIC",
+        "tierLabel": "Basic",
+        "tier": "basic",
+        "priceCents": 77000,
+        "customPricing": false,
+        "deliveryEstimate": "48\u201372 hours",
+        "description": "A professional bid packet that eliminates scope creep and allows projects to move forward with documented confidence.",
+        "features": [
+          "20\u201350 min Intake Session",
+          "Partnership Strategy Outline (5\u20138 pages)",
+          "Strategic Project Scope Definition",
+          "Standardized Bid/Proposal Architecture",
+          "Budget Framework for Pricing Clarity",
+          "High-Level Project Execution Timeline"
+        ]
+      },
+      {
+        "sku": "RP-P5-STANDARD",
+        "tierLabel": "Standard",
+        "tier": "standard",
+        "priceCents": 199500,
+        "customPricing": false,
+        "deliveryEstimate": "3\u20135 business days",
+        "description": "A structured decision-ready packet that speeds up client approvals and significantly reduces project financial risk.",
+        "features": [
+          "Everything in Basic, plus",
+          "Strategic Execution Dossier (8\u201314 pages)",
+          "Detailed Milestone & Deliverable Mapping",
+          "Full Budget & Material Allowance Structure",
+          "Vendor Comparison Matrix",
+          "Bid Scope Architecture",
+          "Editable Bid Packet Source Files"
+        ]
+      },
+      {
+        "sku": "RP-P5-PREMIUM",
+        "tierLabel": "Premium",
+        "tier": "premium",
+        "priceCents": 455000,
+        "customPricing": false,
+        "deliveryEstimate": "5\u20137 business days",
+        "description": "A robust governance package designed for complex, high-stakes projects requiring institutional-level decision-making.",
+        "features": [
+          "Everything in Standard, plus",
+          "Investor-Grade Execution Package (15+ pages)",
+          "Partnership Governance Framework",
+          "Supply Chain De-Risking Strategy",
+          "End-to-End Multi-Phase Bid Package Creation",
+          "Advanced Change-Order & Risk Planning Framework",
+          "Structural Contract Template (Non-Binding)"
+        ]
+      }
+    ]
+  },
+  {
+    "groupNumber": 6,
+    "name": "Launch & Revenue Ready",
+    "category": "Launch & Marketing",
+    "summary": "Digital launch packages that get businesses online, generating leads, and revenue-ready fast.",
+    "products": [
+      {
+        "sku": "RP-P6-BASIC",
+        "tierLabel": "Basic",
+        "tier": "basic",
+        "priceCents": 91000,
+        "customPricing": false,
+        "deliveryEstimate": "5\u20137 business days",
+        "description": "A professional, ready-to-launch digital presence designed to convert visitors into documented leads immediately.",
+        "features": [
+          "Strategic Launch Kickoff & Discovery",
+          "Launch Sequence Outline (5\u20138 pages)",
+          "One-Page Custom Framer Website",
+          "High-Conversion Lead Capture Architecture",
+          "Domain Mapping & Primary SEO Setup",
+          "Basic Go-Live Checklist"
+        ]
+      },
+      {
+        "sku": "RP-P6-STANDARD",
+        "tierLabel": "Standard",
+        "tier": "standard",
+        "priceCents": 299000,
+        "customPricing": false,
+        "deliveryEstimate": "7\u201310 business days",
+        "description": "A complete digital launch system with multi-page website, email automation, and revenue infrastructure.",
+        "features": [
+          "Everything in Basic, plus",
+          "Full Launch Dossier (8\u201314 pages)",
+          "Multi-Page Custom Framer Website (3\u20135 pages)",
+          "Email Marketing Automation Setup",
+          "Social Media Launch Kit",
+          "Google Analytics & Conversion Tracking",
+          "30-Day Post-Launch Support Plan"
+        ]
+      },
+      {
+        "sku": "RP-P6-PREMIUM",
+        "tierLabel": "Premium",
+        "tier": "premium",
+        "priceCents": 649000,
+        "customPricing": false,
+        "deliveryEstimate": "10\u201314 business days",
+        "description": "A full-stack revenue engine built for businesses that need to launch fast and scale immediately.",
+        "features": [
+          "Everything in Standard, plus",
+          "Investor-Grade Launch Package (15+ pages)",
+          "Full E-Commerce or Booking Integration",
+          "Advanced CRM & Sales Pipeline Setup",
+          "Paid Advertising Strategy & Creative Brief",
+          "Brand Identity Package (Logo, Colors, Typography)",
+          "Two Revision Rounds"
+        ]
+      }
+    ]
+  },
+  {
+    "groupNumber": 7,
+    "name": "The All-In (Master Bundle)",
+    "category": "Bundle",
+    "summary": "The complete enterprise architecture package \u2014 all six packet groups combined into one comprehensive engagement.",
+    "products": [
+      {
+        "sku": "RP-P7-THE-PREMIUM-",
+        "tierLabel": "The Premium Vault",
+        "tier": "premium",
+        "priceCents": null,
+        "customPricing": true,
+        "deliveryEstimate": "30\u201345 business days",
+        "description": "The Complete Enterprise Architecture. A polished, fully-functional business professionally vetted, documented, and built from the ground up for maximum market velocity.",
+        "features": [
+          "The Model \u2014 Complete business concept, IP protection, and foundation documents",
+          "The Advantage \u2014 Business plans, operating design, and execution frameworks",
+          "The Deliverable \u2014 Launch system, revenue infrastructure, and go-to-market execution"
+        ]
+      }
+    ]
+  },
+  {
+    "groupNumber": 8,
+    "name": "Capital & Valuation Services",
+    "category": "Capital Markets",
+    "summary": "Institutional-grade valuation, capital structuring, and investor-readiness work. Engaged by referral or direct consultation only.",
+    "listed": false,
+    "products": [
+      {
+        "sku": "RP-P8-INSTITUTIONAL",
+        "tierLabel": "Institutional",
+        "tier": "custom",
+        "priceCents": 1200000,
+        "customPricing": true,
+        "deliveryEstimate": "14\u201321 business days",
+        "description": "Institutional valuation and capital-readiness engagement covering defensible valuation modelling, capital structure design, and investor diligence preparation. Scoped per engagement; the listed figure is the entry point.",
+        "listed": false,
+        "features": [
+          "Defensible Valuation Model (Comparable, DCF, and Asset approaches)",
+          "Capital Structure & Dilution Analysis",
+          "Investor Diligence Data Room Preparation",
+          "Cap Table Scenario Modelling",
+          "Term Sheet Review Support",
+          "Board-Ready Valuation Narrative"
+        ]
+      }
+    ]
+  }
+]

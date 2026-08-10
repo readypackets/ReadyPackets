@@ -1,0 +1,166 @@
+/**
+ * Audit trail service.
+ *
+ * Three durable streams are maintained:
+ *   security_logs  — authentication, authorisation and abuse events
+ *   activity_logs  — user and administrator actions with before/after detail
+ *   system_alerts  — deduplicated server faults surfaced in the admin panel
+ *
+ * Writes never throw into the caller: an audit failure must not break a request,
+ * but it is escalated to the application log so it cannot pass unnoticed.
+ */
+import { and, eq, isNull, sql } from "drizzle-orm";
+import { db } from "../db/client.js";
+import { activityLogs, securityLogs, systemAlerts } from "../db/schema.js";
+import { blindIndex } from "../security/crypto.js";
+import { logger } from "./logger.js";
+import type { LogSeverity } from "../../shared/domain.js";
+
+export type SecurityEventType =
+  | "login.success"
+  | "login.failure"
+  | "login.locked"
+  | "login.mfa_required"
+  | "login.mfa_success"
+  | "login.mfa_failure"
+  | "logout"
+  | "register.success"
+  | "register.duplicate"
+  | "password.reset_requested"
+  | "password.reset_completed"
+  | "password.changed"
+  | "email.verified"
+  | "mfa.enrolled"
+  | "mfa.disabled"
+  | "mfa.backup_code_used"
+  | "session.revoked"
+  | "session.expired"
+  | "csrf.rejected"
+  | "origin.rejected"
+  | "ratelimit.exceeded"
+  | "ratelimit.penalty"
+  | "ip.blocked"
+  | "admin.access_denied"
+  | "admin.mfa_required"
+  | "admin.ip_denied"
+  | "file.access_denied"
+  | "file.downloaded"
+  | "apikey.created"
+  | "apikey.revoked"
+  | "settings.changed"
+  | "encryption.failure";
+
+interface SecurityEventInput {
+  eventType: SecurityEventType;
+  severity?: LogSeverity;
+  outcome?: "success" | "failure" | "blocked";
+  message: string;
+  userId?: number | null;
+  /** Raw identifier such as an email; it is hashed before storage. */
+  subject?: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export async function recordSecurityEvent(input: SecurityEventInput): Promise<void> {
+  const severity = input.severity ?? (input.outcome === "success" ? "info" : "warning");
+  try {
+    await db.insert(securityLogs).values({
+      eventType: input.eventType,
+      severity,
+      outcome: input.outcome ?? "success",
+      message: input.message.slice(0, 500),
+      userId: input.userId ?? null,
+      subjectHash: input.subject ? blindIndex(input.subject) : null,
+      ipAddress: input.ipAddress?.slice(0, 64) ?? null,
+      userAgent: input.userAgent?.slice(0, 255) ?? null,
+      metadata: input.metadata ?? null,
+    });
+  } catch (error) {
+    logger.error("Failed to write security log", { error, eventType: input.eventType });
+  }
+  logger[severity === "critical" || severity === "error" ? "error" : "info"](
+    `security:${input.eventType}`,
+    { outcome: input.outcome, userId: input.userId, ip: input.ipAddress },
+  );
+}
+
+interface ActivityEventInput {
+  actorUserId?: number | null;
+  actorRole?: string | null;
+  action: string;
+  entityType?: string | null;
+  entityId?: string | number | null;
+  severity?: LogSeverity;
+  summary: string;
+  changes?: Record<string, unknown> | null;
+  ipAddress?: string | null;
+}
+
+export async function recordActivity(input: ActivityEventInput): Promise<void> {
+  try {
+    await db.insert(activityLogs).values({
+      actorUserId: input.actorUserId ?? null,
+      actorRole: input.actorRole ?? null,
+      action: input.action.slice(0, 96),
+      entityType: input.entityType ?? null,
+      entityId: input.entityId === null || input.entityId === undefined
+        ? null
+        : String(input.entityId).slice(0, 64),
+      severity: input.severity ?? "info",
+      summary: input.summary.slice(0, 500),
+      changes: input.changes ?? null,
+      ipAddress: input.ipAddress?.slice(0, 64) ?? null,
+    });
+  } catch (error) {
+    logger.error("Failed to write activity log", { error, action: input.action });
+  }
+}
+
+interface AlertInput {
+  alertKey: string;
+  severity?: "warning" | "error" | "critical";
+  source?: string;
+  message: string;
+  detail?: string;
+}
+
+/**
+ * Raise an alert, collapsing repeats of the same key into one row with an
+ * occurrence counter so a failure loop cannot flood the table.
+ */
+export async function raiseAlert(input: AlertInput): Promise<void> {
+  const alertKey = input.alertKey.slice(0, 96);
+  try {
+    const existing = await db
+      .select({ id: systemAlerts.id })
+      .from(systemAlerts)
+      .where(and(eq(systemAlerts.alertKey, alertKey), isNull(systemAlerts.resolvedAt)))
+      .limit(1);
+
+    const first = existing[0];
+    if (first) {
+      await db
+        .update(systemAlerts)
+        .set({
+          occurrences: sql`${systemAlerts.occurrences} + 1`,
+          lastSeenAt: new Date(),
+          message: input.message.slice(0, 500),
+          detail: input.detail ?? null,
+        })
+        .where(eq(systemAlerts.id, first.id));
+      return;
+    }
+
+    await db.insert(systemAlerts).values({
+      alertKey,
+      severity: input.severity ?? "error",
+      source: input.source ?? "server",
+      message: input.message.slice(0, 500),
+      detail: input.detail ?? null,
+    });
+  } catch (error) {
+    logger.error("Failed to write system alert", { error, alertKey });
+  }
+}

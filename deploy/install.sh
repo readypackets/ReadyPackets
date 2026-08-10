@@ -1,0 +1,406 @@
+#!/usr/bin/env bash
+#
+# ReadyPackets Portal — VPS installer (Ubuntu 22.04 / 24.04, Debian 12)
+#
+# Installs the application as a systemd service behind nginx, with MySQL on the
+# same host. Generates all cryptographic secrets locally; nothing is sent
+# anywhere. Safe to re-run: existing secrets and data are preserved.
+#
+# Usage:
+#   sudo ./deploy/install.sh --domain portal.readypackets.com --email ops@readypackets.com
+#
+# Options:
+#   --domain <host>     Public hostname (required)
+#   --email <address>   Contact address for the TLS certificate (required for --tls)
+#   --tls               Obtain a Let's Encrypt certificate with certbot
+#   --no-seed           Skip catalogue seeding (use when restoring a backup)
+#   --skip-packages     Assume Node, MySQL and nginx are already installed
+
+set -Eeuo pipefail
+
+readonly APP_USER="readypackets"
+readonly APP_DIR="/opt/readypackets"
+readonly DATA_DIR="/var/lib/readypackets"
+readonly ENV_DIR="/etc/readypackets"
+readonly ENV_FILE="${ENV_DIR}/portal.env"
+readonly NODE_MAJOR="22"
+readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+DOMAIN=""
+CONTACT_EMAIL=""
+WANT_TLS="false"
+WANT_SEED="true"
+SKIP_PACKAGES="false"
+
+log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m warn\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[1;31merror\033[0m %s\n' "$*" >&2; exit 1; }
+
+trap 'die "Installation failed on line ${LINENO}. No changes were rolled back; re-run once the cause is fixed."' ERR
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --domain)        DOMAIN="${2:-}"; shift 2 ;;
+    --email)         CONTACT_EMAIL="${2:-}"; shift 2 ;;
+    --tls)           WANT_TLS="true"; shift ;;
+    --no-seed)       WANT_SEED="false"; shift ;;
+    --skip-packages) SKIP_PACKAGES="true"; shift ;;
+    -h|--help)       sed -n '2,25p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    *)               die "Unknown option: $1" ;;
+  esac
+done
+
+[[ $EUID -eq 0 ]] || die "This installer must run as root (use sudo)."
+[[ -n "$DOMAIN" ]] || die "--domain is required."
+if [[ "$WANT_TLS" == "true" && -z "$CONTACT_EMAIL" ]]; then
+  die "--email is required when --tls is used."
+fi
+
+# Reject an obviously invalid hostname early: it ends up in security-critical
+# configuration (origin checks, cookie scope, certificate name).
+[[ "$DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$ ]] \
+  || die "'${DOMAIN}' does not look like a valid hostname."
+
+log "Installing ReadyPackets Portal for https://${DOMAIN}"
+
+# ---------------------------------------------------------------------------
+# Packages
+# ---------------------------------------------------------------------------
+if [[ "$SKIP_PACKAGES" == "false" ]]; then
+  log "Installing system packages"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  apt-get install -y --no-install-recommends \
+    ca-certificates curl gnupg git build-essential python3 \
+    mysql-server nginx ufw fail2ban unzip
+
+  if ! command -v node >/dev/null 2>&1 || \
+     [[ "$(node --version | sed 's/v\([0-9]*\).*/\1/')" -lt "$NODE_MAJOR" ]]; then
+    log "Installing Node.js ${NODE_MAJOR}"
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+      | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
+      > /etc/apt/sources.list.d/nodesource.list
+    apt-get update -qq
+    apt-get install -y nodejs
+  fi
+
+  corepack enable || true
+  corepack prepare pnpm@9.15.0 --activate || npm install -g pnpm@9.15.0
+fi
+
+command -v node >/dev/null 2>&1 || die "Node.js is not installed."
+command -v pnpm >/dev/null 2>&1 || die "pnpm is not installed."
+
+# ---------------------------------------------------------------------------
+# Service account and directories
+# ---------------------------------------------------------------------------
+if ! id "$APP_USER" >/dev/null 2>&1; then
+  log "Creating service account '${APP_USER}'"
+  # No login shell and no home directory: this account exists only to own a
+  # process and a storage directory.
+  useradd --system --no-create-home --shell /usr/sbin/nologin "$APP_USER"
+fi
+
+log "Preparing directories"
+install -d -m 0755 -o root      -g root      "$APP_DIR"
+install -d -m 0750 -o "$APP_USER" -g "$APP_USER" "$DATA_DIR"
+install -d -m 0750 -o "$APP_USER" -g "$APP_USER" "${DATA_DIR}/storage"
+install -d -m 0750 -o root      -g "$APP_USER" "$ENV_DIR"
+
+# ---------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------
+# Generated on this machine with the kernel CSPRNG. If the file already exists,
+# its values are reused so that re-running the installer cannot invalidate every
+# existing session or, worse, orphan encrypted data.
+if [[ -f "$ENV_FILE" ]]; then
+  log "Reusing existing secrets in ${ENV_FILE}"
+  # shellcheck disable=SC1090
+  set -a; source "$ENV_FILE"; set +a
+else
+  log "Generating secrets"
+  SESSION_SECRET="$(openssl rand -base64 48 | tr -d '\n=' )"
+  DATA_ENCRYPTION_KEY="$(openssl rand -hex 32)"
+  EMAIL_INDEX_KEY="$(openssl rand -hex 32)"
+  DB_PASSWORD="$(openssl rand -base64 32 | tr -d '\n=/+' | cut -c1-32)"
+fi
+
+: "${SESSION_SECRET:?}" ; : "${DATA_ENCRYPTION_KEY:?}" ; : "${EMAIL_INDEX_KEY:?}"
+DB_PASSWORD="${DB_PASSWORD:-$(openssl rand -base64 32 | tr -d '\n=/+' | cut -c1-32)}"
+DB_NAME="${DB_NAME:-readypackets}"
+DB_USER="${DB_USER:-readypackets}"
+
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
+log "Configuring MySQL"
+systemctl enable --now mysql >/dev/null 2>&1 || systemctl enable --now mysqld
+
+mysql --protocol=socket -uroot <<SQL
+CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\`
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost'
+  IDENTIFIED BY '${DB_PASSWORD}';
+ALTER USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';
+-- Only the privileges the application needs. No DROP, no GRANT, no FILE.
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, INDEX, ALTER, REFERENCES
+  ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost';
+FLUSH PRIVILEGES;
+SQL
+
+# MySQL must not listen on a public interface.
+MYSQL_CONF="/etc/mysql/mysql.conf.d/zz-readypackets.cnf"
+cat > "$MYSQL_CONF" <<'CONF'
+# Installed by the ReadyPackets installer.
+[mysqld]
+bind-address = 127.0.0.1
+skip-name-resolve
+local_infile = 0
+CONF
+systemctl restart mysql >/dev/null 2>&1 || systemctl restart mysqld
+
+# ---------------------------------------------------------------------------
+# Application build
+# ---------------------------------------------------------------------------
+log "Building the application"
+rsync -a --delete \
+  --exclude node_modules --exclude .git --exclude var --exclude client/dist --exclude dist \
+  "${REPO_ROOT}/" "${APP_DIR}/"
+
+cd "$APP_DIR"
+pnpm install --prod=false --frozen-lockfile=false
+pnpm exec vite build
+pnpm exec esbuild server/index.ts --bundle --platform=node --target=node22 \
+  --format=esm --packages=external --outfile=dist/server.js
+for script in migrate seed create-admin; do
+  pnpm exec esbuild "scripts/${script}.ts" --bundle --platform=node --target=node22 \
+    --format=esm --packages=external --outfile="dist/${script}.js"
+done
+pnpm prune --prod
+
+# The service account needs to read the build but must not be able to modify it.
+chown -R root:root "$APP_DIR"
+chmod -R go-w "$APP_DIR"
+
+# ---------------------------------------------------------------------------
+# Environment file
+# ---------------------------------------------------------------------------
+log "Writing ${ENV_FILE}"
+umask 027
+cat > "$ENV_FILE" <<ENVFILE
+# ReadyPackets Portal environment. Generated $(date -u '+%Y-%m-%dT%H:%M:%SZ').
+# This file contains secrets. Keep mode 0640, owner root, group ${APP_USER}.
+
+NODE_ENV=production
+PORT=3000
+BIND_HOST=127.0.0.1
+APP_URL=https://${DOMAIN}
+ALLOWED_ORIGINS=https://${DOMAIN}
+
+DATABASE_URL=mysql://${DB_USER}:${DB_PASSWORD}@127.0.0.1:3306/${DB_NAME}
+DB_NAME=${DB_NAME}
+DB_USER=${DB_USER}
+DB_PASSWORD=${DB_PASSWORD}
+
+SESSION_SECRET=${SESSION_SECRET}
+DATA_ENCRYPTION_KEY=${DATA_ENCRYPTION_KEY}
+EMAIL_INDEX_KEY=${EMAIL_INDEX_KEY}
+
+# nginx on this host is the only proxy in front of the application.
+TRUST_PROXY_HOPS=1
+BEHIND_CLOUDFLARE=false
+
+SESSION_TTL_MINUTES=720
+SESSION_IDLE_TIMEOUT_MINUTES=120
+
+STORAGE_DRIVER=local
+STORAGE_LOCAL_ROOT=${DATA_DIR}/storage
+MAX_UPLOAD_BYTES=52428800
+
+# Outbound email. Until these are set, messages queue in the database and the
+# admin dashboard reports the queue as degraded.
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM=no-reply@${DOMAIN#portal.}
+SMTP_REPLY_TO=
+
+# Optional payment capture. Leave blank to record payments manually.
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+STRIPE_PUBLISHABLE_KEY=
+
+# Optional SAML single sign-on for staff.
+SAML_ENABLED=false
+SAML_ENTRY_POINT=
+SAML_ISSUER=
+SAML_IDP_CERT=
+
+# Comma-separated addresses or CIDR ranges permitted to reach /admin.
+ADMIN_IP_ALLOWLIST=
+
+LOG_LEVEL=info
+SYSLOG_TARGET=
+ENVFILE
+
+chown root:"$APP_USER" "$ENV_FILE"
+chmod 0640 "$ENV_FILE"
+
+# ---------------------------------------------------------------------------
+# Migrate and seed
+# ---------------------------------------------------------------------------
+log "Applying database migrations"
+runuser -u "$APP_USER" -- env $(grep -v '^#' "$ENV_FILE" | xargs) node "${APP_DIR}/dist/migrate.js"
+
+if [[ "$WANT_SEED" == "true" ]]; then
+  log "Seeding catalogue, policies and settings"
+  runuser -u "$APP_USER" -- env $(grep -v '^#' "$ENV_FILE" | xargs) node "${APP_DIR}/dist/seed.js"
+fi
+
+# ---------------------------------------------------------------------------
+# systemd
+# ---------------------------------------------------------------------------
+log "Installing the systemd service"
+install -m 0644 "${APP_DIR}/deploy/readypackets.service" /etc/systemd/system/readypackets.service
+systemctl daemon-reload
+systemctl enable readypackets
+systemctl restart readypackets
+
+# ---------------------------------------------------------------------------
+# nginx
+# ---------------------------------------------------------------------------
+log "Configuring nginx"
+NGINX_SITE="/etc/nginx/sites-available/readypackets"
+sed "s/portal\.readypackets\.com/${DOMAIN}/g" "${APP_DIR}/deploy/nginx.conf" > "$NGINX_SITE"
+
+# Before a certificate exists the TLS server block cannot load, so serve plain
+# HTTP until certbot has run.
+if [[ ! -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]]; then
+  warn "No certificate found; installing a temporary HTTP-only configuration."
+  cat > "$NGINX_SITE" <<TEMP
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+    server_tokens off;
+    client_max_body_size 55m;
+
+    location /.well-known/acme-challenge/ { root /var/www/html; allow all; }
+
+    location / {
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Connection "";
+        proxy_pass http://127.0.0.1:3000;
+    }
+}
+TEMP
+fi
+
+ln -sf "$NGINX_SITE" /etc/nginx/sites-enabled/readypackets
+rm -f /etc/nginx/sites-enabled/default
+nginx -t
+systemctl reload nginx
+
+if [[ "$WANT_TLS" == "true" ]]; then
+  log "Requesting a TLS certificate"
+  apt-get install -y --no-install-recommends certbot python3-certbot-nginx
+  certbot --nginx --non-interactive --agree-tos \
+    --email "$CONTACT_EMAIL" -d "$DOMAIN" --redirect || \
+    warn "certbot failed; the site is still reachable over HTTP. Re-run certbot once DNS resolves."
+  # Reinstate the hardened configuration, which certbot may have rewritten.
+  sed "s/portal\.readypackets\.com/${DOMAIN}/g" "${APP_DIR}/deploy/nginx.conf" > "$NGINX_SITE"
+  nginx -t && systemctl reload nginx
+fi
+
+# ---------------------------------------------------------------------------
+# Firewall, fail2ban, log rotation, backups
+# ---------------------------------------------------------------------------
+log "Configuring the firewall"
+ufw --force reset >/dev/null
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow OpenSSH
+ufw allow 80/tcp
+ufw allow 443/tcp
+# Port 3000 is never opened: the application is reachable only through nginx.
+ufw --force enable
+
+log "Configuring fail2ban for SSH and nginx"
+cat > /etc/fail2ban/jail.d/readypackets.local <<'JAIL'
+[sshd]
+enabled = true
+maxretry = 4
+bantime = 1h
+
+[nginx-http-auth]
+enabled = true
+
+[nginx-limit-req]
+enabled = true
+maxretry = 20
+findtime = 10m
+bantime = 1h
+JAIL
+systemctl enable --now fail2ban
+systemctl restart fail2ban || true
+
+install -m 0644 "${APP_DIR}/deploy/logrotate.conf" /etc/logrotate.d/readypackets
+
+log "Installing the nightly backup timer"
+install -m 0750 "${APP_DIR}/deploy/backup.sh" /usr/local/sbin/readypackets-backup
+install -m 0644 "${APP_DIR}/deploy/readypackets-backup.service" /etc/systemd/system/
+install -m 0644 "${APP_DIR}/deploy/readypackets-backup.timer" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now readypackets-backup.timer
+
+# ---------------------------------------------------------------------------
+# Verification
+# ---------------------------------------------------------------------------
+log "Verifying the service"
+sleep 3
+if ! systemctl is-active --quiet readypackets; then
+  journalctl -u readypackets -n 40 --no-pager || true
+  die "The service failed to start. The journal output above shows why."
+fi
+
+if curl -fsS -H "Host: ${DOMAIN}" http://127.0.0.1:3000/api/health/ready >/dev/null; then
+  log "Readiness probe succeeded."
+else
+  warn "The readiness probe failed. Check: journalctl -u readypackets -n 50"
+fi
+
+cat <<SUMMARY
+
+$(printf '\033[1;32m')ReadyPackets Portal is installed.$(printf '\033[0m')
+
+  Site            https://${DOMAIN}
+  Service         systemctl status readypackets
+  Logs            journalctl -u readypackets -f
+  Configuration   ${ENV_FILE}
+  Storage         ${DATA_DIR}/storage
+  Backups         /var/backups/readypackets (nightly)
+
+Next steps:
+
+  1. Create the first administrator:
+       sudo runuser -u ${APP_USER} -- env \$(grep -v '^#' ${ENV_FILE} | xargs) \\
+         node ${APP_DIR}/dist/create-admin.js --email you@${DOMAIN#portal.}
+
+  2. Add SMTP credentials to ${ENV_FILE}, then:
+       sudo systemctl restart readypackets
+
+  3. Sign in, enrol multi-factor authentication immediately, and review
+     Admin -> Security.
+
+SUMMARY
