@@ -363,7 +363,11 @@ write_hardened_site() {
   if grep -q '__RP_' "$NGINX_SITE"; then
     die "A placeholder was left unsubstituted in ${NGINX_SITE}."
   fi
-  if grep -q 'portal\.readypackets\.com' "$NGINX_SITE" && [[ "$DOMAIN" != "portal.readypackets.com" ]]; then
+  # Word-anchored: an unanchored search for "portal.readypackets.com" also matches
+  # the correctly substituted "myportal.readypackets.com", which would reject a
+  # perfectly good configuration.
+  if [[ "$DOMAIN" != "portal.readypackets.com" ]] \
+     && grep -qE '(^|[^.[:alnum:]-])portal\.readypackets\.com' "$NGINX_SITE"; then
     die "The template hostname survived substitution in ${NGINX_SITE}."
   fi
 }
