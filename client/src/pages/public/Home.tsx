@@ -55,10 +55,15 @@ export function HomePage() {
   const groups = (catalog.data ?? []).filter((group) => group.groupNumber <= 6);
   const bundle = (catalog.data ?? []).find((group) => group.groupNumber === 7);
 
-  const entryPrice = groups
+  // Reducing with an infinite seed returns Infinity for an empty list, which on
+  // the first paint -- before the catalogue query resolves -- rendered a dash in
+  // the hero while the cards below already showed the correct entry price. The
+  // loading state is therefore distinguished from a genuinely priceless catalogue
+  // rather than collapsing both into the same fallback.
+  const listedPrices = groups
     .flatMap((group) => group.products.map((product) => product.priceCents))
-    .filter((price): price is number => typeof price === "number")
-    .reduce((lowest, price) => (price < lowest ? price : lowest), Number.POSITIVE_INFINITY);
+    .filter((price): price is number => typeof price === "number");
+  const entryPrice = listedPrices.length > 0 ? Math.min(...listedPrices) : null;
 
   return (
     <>
@@ -112,12 +117,33 @@ export function HomePage() {
               <dl className="mt-10 grid max-w-lg grid-cols-2 gap-6 border-t border-white/12 pt-6 sm:grid-cols-3">
                 <div>
                   <dt className="text-xs uppercase tracking-wide text-white/50">Packet groups</dt>
-                  <dd className="mt-1 text-2xl font-semibold tabular-nums">7</dd>
+                  {/* Derived, not hardcoded: an administrator who lists an eighth
+                      group in Admin -> Catalogue should not have to edit code for
+                      the homepage to agree with the catalogue below it. */}
+                  <dd className="mt-1 text-2xl font-semibold tabular-nums">
+                    {catalog.isLoading ? (
+                      <span
+                        className="inline-block h-7 w-10 animate-pulse rounded bg-white/15"
+                        aria-label="Loading packet group count"
+                      />
+                    ) : (
+                      (catalog.data ?? []).length
+                    )}
+                  </dd>
                 </div>
                 <div>
                   <dt className="text-xs uppercase tracking-wide text-white/50">From</dt>
                   <dd className="mt-1 text-2xl font-semibold tabular-nums">
-                    {Number.isFinite(entryPrice) ? formatMoney(entryPrice) : "—"}
+                    {catalog.isLoading ? (
+                      <span
+                        className="inline-block h-7 w-24 animate-pulse rounded bg-white/15"
+                        aria-label="Loading starting price"
+                      />
+                    ) : entryPrice === null ? (
+                      "—"
+                    ) : (
+                      formatMoney(entryPrice)
+                    )}
                   </dd>
                 </div>
                 <div>
