@@ -93,7 +93,14 @@ export function securityHeadersMiddleware() {
     // Deliberately no Server or X-Powered-By header.
     res.removeHeader("X-Powered-By");
 
-    if (env.isProduction) {
+    // HSTS must be asserted exactly once. The deployed nginx configuration sets it
+    // at the edge, and a second copy from here produced two identical
+    // Strict-Transport-Security headers on every response of the live site.
+    // Browsers disagree on how to treat duplicates -- first wins, last wins, or
+    // ignore both -- and ambiguity is not a property a security header should
+    // have. So the application asserts it only when nothing in front of it has:
+    // the absence of X-Forwarded-Proto means it is terminating TLS itself.
+    if (env.isProduction && !req.headers["x-forwarded-proto"]) {
       res.setHeader(
         "Strict-Transport-Security",
         "max-age=63072000; includeSubDomains; preload",
