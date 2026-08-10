@@ -8,6 +8,7 @@
  * content are preserved wherever the record is content rather than configuration.
  */
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { eq, sql } from "drizzle-orm";
@@ -36,7 +37,38 @@ import { BRAND } from "../shared/brand.js";
 import { RATE_LIMIT_CATEGORIES } from "../shared/domain.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = path.join(here, "data");
+
+/**
+ * This script runs from two layouts: from source as `scripts/seed.ts`, where the
+ * data sits at `scripts/data`, and from the compiled bundle as `dist/seed.js`,
+ * where the installer places a copy at `dist/data`. Resolving relative to the
+ * script alone works in development and fails on a fresh install, which is a
+ * poor place to discover the problem, so the candidates are tried in order and
+ * the chosen directory is reported. `SEED_DATA_DIR` overrides for unusual
+ * layouts.
+ */
+function resolveDataDir(): string {
+  const candidates = [
+    process.env.SEED_DATA_DIR,
+    path.join(here, "data"),
+    path.join(here, "..", "scripts", "data"),
+    path.join(here, "..", "data"),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  for (const candidate of candidates) {
+    if (existsSync(path.join(candidate, "catalog.json"))) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    "Unable to locate the seed data directory. Looked for catalog.json in:\n  " +
+      candidates.join("\n  ") +
+      "\nSet SEED_DATA_DIR to the directory containing catalog.json and policies/.",
+  );
+}
+
+const dataDir = resolveDataDir();
 
 interface CatalogFeatureSource {
   label: string;
@@ -883,6 +915,7 @@ async function seedContent(): Promise<void> {
 
 async function main(): Promise<void> {
   console.log("Seeding ReadyPackets database…");
+  console.log(`Seed data directory: ${dataDir}`);
   await seedCatalog();
   await seedPolicies();
   await seedEmailTemplates();

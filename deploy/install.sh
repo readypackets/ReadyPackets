@@ -200,6 +200,16 @@ for script in migrate seed create-admin; do
   pnpm exec esbuild "scripts/${script}.ts" --bundle --platform=node --target=node22 \
     --format=esm --packages=external --outfile="dist/${script}.js"
 done
+
+# The bundler inlines code, not data. The seed reads the catalogue and the policy
+# documents at runtime and resolves them relative to its own location, so they
+# must sit beside the bundle. The migration runner reads its SQL the same way.
+install -d -m 0755 "${APP_DIR}/dist/data"
+cp -a "${APP_DIR}/scripts/data/." "${APP_DIR}/dist/data/"
+[[ -f "${APP_DIR}/dist/data/catalog.json" ]] \
+  || die "Seed data was not copied to dist/data; the catalogue would be empty."
+[[ -d "${APP_DIR}/drizzle/migrations" ]] \
+  || die "drizzle/migrations is missing from the source tree; the database cannot be created."
 pnpm prune --prod
 
 # The service account needs to read the build but must not be able to modify it.
