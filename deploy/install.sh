@@ -342,7 +342,30 @@ TEMP
 }
 
 write_hardened_site() {
-  sed "s/portal\.readypackets\.com/${DOMAIN}/g" "${APP_DIR}/deploy/nginx.conf" > "$NGINX_SITE"
+  # The hostname appears twice in different forms: as a literal in server_name
+  # and the certificate paths, and regex-escaped in the host allowlist. Both are
+  # substituted, and the result is checked, because a silent miss here produces a
+  # server that rejects its own hostname with 421.
+  # Order matters. Substituting the regex token first and the literal hostname
+  # second lets the literal rule match the substring "portal.readypackets.com"
+  # inside a freshly written "myportal\.readypackets\.com", yielding
+  # "mymyportal...". Replacing the literal first, then the token, avoids the
+  # overlap entirely.
+  # sed processes backslashes in the replacement text, so a single "\." would
+  # arrive as a bare "." -- still functional, since an unescaped dot matches any
+  # character, but it would accept "myportalXreadypackets.com" too. Doubling them
+  # means one backslash survives into the file.
+  local host_regex="${DOMAIN//./\\\\.}"
+  sed -e "s/portal\.readypackets\.com/${DOMAIN}/g" \
+      -e "s/__RP_HOST_REGEX__/${host_regex}/g" \
+      "${APP_DIR}/deploy/nginx.conf" > "$NGINX_SITE"
+
+  if grep -q '__RP_' "$NGINX_SITE"; then
+    die "A placeholder was left unsubstituted in ${NGINX_SITE}."
+  fi
+  if grep -q 'portal\.readypackets\.com' "$NGINX_SITE" && [[ "$DOMAIN" != "portal.readypackets.com" ]]; then
+    die "The template hostname survived substitution in ${NGINX_SITE}."
+  fi
 }
 
 HAVE_CERT="false"
