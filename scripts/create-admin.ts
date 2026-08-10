@@ -50,10 +50,27 @@ function generatePassword(): string {
   return `${randomBytes(18).toString("base64url")}Aa1!`;
 }
 
+/**
+ * Read a flag written either as `--flag=value` or `--flag value`, so the
+ * documented invocations and ordinary shell habits both work.
+ */
+function readFlag(args: string[], name: string): string | undefined {
+  const prefixed = args.find((arg) => arg.startsWith(`--${name}=`));
+  if (prefixed) return prefixed.slice(name.length + 3);
+  const index = args.indexOf(`--${name}`);
+  const next = index === -1 ? undefined : args[index + 1];
+  if (next !== undefined && !next.startsWith("--")) return next;
+  return undefined;
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  const emailArg = args.find((arg) => arg.startsWith("--email="))?.split("=")[1];
-  const nameArg = args.find((arg) => arg.startsWith("--name="))?.split("=")[1];
+  const emailArg = readFlag(args, "email");
+  const nameArg = readFlag(args, "name");
+  // Accepting a password on the command line is convenient for automated setup
+  // but leaves it in the shell history and, briefly, the process table. It is
+  // therefore opt-in and warned about rather than the default path.
+  const passwordArg = readFlag(args, "password");
   const generate = args.includes("--generate-password");
 
   const email = (emailArg ?? (await ask("Administrator email address: "))).trim().toLowerCase();
@@ -68,7 +85,23 @@ async function main(): Promise<void> {
   const lastName = parts.length > 1 ? parts.slice(1).join(" ") : "Administrator";
 
   let password: string;
-  if (generate || !process.stdin.isTTY) {
+  if (passwordArg) {
+    password = passwordArg;
+    const policy = await getPasswordPolicy();
+    const result = evaluatePassword(password, policy, {
+      email,
+      names: [firstName, lastName],
+    });
+    if (!result.valid) {
+      console.error("That password does not meet the policy:");
+      for (const problem of result.problems) console.error(`  - ${problem}`);
+      process.exit(1);
+    }
+    console.warn(
+      "\nWarning: the password was supplied on the command line, so it is now in your\n" +
+        "shell history. Clear it, or prefer --generate-password.\n",
+    );
+  } else if (generate || !process.stdin.isTTY) {
     password = generatePassword();
     console.log("\nGenerated password (store it now; it will not be shown again):");
     console.log(`  ${password}\n`);

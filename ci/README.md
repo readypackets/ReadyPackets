@@ -19,7 +19,7 @@ The workflow runs the same three gates used throughout development, against a
 MySQL service container:
 
 1. `tsc --noEmit` — type check, must report zero errors
-2. `vitest run` — 100 unit tests
+2. `vitest run` — 106 unit tests
 3. `verify-security.ts` — 46 black-box checks against a started instance
 
 The third gate matters most, because a policy header or an authorisation guard

@@ -134,7 +134,55 @@ The compiled bundle was built and started standalone, as it would run in product
 
 The lesson recorded: testing the development server does not test the deployment artefact. This defect would have appeared on first deploy and nowhere earlier.
 
-### 6.5 Smaller corrections
+### 6.5 Four defects found only by using the running application
+
+After the repository was pushed, the application was served over a public URL and
+driven through a browser as a customer and as an administrator. This found four
+further defects, none of which any unit test or API probe would have caught.
+
+**The administration panel was unreachable.** The shells were mounted at
+`/admin/:rest*` and `/portal/:rest*`. In wouter's path parser that pattern
+requires a trailing segment, so it matched `/admin/orders` but not the bare
+`/admin`, which fell through to the public catch-all and rendered the public 404.
+Every deep link worked, so the fault was invisible except at the entry point that
+every administrator would actually use. Both are now mounted with a lookahead
+regex, `/^\/admin(?=$|\/)/`, which matches the prefix followed by end-of-path or a
+slash while still refusing `/administration`.
+
+**The audit log classified everything as a warning.** `recordSecurityEvent`
+derived severity from `input.outcome`, but most call sites omit `outcome` and rely
+on the `"success"` default applied on the following line. Every such event was
+therefore stored with outcome `success` and severity `warning`, making a
+successful sign-in visually indistinguishable from a rejected one when scanning
+the log. Severity is now derived from the effective outcome, the historical rows
+were corrected, and `tests/audit.test.ts` pins the rule along with logger
+redaction and depth bounding. An audit trail that cries wolf on every row is not
+an audit trail, and the data here was being written and queried correctly — only
+the classification was wrong, which is precisely the kind of fault a functional
+test cannot see.
+
+**A blind index rendered an account unreachable.** The first administrator was
+created before the local environment file supplied `EMAIL_INDEX_KEY`, so its index
+was computed under the development fallback key. Once the real key was configured,
+lookups for that address no longer matched. This was confirmed by recomputing both
+HMACs from the two keys. The behaviour is correct and fail-closed — the account
+became unreachable rather than wrongly accessible — and it is a live demonstration
+of why the documentation insists that this key be backed up and never rotated
+casually. The orphaned row was removed and the account recreated.
+
+**Two navigation targets pointed at routes that do not exist.** Sign-in and the
+portal layout sent administrators to `/portal/security/mfa` while the router
+registers `/portal/mfa-setup`, and the administration dashboard linked
+`/admin/messages`. Both were found by scripting a comparison of every `/portal`
+and `/admin` string in the client against the registered route patterns, which is
+worth keeping as a standing check.
+
+With these resolved, the browser walkthrough confirmed the mandatory-MFA gate
+(enrolment via QR code and manual key, then verification), the administration
+dashboard and security centre, the portal dashboard with its onboarding state, and
+the order configurator quoting correctly with the bundle notice.
+
+### 6.6 Smaller corrections
 
 The MFA secret required a buffer type fix; the maintenance state field and the bind-host environment variable were referenced by outdated names in three files; the scheduler referenced a purge target that did not exist in the schema and was repointed at the email verification token table; a stale process held the port during one restart and produced a misleading result until the process was located by port rather than by name; and `MemoryDenyWriteExecute` was deliberately left disabled in the systemd unit, with a comment explaining that V8 requires writable-executable pages and enabling it would prevent the service from starting at all.
 
@@ -146,7 +194,7 @@ Three gates, all passing, all reproducible:
 
 ```bash
 pnpm exec tsc --noEmit                      # 0 errors
-pnpm exec vitest run                        # 100 passed
+pnpm exec vitest run                        # 106 passed
 pnpm exec tsx scripts/verify-security.ts    # 46/46 passed
 ```
 
@@ -166,7 +214,7 @@ A CI workflow runs all three gates on every push, provisioning MySQL as a servic
 | Security | Nonce CSP with no `unsafe-*`, three-layer CSRF, `__Host-` cookies, Argon2id, mandatory administrative MFA, AES-256-GCM with row binding and blind indexes, six-category rate limiting, magic-byte upload validation, single-use download tickets, dual audit trails |
 | Deployment | Four-stage Dockerfile, hardened docker-compose, nginx site, systemd unit with syscall filtering, idempotent VPS installer, backup and restore with checksums and a safety dump, log rotation, nightly backup timer |
 | Documentation | README, architecture, security, deployment, administrator guide, customer guide, gap analysis response, this session log |
-| Verification | 100 unit tests, 46 live security checks, CI workflow |
+| Verification | 106 unit tests, 46 live security checks, CI workflow, plus a full browser walkthrough of all three surfaces |
 
 ---
 

@@ -78,8 +78,8 @@ export function PortalLayout({
       navigate("/login");
       return;
     }
-    if (session.restricted && !location.startsWith("/portal/security/mfa")) {
-      navigate("/portal/security/mfa");
+    if (session.restricted && !location.startsWith("/portal/mfa-setup")) {
+      navigate("/portal/mfa-setup");
     }
   }, [session.loading, session.authenticated, session.mfaPending, session.restricted, location, navigate]);
 

@@ -209,7 +209,7 @@ An optional allowlist accepts individual addresses and CIDR ranges, applied to t
 The claims above are not assertions of intent. Two suites run against this repository, and both must pass before a deployment is considered valid.
 
 ```bash
-pnpm exec vitest run                        # 100 unit tests
+pnpm exec vitest run                        # 106 unit tests
 pnpm exec tsx scripts/verify-security.ts    # 46 live checks against the running service
 pnpm exec tsc --noEmit                      # zero type errors
 ```

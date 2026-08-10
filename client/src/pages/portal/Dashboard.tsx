@@ -88,7 +88,7 @@ export function PortalDashboard() {
       label: "Enable two-factor authentication",
       done: mfa.data?.enabled ?? false,
       action: mfa.data?.enabled ? null : (
-        <LinkButton size="sm" variant="outline" href="/portal/security/mfa">
+        <LinkButton size="sm" variant="outline" href="/portal/mfa-setup">
           Set up
         </LinkButton>
       ),
@@ -331,7 +331,7 @@ export function PortalDashboard() {
                 Two-factor authentication protects your project material even if your password is
                 compromised. It takes about a minute to set up.
               </p>
-              <LinkButton href="/portal/security/mfa" fullWidth className="mt-4">
+              <LinkButton href="/portal/mfa-setup" fullWidth className="mt-4">
                 Enable two-factor
               </LinkButton>
             </Card>

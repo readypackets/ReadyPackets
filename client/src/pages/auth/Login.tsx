@@ -82,7 +82,7 @@ export function LoginPage() {
       return;
     }
     if (session.restricted) {
-      navigate("/portal/security/mfa");
+      navigate("/portal/mfa-setup");
       return;
     }
     if (session.authenticated && session.user) {
@@ -103,7 +103,7 @@ export function LoginPage() {
           "Two-factor authentication required",
           "Administrators must enrol an authenticator app before continuing.",
         );
-        navigate("/portal/security/mfa");
+        navigate("/portal/mfa-setup");
         return;
       }
       if (result.mustChangePassword) {

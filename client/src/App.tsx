@@ -285,15 +285,26 @@ export function App() {
       <Route path="/forgot-password" component={AuthRoutes} />
       <Route path="/reset-password" component={AuthRoutes} />
 
-      {/* Administration */}
-      <Route path="/admin/:rest*">
+      {/*
+        Administration and portal shells.
+
+        These use a regex rather than `/admin/:rest*` because that pattern requires
+        a trailing segment and therefore does not match the bare parent path, so
+        `/admin` and `/portal` fell through to the public 404. The lookahead
+        matches the prefix followed by either the end of the path or a slash, so
+        `/admin`, `/admin/`, and `/admin/orders/5` all resolve to the shell while
+        `/administration` correctly does not.
+
+        `nest` is deliberately not used: the child routes below are written as
+        absolute paths, and nesting would rewrite the location they match against.
+      */}
+      <Route path={/^\/admin(?=$|\/)/}>
         <RequireAuth>
           <AdminRoutes />
         </RequireAuth>
       </Route>
 
-      {/* Customer portal */}
-      <Route path="/portal/:rest*">
+      <Route path={/^\/portal(?=$|\/)/}>
         <RequireAuth>
           <PortalRoutes />
         </RequireAuth>

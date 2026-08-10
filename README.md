@@ -92,7 +92,7 @@ Because host validation is strict, requests must present the configured hostname
 Two independent suites run against the code and against the running service.
 
 ```bash
-pnpm exec vitest run                                   # 100 unit tests
+pnpm exec vitest run                                   # 106 unit tests
 pnpm exec tsx scripts/verify-security.ts               # 46 live security checks
 pnpm exec tsc --noEmit                                 # type check
 ```

@@ -73,7 +73,7 @@ export function AdminDashboard() {
     {
       label: "New enquiries",
       value: stats?.newMessages ?? 0,
-      href: "/admin/messages",
+      href: "/admin/moderation",
       icon: Mail,
     },
   ];

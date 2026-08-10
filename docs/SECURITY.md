@@ -204,7 +204,7 @@ Secrets live in a root-owned file readable only by the service account. The inst
 ## Verification
 
 ```bash
-pnpm exec vitest run                        # 100 unit tests
+pnpm exec vitest run                        # 106 unit tests
 pnpm exec tsx scripts/verify-security.ts    # 46 live checks
 pnpm exec tsc --noEmit                      # zero type errors
 ```

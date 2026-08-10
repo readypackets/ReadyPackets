@@ -64,12 +64,18 @@ interface SecurityEventInput {
 }
 
 export async function recordSecurityEvent(input: SecurityEventInput): Promise<void> {
-  const severity = input.severity ?? (input.outcome === "success" ? "info" : "warning");
+  // Derive severity from the *effective* outcome, not the supplied one. Most call
+  // sites omit `outcome` because "success" is the sensible default, and reading
+  // `input.outcome` directly classified all of those as warnings — which made a
+  // successful sign-in look indistinguishable from a rejected one when scanning
+  // the log. An audit trail that cries wolf on every row is not an audit trail.
+  const outcome = input.outcome ?? "success";
+  const severity = input.severity ?? (outcome === "success" ? "info" : "warning");
   try {
     await db.insert(securityLogs).values({
       eventType: input.eventType,
       severity,
-      outcome: input.outcome ?? "success",
+      outcome,
       message: input.message.slice(0, 500),
       userId: input.userId ?? null,
       subjectHash: input.subject ? blindIndex(input.subject) : null,
