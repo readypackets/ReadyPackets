@@ -141,17 +141,36 @@ DB_USER="${DB_USER:-readypackets}"
 log "Configuring MySQL"
 systemctl enable --now mysql >/dev/null 2>&1 || systemctl enable --now mysqld
 
+# MySQL distinguishes 'localhost' (Unix socket) from '127.0.0.1' (TCP loopback)
+# and a grant for one does not apply to the other. DATABASE_URL below connects
+# over TCP to 127.0.0.1, so that is the host the grant must name. Both are
+# created because operators reasonably expect the socket form to work too when
+# running maintenance commands by hand.
 mysql --protocol=socket -uroot <<SQL
 CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\`
   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '${DB_USER}'@'127.0.0.1'
+  IDENTIFIED BY '${DB_PASSWORD}';
+ALTER USER '${DB_USER}'@'127.0.0.1' IDENTIFIED BY '${DB_PASSWORD}';
 CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost'
   IDENTIFIED BY '${DB_PASSWORD}';
 ALTER USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';
--- Only the privileges the application needs. No DROP, no GRANT, no FILE.
-GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, INDEX, ALTER, REFERENCES
+-- Only the privileges the application needs. No GRANT, no FILE, no SUPER.
+-- DROP is included because the migration runner must be able to replace an
+-- index or a constraint; it cannot drop the database itself.
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, INDEX, ALTER, DROP, REFERENCES
+  ON \`${DB_NAME}\`.* TO '${DB_USER}'@'127.0.0.1';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, INDEX, ALTER, DROP, REFERENCES
   ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost';
 FLUSH PRIVILEGES;
 SQL
+
+# Fail loudly here rather than at the migration step, where the cause is far
+# less obvious from the error message.
+if ! mysql -h 127.0.0.1 -u "$DB_USER" -p"$DB_PASSWORD" -e 'SELECT 1' \
+     "$DB_NAME" >/dev/null 2>&1; then
+  die "The application database user cannot connect over TCP to 127.0.0.1. Check the grants for '${DB_USER}'@'127.0.0.1'."
+fi
 
 # MySQL must not listen on a public interface.
 MYSQL_CONF="/etc/mysql/mysql.conf.d/zz-readypackets.cnf"

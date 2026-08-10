@@ -22,8 +22,11 @@ deploy/tls/
 *.p12
 *.pfx
 
-# Backups may contain the encryption key and the full customer database
-*.sql
+# Backups may contain the encryption key and the full customer database.
+# Scoped deliberately: a blanket *.sql rule also swallows drizzle/migrations,
+# which leaves a clone unable to build its own database. Migrations are source
+# and must be tracked.
+*.dump.sql
 *.sql.gz
 *.tar.gz
 *.age
