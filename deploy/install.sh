@@ -307,13 +307,15 @@ systemctl restart readypackets
 # ---------------------------------------------------------------------------
 log "Configuring nginx"
 NGINX_SITE="/etc/nginx/sites-available/readypackets"
-sed "s/portal\.readypackets\.com/${DOMAIN}/g" "${APP_DIR}/deploy/nginx.conf" > "$NGINX_SITE"
 
-# Before a certificate exists the TLS server block cannot load, so serve plain
-# HTTP until certbot has run.
-if [[ ! -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]]; then
-  warn "No certificate found; installing a temporary HTTP-only configuration."
+# A configuration that names a certificate file which does not exist yet is a
+# fatal error, not a warning, and `systemctl reload` in that state silently keeps
+# serving the previous configuration. So the order matters: serve plain HTTP,
+# obtain the certificate against that, and only then install the TLS
+# configuration.
+write_http_only_site() {
   cat > "$NGINX_SITE" <<TEMP
+# Temporary HTTP-only configuration, replaced once a certificate exists.
 server {
     listen 80;
     listen [::]:80;
@@ -321,7 +323,10 @@ server {
     server_tokens off;
     client_max_body_size 55m;
 
-    location /.well-known/acme-challenge/ { root /var/www/html; allow all; }
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+        allow all;
+    }
 
     location / {
         proxy_http_version 1.1;
@@ -334,6 +339,19 @@ server {
     }
 }
 TEMP
+}
+
+write_hardened_site() {
+  sed "s/portal\.readypackets\.com/${DOMAIN}/g" "${APP_DIR}/deploy/nginx.conf" > "$NGINX_SITE"
+}
+
+HAVE_CERT="false"
+[[ -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]] && HAVE_CERT="true"
+
+if [[ "$HAVE_CERT" == "true" ]]; then
+  write_hardened_site
+else
+  write_http_only_site
 fi
 
 ln -sf "$NGINX_SITE" /etc/nginx/sites-enabled/readypackets
@@ -341,30 +359,71 @@ rm -f /etc/nginx/sites-enabled/default
 nginx -t
 systemctl reload nginx
 
-if [[ "$WANT_TLS" == "true" ]]; then
-  log "Requesting a TLS certificate"
-  apt-get install -y --no-install-recommends certbot python3-certbot-nginx
-  certbot --nginx --non-interactive --agree-tos \
-    --email "$CONTACT_EMAIL" -d "$DOMAIN" --redirect || \
-    warn "certbot failed; the site is still reachable over HTTP. Re-run certbot once DNS resolves."
-  # Reinstate the hardened configuration, which certbot may have rewritten.
-  sed "s/portal\.readypackets\.com/${DOMAIN}/g" "${APP_DIR}/deploy/nginx.conf" > "$NGINX_SITE"
-  nginx -t && systemctl reload nginx
+# ---------------------------------------------------------------------------
+# Firewall
+# ---------------------------------------------------------------------------
+# This must happen before certbot runs: the ACME challenge is fetched over
+# inbound HTTP, so with port 80 closed the very first install can never
+# validate. `ufw reset` is deliberately not used -- it would discard rules an
+# operator added for their own reasons, and on a remote host a reset that
+# reorders SSH is a good way to lock yourself out.
+log "Configuring the firewall"
+ufw --force enable >/dev/null 2>&1 || true
+ufw default deny incoming  >/dev/null
+ufw default allow outgoing >/dev/null
+ufw allow OpenSSH >/dev/null 2>&1 || ufw allow 22/tcp >/dev/null
+ufw allow 80/tcp  >/dev/null
+ufw allow 443/tcp >/dev/null
+# Port 3000 is never opened: the application is reachable only through nginx.
+
+if [[ "$WANT_TLS" == "true" && "$HAVE_CERT" == "false" ]]; then
+  log "Requesting a TLS certificate for ${DOMAIN}"
+  apt-get install -y --no-install-recommends certbot >/dev/null
+
+  # The webroot plugin validates against the running HTTP-only site rather than
+  # rewriting the configuration, which keeps certificate issuance independent of
+  # whatever nginx configuration is in place.
+  install -d -m 0755 /var/www/html/.well-known/acme-challenge
+
+  if certbot certonly --webroot --webroot-path /var/www/html \
+       --non-interactive --agree-tos --email "$CONTACT_EMAIL" \
+       -d "$DOMAIN"; then
+    HAVE_CERT="true"
+  else
+    warn "Certificate issuance failed. The site remains available over HTTP."
+    warn "Check that ${DOMAIN} resolves to this host, then re-run:"
+    warn "  certbot certonly --webroot --webroot-path /var/www/html -d ${DOMAIN}"
+    warn "  ${BASH_SOURCE[0]} --domain ${DOMAIN} --skip-packages"
+  fi
+fi
+
+if [[ "$HAVE_CERT" == "true" ]]; then
+  log "Installing the hardened TLS configuration"
+  write_hardened_site
+  if nginx -t 2>/dev/null; then
+    systemctl reload nginx
+  else
+    # Never leave a broken configuration in place: nginx would keep serving the
+    # old one and the operator would have no idea the new one was rejected.
+    warn "The hardened configuration was rejected by nginx; reverting to HTTP-only."
+    nginx -t || true
+    write_http_only_site
+    nginx -t && systemctl reload nginx
+  fi
+
+  # Renewal must reload nginx, or the certificate silently expires in place.
+  install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+  cat > /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh <<'HOOK'
+#!/bin/sh
+# Installed by the ReadyPackets installer.
+systemctl reload nginx
+HOOK
+  chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
 fi
 
 # ---------------------------------------------------------------------------
-# Firewall, fail2ban, log rotation, backups
+# fail2ban, log rotation, backups
 # ---------------------------------------------------------------------------
-log "Configuring the firewall"
-ufw --force reset >/dev/null
-ufw default deny incoming
-ufw default allow outgoing
-ufw allow OpenSSH
-ufw allow 80/tcp
-ufw allow 443/tcp
-# Port 3000 is never opened: the application is reachable only through nginx.
-ufw --force enable
-
 log "Configuring fail2ban for SSH and nginx"
 cat > /etc/fail2ban/jail.d/readypackets.local <<'JAIL'
 [sshd]
