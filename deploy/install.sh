@@ -476,8 +476,21 @@ log "Installing the nightly backup timer"
 install -m 0750 "${APP_DIR}/deploy/backup.sh" /usr/local/sbin/readypackets-backup
 install -m 0644 "${APP_DIR}/deploy/readypackets-backup.service" /etc/systemd/system/
 install -m 0644 "${APP_DIR}/deploy/readypackets-backup.timer" /etc/systemd/system/
+# The destination must exist before the unit runs: ReadWritePaths cannot mount a
+# path that is absent, and the unit would fail with 226/NAMESPACE.
+install -d -m 0700 -o root -g root /var/backups/readypackets
 systemctl daemon-reload
 systemctl enable --now readypackets-backup.timer
+
+# Run one backup now. An untested backup is not a backup, and discovering that
+# the timer never worked is something that should happen during installation
+# rather than during a restore.
+log "Verifying the backup path with a first run"
+if systemctl start readypackets-backup.service; then
+  log "Backup completed: $(ls -1 /var/backups/readypackets/ 2>/dev/null | tail -1)"
+else
+  warn "The first backup failed. Investigate with: journalctl -u readypackets-backup -n 40"
+fi
 
 # ---------------------------------------------------------------------------
 # Verification

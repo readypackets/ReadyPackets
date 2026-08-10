@@ -25,6 +25,12 @@ RestrictRealtime=true
 RestrictSUIDSGID=true
 # Needs write access only to the backup destination.
 ProtectSystem=full
+# ReadWritePaths refuses to set up the mount namespace when the path does not
+# already exist: the unit fails with 226/NAMESPACE before ExecStart runs, so the
+# script's own mkdir never gets a chance and nightly backups silently never
+# happen. The "+" prefix runs this step outside the sandbox, which is what makes
+# creating the directory possible at all.
+ExecStartPre=+/usr/bin/install -d -m 0700 -o root -g root /var/backups/readypackets
 ReadWritePaths=/var/backups/readypackets
 
 TimeoutStartSec=3600

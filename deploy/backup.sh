@@ -67,14 +67,19 @@ install -d -m 0700 "$OUTPUT_DIR"
 log "Dumping database '${DB_NAME}'"
 # The password is passed through the environment rather than the command line so
 # it does not appear in the process table.
+# --events and --routines are deliberately absent. They require the EVENT
+# privilege and SELECT on mysql.proc respectively, which the application user
+# does not hold and should not: the schema defines neither scheduled events nor
+# stored procedures. Including them made mysqldump abort with "Access denied",
+# and the tempting fix -- widening the grant -- would trade least privilege for
+# the ability to dump objects that do not exist. --triggers is kept, needing only
+# the TRIGGER privilege, so the dump stays faithful if one is ever added.
 MYSQL_PWD="$DB_PASSWORD" mysqldump \
   --host=127.0.0.1 \
   --user="$DB_USER" \
   --single-transaction \
   --quick \
-  --routines \
   --triggers \
-  --events \
   --set-gtid-purged=OFF \
   --default-character-set=utf8mb4 \
   --no-tablespaces \
@@ -109,7 +114,7 @@ Dump bytes:     ${DUMP_BYTES}
 Includes files: $([[ "$DB_ONLY" == "false" ]] && echo yes || echo no)
 Schema version: $(MYSQL_PWD="$DB_PASSWORD" mysql --host=127.0.0.1 --user="$DB_USER" \
                     --batch --skip-column-names -e \
-                    "SELECT COALESCE(MAX(name),'none') FROM \`${DB_NAME}\`.schema_migrations" 2>/dev/null || echo unknown)
+                    "SELECT COALESCE(MAX(filename),'none') FROM \`${DB_NAME}\`.schema_migrations" 2>/dev/null || echo unknown)
 
 WARNING: this archive contains DATA_ENCRYPTION_KEY and EMAIL_INDEX_KEY.
 Treat it as equivalent to the full customer database in plaintext.
