@@ -15,6 +15,8 @@ import { intakeRouter } from "./intake.js";
 import { ordersRouter } from "./orders.js";
 import { publicRouter } from "./public.js";
 import { ticketsRouter } from "./tickets.js";
+import { stripeRouter } from "./stripe.js";
+import { integrationsRouter } from "./integrations.js";
 
 export const appRouter = router({
   auth: authRouter,
@@ -28,6 +30,8 @@ export const appRouter = router({
   admin: adminRouter,
   adminFiles: adminFilesRouter,
   adminSecurity: adminSecurityRouter,
+  stripe: stripeRouter,
+  integrations: integrationsRouter,
 });
 
 export type AppRouter = typeof appRouter;

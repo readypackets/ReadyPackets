@@ -1,0 +1,21 @@
+User-agent: *
+# Allow the public marketing pages.
+Allow: /
+Allow: /packets
+Allow: /how-it-works
+Allow: /about
+Allow: /reviews
+Allow: /community
+Allow: /changelog
+Allow: /contact
+Allow: /legal/
+
+# Disallow the authenticated portal, admin panel, and API.
+Disallow: /portal/
+Disallow: /admin/
+Disallow: /api/
+Disallow: /login
+Disallow: /register
+Disallow: /verify-email
+Disallow: /forgot-password
+Disallow: /reset-password

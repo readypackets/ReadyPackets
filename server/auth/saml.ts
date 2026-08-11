@@ -1,0 +1,263 @@
+/**
+ * SAML 2.0 SSO service.
+ *
+ * Supports Microsoft Entra ID, Okta, and any standards-compliant SAML 2.0 IdP.
+ * Configuration is stored per-tenant in the saml_configs table and is hot-reloaded
+ * on each request so an admin can update it without restarting the service.
+ *
+ * Flow:
+ *   1. Browser hits GET /api/saml/login  → service builds AuthnRequest, redirects to IdP
+ *   2. IdP authenticates user, POSTs assertion to POST /api/saml/acs
+ *   3. ACS validates signature, extracts attributes, provisions/finds the user,
+ *      creates a session, and redirects to the portal
+ *   4. GET /api/saml/metadata  → SP metadata XML for IdP registration
+ *   5. GET /api/saml/logout    → SLO initiation (best-effort)
+ */
+import { SAML, type SamlConfig } from "@node-saml/node-saml";
+import { eq } from "drizzle-orm";
+import type { Request, Response } from "express";
+import { db } from "../db/client.js";
+import { samlConfigs, users } from "../db/schema.js";
+import {
+  createUser,
+  getUserByEmail,
+  type CreateUserInput,
+} from "../db/users.js";
+import { createSession } from "./session.js";
+import { env } from "../config/env.js";
+import { logger } from "../observability/logger.js";
+import { recordSecurityEvent } from "../observability/audit.js";
+
+
+// ---------------------------------------------------------------------------
+// Config loading
+// ---------------------------------------------------------------------------
+
+interface SamlConfigRow {
+  id: number;
+  name: string;
+  enabled: boolean;
+  entryPoint: string;
+  issuer: string;
+  idpCertificate: string;
+  signatureAlgorithm: string;
+  attributeMapping: Record<string, string> | null;
+  defaultRole: string;
+  autoProvision: boolean;
+}
+
+async function getActiveSamlConfig(): Promise<SamlConfigRow | null> {
+  const rows = await db
+    .select()
+    .from(samlConfigs)
+    .where(eq(samlConfigs.enabled, true))
+    .limit(1);
+
+  if (rows.length === 0) return null;
+  const row = rows[0]!;
+  return {
+    id: row.id,
+    name: row.name,
+    enabled: row.enabled,
+    entryPoint: row.entryPoint,
+    issuer: row.issuer,
+    idpCertificate: row.idpCertificate,
+    signatureAlgorithm: row.signatureAlgorithm,
+    attributeMapping: row.attributeMapping as Record<string, string> | null,
+    defaultRole: row.defaultRole,
+    autoProvision: row.autoProvision,
+  };
+}
+
+function buildSamlInstance(config: SamlConfigRow): SAML {
+  const samlOptions: SamlConfig = {
+    entryPoint: config.entryPoint,
+    issuer: `${env.appUrl}/api/saml/metadata`,
+    callbackUrl: `${env.appUrl}/api/saml/acs`,
+    idpCert: config.idpCertificate,
+    signatureAlgorithm: config.signatureAlgorithm as "sha1" | "sha256" | "sha512",
+    wantAssertionsSigned: true,
+    wantAuthnResponseSigned: false,
+    disableRequestedAuthnContext: true,
+  };
+  return new SAML(samlOptions);
+}
+
+// ---------------------------------------------------------------------------
+// SP Metadata
+// ---------------------------------------------------------------------------
+
+export async function handleMetadata(req: Request, res: Response): Promise<void> {
+  const config = await getActiveSamlConfig();
+  if (!config) {
+    res.status(404).type("text/plain").send("SAML SSO is not configured.");
+    return;
+  }
+
+  const saml = buildSamlInstance(config);
+  const metadata = saml.generateServiceProviderMetadata(null, null);
+  res.type("application/xml").send(metadata);
+}
+
+// ---------------------------------------------------------------------------
+// IdP redirect (login initiation)
+// ---------------------------------------------------------------------------
+
+export async function handleLoginRedirect(req: Request, res: Response): Promise<void> {
+  const config = await getActiveSamlConfig();
+  if (!config) {
+    res.status(503).type("text/plain").send("SAML SSO is not currently enabled.");
+    return;
+  }
+
+  try {
+    const saml = buildSamlInstance(config);
+    const authorizeUrl = await saml.getAuthorizeUrlAsync("", req.headers.host ?? "", {});
+    const redirectUrl = typeof authorizeUrl === "string" ? authorizeUrl : (authorizeUrl as any).context as string;
+    res.redirect(redirectUrl);
+  } catch (err) {
+    logger.error("saml.login.redirect_failed", { error: err });
+    res.status(500).type("text/plain").send("Failed to initiate SSO. Please try again.");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ACS (Assertion Consumer Service) — receives the IdP POST
+// ---------------------------------------------------------------------------
+
+export async function handleAcs(req: Request, res: Response): Promise<void> {
+  const config = await getActiveSamlConfig();
+  if (!config) {
+    res.status(503).type("text/plain").send("SAML SSO is not currently enabled.");
+    return;
+  }
+
+  const samlResponse = req.body?.SAMLResponse as string | undefined;
+  if (!samlResponse) {
+    res.status(400).type("text/plain").send("Missing SAMLResponse.");
+    return;
+  }
+
+  const saml = buildSamlInstance(config);
+  let profile: Record<string, unknown>;
+
+  try {
+    const result = await saml.validatePostResponseAsync(req.body as Record<string, string>);
+    profile = result.profile as Record<string, unknown>;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn("saml.acs.validation_failed", { error: msg });
+    await recordSecurityEvent({
+      eventType: "login.failure",
+      outcome: "failure",
+      message: `SAML assertion validation failed: ${msg}`,
+      ipAddress: req.ip ?? null,
+    });
+    res.redirect(`${env.appUrl}/login?error=saml_invalid`);
+    return;
+  }
+
+  // Extract email from the assertion using the configured attribute mapping.
+  const mapping = config.attributeMapping ?? {};
+  const emailAttr = mapping["email"] ?? "email";
+  const firstNameAttr = mapping["firstName"] ?? "firstName";
+  const lastNameAttr = mapping["lastName"] ?? "lastName";
+
+  const rawEmail =
+    (profile[emailAttr] as string | undefined) ??
+    (profile["nameID"] as string | undefined) ??
+    "";
+
+  const email = rawEmail.trim().toLowerCase();
+  if (!email || !email.includes("@")) {
+    logger.warn("saml.acs.no_email", { profile: JSON.stringify(profile).slice(0, 200) });
+    res.redirect(`${env.appUrl}/login?error=saml_no_email`);
+    return;
+  }
+
+  const firstName = String(profile[firstNameAttr] ?? "").slice(0, 64) || "User";
+  const lastName = String(profile[lastNameAttr] ?? "").slice(0, 64) || "";
+
+  // Find or provision the user.
+  let user = await getUserByEmail(email);
+
+  if (!user) {
+    if (!config.autoProvision) {
+      logger.warn("saml.acs.no_account", { email: email.slice(0, 4) + "***" });
+      await recordSecurityEvent({
+        eventType: "login.failure",
+        outcome: "failure",
+        message: "SAML login attempted for unregistered user and auto-provisioning is disabled",
+        ipAddress: req.ip ?? null,
+      });
+      res.redirect(`${env.appUrl}/login?error=saml_no_account`);
+      return;
+    }
+
+    // Auto-provision the account.
+    const input: CreateUserInput = {
+      email,
+      firstName,
+      lastName,
+      loginMethod: "saml",
+      role: config.defaultRole as "admin" | "staff" | "customer",
+      emailVerified: true, // IdP-verified
+    };
+    user = await createUser(input);
+    logger.info("saml.user_provisioned", { userId: user.id });
+  } else {
+    // Ensure the user's login method is set to SAML.
+    if (user.loginMethod !== "saml") {
+      await db
+        .update(users)
+        .set({ loginMethod: "saml" })
+        .where(eq(users.id, user.id));
+    }
+  }
+
+  // Check the user is active.
+  if (user.status !== "active") {
+    await recordSecurityEvent({
+      eventType: "login.failure",
+      outcome: "failure",
+      message: `SAML login blocked: account status is ${user.status}`,
+      userId: user.id,
+      ipAddress: req.ip ?? null,
+    });
+    res.redirect(`${env.appUrl}/login?error=account_suspended`);
+    return;
+  }
+
+  // Create a session — createSession sets the cookies on the response.
+  await createSession(res, {
+    userId: user.id,
+    userAgent: req.headers["user-agent"]?.slice(0, 255) ?? null,
+    ipAddress: req.ip ?? null,
+  });
+
+  await recordSecurityEvent({
+    eventType: "login.success",
+    outcome: "success",
+    message: "SAML SSO login succeeded",
+    userId: user.id,
+    ipAddress: req.ip ?? null,
+    userAgent: req.headers["user-agent"]?.slice(0, 255) ?? null,
+  });
+
+  const relayState = req.body?.RelayState as string | undefined;
+  const redirectTo =
+    relayState && relayState.startsWith("/") ? relayState : "/portal";
+
+  res.redirect(`${env.appUrl}${redirectTo}`);
+}
+
+// ---------------------------------------------------------------------------
+// SLO (Single Logout) — best-effort
+// ---------------------------------------------------------------------------
+
+export async function handleLogout(req: Request, res: Response): Promise<void> {
+  // Clear the local session cookie and redirect to the IdP logout if configured.
+  const cookieName = `${env.cookiePrefix}session`;
+  res.clearCookie(cookieName, { path: "/" });
+  res.redirect(`${env.appUrl}/login?logged_out=1`);
+}

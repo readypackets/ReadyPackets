@@ -36,6 +36,13 @@ import { createDownloadRouter } from "./http/downloads.js";
 import { createUploadRouter } from "./http/uploads.js";
 import { logger } from "./observability/logger.js";
 import { getMaintenanceState } from "./services/settings.js";
+import { handleStripeWebhook } from "./services/stripe.js";
+import {
+  handleAcs,
+  handleLoginRedirect,
+  handleLogout,
+  handleMetadata,
+} from "./auth/saml.js";
 import { pingDatabase } from "./db/client.js";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -149,6 +156,28 @@ export function createApp(): Express {
     res.status(databaseOk ? 200 : 503).json({ status: databaseOk ? "ready" : "degraded" });
   });
 
+  // Stripe webhook: must receive the raw body before JSON parsing so the
+  // signature can be verified. Registered here, before express.json().
+  app.post(
+    "/api/stripe/webhook",
+    express.raw({ type: "application/json", limit: "512kb" }),
+    async (req: Request, res: Response) => {
+      const sig = req.headers["stripe-signature"];
+      if (!sig || typeof sig !== "string") {
+        res.status(400).json({ error: "Missing Stripe-Signature header" });
+        return;
+      }
+      try {
+        const result = await handleStripeWebhook(req.body as Buffer, sig);
+        res.json({ received: true, ...result });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Webhook error";
+        logger.warn("stripe.webhook.error", { error: msg });
+        res.status(400).json({ error: msg });
+      }
+    }
+  );
+
   app.use(
     express.json({
       limit: "256kb",
@@ -191,6 +220,14 @@ export function createApp(): Express {
     res.status(503);
     await serveIndex(req, res);
   });
+
+  // SAML SSO routes. These use form-encoded POST bodies (ACS) and plain GET
+  // (metadata, login, logout), so they must be registered before the tRPC
+  // handler and after the body parser.
+  app.get("/api/saml/metadata", handleMetadata);
+  app.get("/api/saml/login", handleLoginRedirect);
+  app.post("/api/saml/acs", express.urlencoded({ extended: false }), handleAcs);
+  app.get("/api/saml/logout", handleLogout);
 
   app.use("/api/files", createDownloadRouter());
   app.use("/api/files", createUploadRouter());

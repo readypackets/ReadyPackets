@@ -314,3 +314,110 @@ Mandatory administrative MFA was confirmed working in production: the portal ref
 ---
 
 *This log is committed to the repository as required by the project instructions. It records the session's requests, decisions, defects, and outcomes, and is intended to be readable by someone who was not present for the work.*
+
+---
+
+## 12. Gap-fill session — August 10, 2026 (continued)
+
+### 12.1 Request
+
+> what features are missing from the original master prompt and rebuild?
+
+**Response:** A full gap analysis was produced comparing the master prompt's requirements against what was built. The analysis identified three tiers of missing features. The most significant were: Stripe checkout (no payment flow existed), SAML SSO (configuration stored but login flow not wired), SharePoint phase automation (tables existed but Graph API calls were not implemented), missing admin pages (Finance, Integrations), and no PWA support.
+
+### 12.2 Request
+
+> start on all of them recommended next items and make sure that the context is backed up to github along with the session log of all prompts and responses along with the latest code
+
+**Response:** All five priority features were implemented in sequence.
+
+---
+
+### 12.3 Feature 1: Stripe checkout
+
+**What was built:**
+- `server/services/stripe.ts` — Stripe client initialisation, coupon validation, checkout session creation (with coupon and referral code support), webhook event processing (checkout.session.completed, payment_intent.payment_failed, charge.refunded), refund initiation, and payments list.
+- `server/routers/stripe.ts` — tRPC procedures: `validateCoupon`, `createCheckout`, `paymentStatus`, `payments`, `coupons`, `upsertCoupon`, `setCouponActive`, `referrals`, `payouts`, `processPayout`, `refunds`, `initiateRefund`, `config`.
+- Stripe webhook raw-body route registered in `app.ts` before the JSON body parser so the signature can be verified.
+- `client/src/pages/admin/Finance.tsx` — admin Finance page with Stripe status, payments list, coupon management (create/edit/enable/disable), and refund initiation.
+
+**Defects found and fixed:**
+- `SessionUser` type does not include email (intentionally — it is encrypted at rest). The checkout procedure now looks up the email via `getUserById` rather than reading it from the session token.
+- The Stripe API version in the installed package (`2026-07-29.dahlia`) did not match the version string I initially wrote (`2025-06-30.basil`). Fixed by reading the installed package's `API_VERSION` constant.
+- `recordSecurity` was not an exported function name; the correct name is `recordSecurityEvent`. Fixed.
+- `ActivityEventInput` does not have a `userId` field; the correct field is `actorUserId`. Fixed.
+
+---
+
+### 12.4 Feature 2: SAML SSO
+
+**What was built:**
+- `server/auth/saml.ts` — SAML 2.0 service using `@node-saml/node-saml`. Handles SP metadata generation, IdP redirect (login initiation), ACS (assertion consumer service — validates the assertion, extracts attributes using the configured mapping, finds or auto-provisions the user, creates a session), and SLO (best-effort logout).
+- Four routes registered in `app.ts`: `GET /api/saml/metadata`, `GET /api/saml/login`, `POST /api/saml/acs`, `GET /api/saml/logout`.
+- The SAML configuration is loaded from the `saml_configs` table on each request, so an admin can update it without restarting the service.
+
+**Defects found and fixed:**
+- `getAuthorizeUrlAsync` returns a `String` object in the installed version, not a plain string. The return value is now coerced correctly.
+- `createSession` takes `(res, options)` not `(options)`. Fixed.
+- Unused imports (`setSessionCookie`, `generateCsrfToken`, `insertedId`) removed after the signature fix.
+
+---
+
+### 12.5 Feature 3: SharePoint phase automation
+
+**What was built:**
+- `server/services/sharepoint.ts` — Microsoft Graph API integration. Handles: OAuth2 client-credentials token acquisition with in-memory caching, folder creation (recursive, with conflict handling), placeholder file upload, phase job queue processing with exponential back-off (1 min → 5 min → 15 min → 1 hr → 4 hr), and webhook delivery with HMAC-SHA256 signing.
+- Microsoft Graph environment variables added to `server/config/env.ts`: `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET`, `GRAPH_SHAREPOINT_SITE_ID`, `GRAPH_SHAREPOINT_DRIVE_ID`, `GRAPH_ROOT_FOLDER_PATH`.
+- Two new scheduler jobs added to `server/services/scheduler.ts`: `phase_jobs` (runs every 60 seconds) and `webhook_delivery` (runs every 30 seconds).
+- `server/routers/integrations.ts` — tRPC procedures for webhook endpoint management, delivery log, phase kickoff configuration, phase job monitoring, and Graph/SharePoint configuration status.
+- `client/src/pages/admin/Integrations.tsx` — admin Integrations page with webhook endpoint CRUD, delivery log with retry, phase kickoff configuration per phase, and SharePoint/SAML status display.
+
+**Defects found and fixed:**
+- `generateStorageKey` takes one argument, not two. Fixed.
+- `files` table insert used wrong column names (`storagePath`, `mimeType`, `isVisible`, `label`). Fixed to match the actual schema (`storageKey`, `detectedMime`, `visibleToCustomer`, `isPlaceholder`).
+
+---
+
+### 12.6 Feature 4: Missing admin pages
+
+**What was built:**
+- `client/src/pages/admin/Finance.tsx` — Stripe payments, coupon management, refunds.
+- `client/src/pages/admin/Integrations.tsx` — webhook endpoints, delivery log, phase kickoff config, SharePoint/SAML status.
+- Both pages added to `App.tsx` router and `AdminLayout.tsx` sidebar (Finance under a new "Finance" section, Integrations under "Platform").
+- `robots.txt` added to `client/public/`.
+
+**Defects found and fixed:**
+- `Field` is not an exported name from `Field.tsx`; the correct name is `FieldShell`. Fixed with an alias import.
+- `Button` does not have a `loading` prop; the correct prop is `busy`. Fixed.
+- `Tabs` component uses `items`/`initialId`/`onChange` not `tabs`/`activeTab`/`onTabChange`. Fixed.
+- `(typeof data)[0]` does not work when `data` is `T[] | undefined`; changed to `NonNullable<typeof data>[0]`.
+
+---
+
+### 12.7 Feature 5: PWA
+
+**What was built:**
+- `vite-plugin-pwa` added to Vite config with `generateSW` strategy, a web app manifest (name, icons, theme colour, start URL `/portal`), Workbox precaching of all static assets, `NetworkOnly` handler for all `/api/` routes, and `navigateFallback` pointing at `/offline.html`.
+- `client/public/offline.html` — branded offline fallback page with a "Try again" button.
+- `client/public/robots.txt` — allows the public marketing pages, disallows the portal, admin panel, and API.
+- `client/src/components/PwaPrompts.tsx` — two components: `PwaInstallPrompt` (listens for `beforeinstallprompt`, shows a branded banner) and `PwaUpdatePrompt` (registers the service worker manually, listens for `updatefound`, shows an update banner with a reload button).
+- PWA icons generated at 192×192 and 512×512 from the master brand icon.
+- Both prompt components rendered at the root level in `main.tsx`.
+
+**Build output:** 71 precached entries, `dist/sw.js` and `dist/workbox-*.js` generated. Full build clean.
+
+---
+
+### 12.8 Final verification
+
+- `tsc --noEmit`: clean (0 errors)
+- `vitest run`: 112/112 tests pass
+- `vite build`: clean, PWA service worker generated
+
+### 12.9 Deployment
+
+All changes committed and deployed to `myportal.readypackets.com` via the idempotent installer. The production site was confirmed live and serving after deployment.
+
+---
+
+*Session log updated as required by project instructions. All changes pushed to the repository.*

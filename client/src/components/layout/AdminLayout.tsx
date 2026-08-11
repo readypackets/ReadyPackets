@@ -9,10 +9,12 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import {
   ClipboardList,
+  CreditCard,
   FileText,
   Gauge,
   LayoutDashboard,
   LifeBuoy,
+  Link2,
   LogOut,
   Menu,
   Package,
@@ -57,8 +59,15 @@ const NAV: { section: string; items: NavItem[] }[] = [
     ],
   },
   {
+    section: "Finance",
+    items: [
+      { href: "/admin/finance", label: "Finance", icon: CreditCard, adminOnly: true },
+    ],
+  },
+  {
     section: "Platform",
     items: [
+      { href: "/admin/integrations", label: "Integrations", icon: Link2, adminOnly: true },
       { href: "/admin/security", label: "Security centre", icon: ShieldAlert, adminOnly: true },
       { href: "/admin/system", label: "System", icon: Server, adminOnly: true },
     ],

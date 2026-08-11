@@ -8,6 +8,7 @@
  */
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import { VitePWA } from "vite-plugin-pwa";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -44,7 +45,43 @@ function cspNoncePlugin(): Plugin {
 export default defineConfig({
   root: path.join(here, "client"),
   base: "/",
-  plugins: [react(), cspNoncePlugin()],
+  plugins: [
+    react(),
+    VitePWA({
+      registerType: "prompt",
+      injectRegister: null, // We register manually to show update prompts.
+      strategies: "generateSW",
+      includeAssets: ["favicon.ico", "brand/**/*", "fonts/**/*"],
+      manifest: {
+        name: "ReadyPackets Portal",
+        short_name: "ReadyPackets",
+        description: "Your professional business documentation portal.",
+        theme_color: "#0E2A47",
+        background_color: "#F5F7FA",
+        display: "standalone",
+        start_url: "/portal",
+        icons: [
+          { src: "/brand/icon-192.png", sizes: "192x192", type: "image/png" },
+          { src: "/brand/icon-512.png", sizes: "512x512", type: "image/png" },
+          { src: "/brand/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" },
+        ],
+      },
+      workbox: {
+        // Cache the app shell and static assets.
+        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
+        // Never cache API calls — they must always be fresh.
+        navigateFallback: "/offline.html",
+        navigateFallbackDenylist: [/^\/api\//],
+        runtimeCaching: [
+          {
+            urlPattern: /^\/api\//,
+            handler: "NetworkOnly",
+          },
+        ],
+      },
+    }),
+    cspNoncePlugin(),
+  ],
   resolve: {
     alias: {
       "@": path.join(here, "client", "src"),

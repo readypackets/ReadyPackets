@@ -221,6 +221,17 @@ export const env = {
   adminIpAllowlist: list("ADMIN_IP_ALLOWLIST"),
   syslogTarget: optional("SYSLOG_TARGET"),
   logLevel: str("LOG_LEVEL", isProduction ? "info" : "debug"),
+
+  /** Microsoft Graph / SharePoint integration. */
+  graph: {
+    enabled: Boolean(optional("GRAPH_TENANT_ID")),
+    tenantId: optional("GRAPH_TENANT_ID"),
+    clientId: optional("GRAPH_CLIENT_ID"),
+    clientSecret: optional("GRAPH_CLIENT_SECRET"),
+    siteId: optional("GRAPH_SHAREPOINT_SITE_ID"),
+    driveId: optional("GRAPH_SHAREPOINT_DRIVE_ID"),
+    rootFolderPath: str("GRAPH_ROOT_FOLDER_PATH", "ReadyPackets/Orders"),
+  },
 } as const;
 
 if (problems.length > 0) {

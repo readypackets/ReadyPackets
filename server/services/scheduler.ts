@@ -22,6 +22,7 @@ import { processEmailQueue } from "./email.js";
 
 import { invalidateIpCaches, purgeExpiredBlacklistEntries } from "../security/ipBlacklist.js";
 import { invalidateSettingsCache } from "./settings.js";
+import { processPhaseJobs, deliverWebhooks } from "./sharepoint.js";
 
 interface Job {
   name: string;
@@ -150,6 +151,18 @@ const JOBS: Job[] = [
     intervalMs: 30 * 60_000,
     initialDelayMs: 180_000,
     run: reapDeadEmails,
+  },
+  {
+    name: "phase_jobs",
+    intervalMs: 60_000,
+    initialDelayMs: 15_000,
+    run: processPhaseJobs,
+  },
+  {
+    name: "webhook_delivery",
+    intervalMs: 30_000,
+    initialDelayMs: 20_000,
+    run: deliverWebhooks,
   },
 ];
 

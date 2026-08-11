@@ -67,6 +67,8 @@ import { AdminContentPage } from "@/pages/admin/Content";
 import { AdminSecurityPage } from "@/pages/admin/Security";
 import { AdminSystemPage } from "@/pages/admin/System";
 import { AdminFilesPage } from "@/pages/admin/Files";
+import { AdminFinancePage } from "@/pages/admin/Finance";
+import { AdminIntegrationsPage } from "@/pages/admin/Integrations";
 
 /** Full-page loader shown while the session is being resolved. */
 function BootScreen() {
@@ -246,6 +248,8 @@ function AdminRoutes() {
         <Route path="/admin/content" component={AdminContentPage} />
         <Route path="/admin/security" component={AdminSecurityPage} />
         <Route path="/admin/system" component={AdminSystemPage} />
+        <Route path="/admin/finance" component={AdminFinancePage} />
+        <Route path="/admin/integrations" component={AdminIntegrationsPage} />
         <Route component={NotFoundPage} />
       </Switch>
     </AdminLayout>

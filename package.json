@@ -2,7 +2,7 @@
   "name": "readypackets",
   "version": "1.0.0",
   "private": true,
-  "description": "ReadyPackets Portal \u2014 self-hosted public website, customer portal and admin panel",
+  "description": "ReadyPackets Portal — self-hosted public website, customer portal and admin panel",
   "license": "UNLICENSED",
   "type": "module",
   "engines": {
@@ -26,10 +26,14 @@
     "audit:headers": "tsx scripts/audit-headers.ts"
   },
   "dependencies": {
+    "@azure/identity": "^4.13.1",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@node-saml/node-saml": "^5.1.0",
+    "@stripe/stripe-js": "^9.13.0",
+    "@tanstack/react-query": "^5.62.0",
     "@trpc/client": "^11.0.0",
     "@trpc/react-query": "^11.0.0",
     "@trpc/server": "^11.0.0",
-    "@tanstack/react-query": "^5.62.0",
     "archiver": "^7.0.1",
     "argon2": "^0.41.1",
     "bcryptjs": "^2.4.3",
@@ -47,10 +51,13 @@
     "mysql2": "^3.12.0",
     "nodemailer": "^6.9.16",
     "otpauth": "^9.3.6",
+    "passport": "^0.7.0",
+    "passport-saml": "^3.2.4",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "recharts": "^2.15.0",
+    "stripe": "^22.4.0",
     "tailwind-merge": "^2.6.0",
     "wouter": "^3.3.5",
     "zod": "^3.24.1"
@@ -65,6 +72,8 @@
     "@types/multer": "^1.4.12",
     "@types/node": "^22.10.5",
     "@types/nodemailer": "^6.4.17",
+    "@types/passport": "^1.0.17",
+    "@types/passport-saml": "^1.1.7",
     "@types/qrcode": "^1.5.5",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
@@ -76,6 +85,8 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vite": "^6.0.7",
-    "vitest": "^2.1.8"
+    "vite-plugin-pwa": "^1.3.0",
+    "vitest": "^2.1.8",
+    "workbox-window": "^7.4.1"
   }
 }
