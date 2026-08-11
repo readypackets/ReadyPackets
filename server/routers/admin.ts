@@ -1433,6 +1433,82 @@ export const adminRouter = router({
       return user ? { id: user.id, name: displayNameOf(user), email: user.email } : null;
     }),
 
+  /**
+   * Admin: manually generate a new temporary password for a customer.
+   * The user's sessions are revoked and mustChangePassword is set.
+   */
+  adminResetPassword: adminProcedure
+    .input(z.object({ userId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = await getUserById(input.userId);
+      if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "User not found." });
+      const temporary = `${randomToken(9)}Aa1!`;
+      await db
+        .update(users)
+        .set({ passwordHash: await hashPassword(temporary), mustChangePassword: true })
+        .where(eq(users.id, input.userId));
+      await revokeAllUserSessions(input.userId, "admin_password_reset");
+      void recordSecurityEvent({
+        eventType: "settings.changed",
+        severity: "warning",
+        message: `Admin manually reset password for user ${input.userId}`,
+        userId: ctx.session.user.id,
+        ipAddress: ctx.clientIp,
+        metadata: { targetUserId: input.userId },
+      });
+      return { ok: true as const, temporaryPassword: temporary };
+    }),
+
+  /**
+   * Admin: send a password-reset link to the user's email address.
+   */
+  adminSendPasswordResetLink: adminProcedure
+    .input(z.object({ userId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = await getUserById(input.userId);
+      if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "User not found." });
+      if (user.loginMethod !== "local") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "User does not use password login." });
+      }
+      const { env } = await import("../config/env.js");
+      const { hashToken } = await import("../security/crypto.js");
+      const { passwordResetTokens } = await import("../db/schema.js");
+      const token = randomToken(32);
+      await db.insert(passwordResetTokens).values({
+        userId: user.id,
+        tokenHash: hashToken(token),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        requestIp: ctx.clientIp.slice(0, 64),
+      });
+      const { env: envCfg } = await import("../config/env.js");
+      const link = `${envCfg.appUrl}/reset-password?token=${encodeURIComponent(token)}`;
+      await queueTemplatedEmail({
+        to: user.email,
+        templateKey: "password_reset",
+        variables: { name: displayNameOf(user), link, expiry: "24 hours" },
+        fallback: {
+          subject: "Reset your ReadyPackets password",
+          html: wrapHtmlBody(
+            "Reset your password",
+            `<h1 style="margin:0 0 12px 0;font-size:20px;">Password reset requested</h1>
+             <p style="margin:0 0 12px 0;">Hello ${displayNameOf(user)}, an administrator has initiated a password reset for your account.</p>
+             <a href="${link}" style="display:inline-block;background:#0d9488;color:#fff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:8px;">Choose a new password</a>
+             <p style="margin:12px 0 0;font-size:13px;">This link expires in 24 hours and can be used once.</p>`,
+          ),
+          text: `Reset your password: ${link}`,
+        },
+      });
+      void recordSecurityEvent({
+        eventType: "settings.changed",
+        severity: "notice",
+        message: `Admin sent password reset link to user ${input.userId}`,
+        userId: ctx.session.user.id,
+        ipAddress: ctx.clientIp,
+        metadata: { targetUserId: input.userId },
+      });
+      return { ok: true as const };
+    }),
+
   /** Domain-level signup analytics; no addresses are exposed. */
   signupDomains: adminProcedure.query(async () => {
     const rows = await db

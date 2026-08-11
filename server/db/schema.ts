@@ -550,6 +550,8 @@ export const phaseKickoffConfigs = mysqlTable(
     notifyCustomer: boolean("notify_customer").notNull().default(true),
     notifyWebhooks: boolean("notify_webhooks").notNull().default(false),
     emailTemplateKey: varchar("email_template_key", { length: 64 }),
+    /** Auto-set order completion % when this phase is entered (0 = no auto-set). */
+    completionPercent: int("completion_percent").notNull().default(0),
     enabled: boolean("enabled").notNull().default(true),
     updatedAt: updatedAt(),
   },

@@ -165,6 +165,7 @@ export const integrationsRouter = router({
         notifyCustomer: z.boolean(),
         notifyWebhooks: z.boolean(),
         emailTemplateKey: z.string().max(64).optional().nullable(),
+        completionPercent: z.number().int().min(0).max(100).default(0),
         enabled: z.boolean(),
       })
     )
@@ -176,6 +177,7 @@ export const integrationsRouter = router({
         notifyCustomer: input.notifyCustomer,
         notifyWebhooks: input.notifyWebhooks,
         emailTemplateKey: input.emailTemplateKey ?? null,
+        completionPercent: input.completionPercent,
         enabled: input.enabled,
       };
 

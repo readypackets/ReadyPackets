@@ -231,6 +231,15 @@ export async function runPhaseKickoff(
 
   const config = configRows[0]!;
 
+  // Auto-set order completion % if configured.
+  if (config.completionPercent > 0) {
+    await db
+      .update(orders)
+      .set({ completionPercent: config.completionPercent })
+      .where(eq(orders.id, orderId));
+    logger.info("sharepoint.kickoff.completion_set", { orderId, phase, completionPercent: config.completionPercent });
+  }
+
   // Queue jobs for each automation step.
   const jobs: { jobType: string }[] = [];
   if (config.createFolders) jobs.push({ jobType: "create_folders" });

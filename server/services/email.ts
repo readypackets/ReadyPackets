@@ -163,7 +163,7 @@ async function deliver(
   const fromName = (await getSetting("email.from_name")) ?? BRAND.companyShortName;
 
   // Try Microsoft Graph first if configured; fall back to SMTP.
-  if (isGraphEmailEnabled()) {
+  if (await isGraphEmailEnabled()) {
     const sent = await sendViaGraph({ to, subject, html, text, fromName });
     if (sent) {
       logger.debug("Email delivered via Microsoft Graph", { subject });
@@ -188,13 +188,13 @@ async function deliver(
 }
 
 /** True when at least one email transport is configured. */
-export function isEmailEnabled(): boolean {
-  return env.smtp.enabled || isGraphEmailEnabled();
+export async function isEmailEnabled(): Promise<boolean> {
+  return env.smtp.enabled || (await isGraphEmailEnabled());
 }
 
 /** Drain a batch of queued messages. Invoked by the scheduler. */
 export async function processEmailQueue(batchSize = 20): Promise<{ sent: number; failed: number }> {
-  if (!isEmailEnabled()) return { sent: 0, failed: 0 };
+  if (!(await isEmailEnabled())) return { sent: 0, failed: 0 };
 
   const pending = await db
     .select()

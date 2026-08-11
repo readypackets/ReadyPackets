@@ -1,12 +1,13 @@
 /**
  * Admin Referral Management page.
- * Lists referrals, shows stats, allows status updates.
+ * Lists referrals, shows stats, allows status updates, and configures reward settings.
  */
 import { useState, useMemo } from "react";
-import { Gift, DollarSign, CheckCircle, Clock, XCircle } from "lucide-react";
-import { trpc } from "@/lib/trpc";
+import { Gift, DollarSign, CheckCircle, Clock, Settings } from "lucide-react";
+import { trpc, errorMessage } from "@/lib/trpc";
 import { Button } from "@/components/ui/Button";
-import { Card, CardHeader, Badge, EmptyState, Skeleton } from "@/components/ui/Surface";
+import { Input, Select } from "@/components/ui/Field";
+import { Card, CardHeader, Badge, EmptyState, Skeleton, Alert } from "@/components/ui/Surface";
 import { StatTile, TabStrip } from "@/components/ui/DataDisplay";
 import { ConfirmDialog } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/layout/PortalLayout";
@@ -19,6 +20,151 @@ const STATUS_TONES: Record<string, "success" | "warning" | "danger" | "neutral" 
   paid: "success",
   rejected: "danger",
 };
+
+function RewardConfigTab() {
+  const toast = useToast();
+  const config = trpc.tier4.referral.getRewardConfig.useQuery();
+  const saveMut = trpc.tier4.referral.saveRewardConfig.useMutation({
+    onSuccess: () => {
+      config.refetch();
+      toast.success("Reward settings saved");
+    },
+    onError: (e) => toast.error("Save failed", errorMessage(e)),
+  });
+
+  const [form, setForm] = useState({
+    rewardType: "cash" as "cash" | "coupon" | "both",
+    cashAmountCents: 0,
+    discountPercent: 5,
+    commissionPercent: 5,
+    minOrderCents: 0,
+    enabled: true,
+    couponPrefix: "REF-",
+  });
+
+  // Populate form from config when loaded
+  useMemo(() => {
+    if (config.data) {
+      setForm({
+        rewardType: config.data.rewardType as "cash" | "coupon" | "both",
+        cashAmountCents: config.data.cashAmountCents,
+        discountPercent: config.data.discountPercent,
+        commissionPercent: config.data.commissionPercent,
+        minOrderCents: config.data.minOrderCents,
+        enabled: config.data.enabled,
+        couponPrefix: config.data.couponPrefix,
+      });
+    }
+  }, [config.data]);
+
+  if (config.isLoading) return <Skeleton className="h-64 w-full" />;
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      <Card>
+        <CardHeader
+          title="Referral programme settings"
+          description="Configure how referrers are rewarded when their code is used at checkout."
+        />
+        <div className="mt-6 space-y-5">
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-sm font-medium text-ink cursor-pointer">
+              <input
+                type="checkbox"
+                className="size-4 accent-teal"
+                checked={form.enabled}
+                onChange={(e) => setForm((f) => ({ ...f, enabled: e.target.checked }))}
+              />
+              Referral programme enabled
+            </label>
+          </div>
+
+          <Select
+            label="Reward type"
+            value={form.rewardType}
+            onChange={(e) => setForm((f) => ({ ...f, rewardType: e.target.value as "cash" | "coupon" | "both" }))}
+            options={[
+              { value: "cash", label: "Cash payout — admin manually processes payment" },
+              { value: "coupon", label: "Discount coupon — auto-generated on approval" },
+              { value: "both", label: "Both — cash + coupon" },
+            ]}
+          />
+
+          <Input
+            label="Commission % (of referred order total)"
+            type="number"
+            min={0}
+            max={100}
+            step={0.5}
+            value={form.commissionPercent}
+            onChange={(e) => setForm((f) => ({ ...f, commissionPercent: Number(e.target.value) }))}
+            help="Percentage of the referred order total recorded as the referral reward."
+          />
+
+          {(form.rewardType === "cash" || form.rewardType === "both") && (
+            <Input
+              label="Fixed cash reward (cents)"
+              type="number"
+              min={0}
+              value={form.cashAmountCents}
+              onChange={(e) => setForm((f) => ({ ...f, cashAmountCents: Number(e.target.value) }))}
+              help={`Fixed cash amount per referral. ${form.cashAmountCents > 0 ? `= ${formatMoney(form.cashAmountCents)}` : "0 = use commission % only"}`}
+            />
+          )}
+
+          {(form.rewardType === "coupon" || form.rewardType === "both") && (
+            <>
+              <Input
+                label="Coupon discount %"
+                type="number"
+                min={0}
+                max={100}
+                value={form.discountPercent}
+                onChange={(e) => setForm((f) => ({ ...f, discountPercent: Number(e.target.value) }))}
+                help="Percentage discount applied to the referrer's next order."
+              />
+              <Input
+                label="Coupon code prefix"
+                value={form.couponPrefix}
+                onChange={(e) => setForm((f) => ({ ...f, couponPrefix: e.target.value }))}
+                help="Auto-generated coupon codes will start with this prefix (e.g. REF-ABCD1234)."
+              />
+            </>
+          )}
+
+          <Input
+            label="Minimum qualifying order (cents)"
+            type="number"
+            min={0}
+            value={form.minOrderCents}
+            onChange={(e) => setForm((f) => ({ ...f, minOrderCents: Number(e.target.value) }))}
+            help={`Referred order must be at least this amount to qualify. ${form.minOrderCents > 0 ? `= ${formatMoney(form.minOrderCents)}` : "0 = no minimum"}`}
+          />
+        </div>
+
+        <div className="mt-6 pt-4 border-t border-line">
+          <Button
+            busy={saveMut.isPending}
+            onClick={() => saveMut.mutate(form)}
+          >
+            Save reward settings
+          </Button>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="How the referral programme works" />
+        <div className="mt-3 space-y-2 text-sm text-body">
+          <p>1. Each customer can generate a unique referral code from their portal profile.</p>
+          <p>2. When a new customer uses that code at checkout, a referral record is created with status <strong>Pending</strong>.</p>
+          <p>3. Admins review and <strong>Approve</strong> the referral once the order is confirmed.</p>
+          <p>4. For cash rewards: mark as <strong>Paid</strong> after processing the payout manually.</p>
+          <p>5. For coupon rewards: a discount coupon is auto-generated on approval and emailed to the referrer.</p>
+        </div>
+      </Card>
+    </div>
+  );
+}
 
 export function AdminReferrals() {
   const toast = useToast();
@@ -44,6 +190,7 @@ export function AdminReferrals() {
   const tabItems = useMemo(() => [
     { id: "list", label: "Referrals" },
     { id: "stats", label: "Stats" },
+    { id: "config", label: "Reward settings" },
   ], []);
 
   const rows = list.data?.rows ?? [];
@@ -175,17 +322,10 @@ export function AdminReferrals() {
                 <StatTile label="Total rewards" value={formatMoney(stats.data?.totalRewardCents)} icon={DollarSign} tone="gold" />
               </div>
             )}
-            <Card>
-              <CardHeader title="How referrals work" />
-              <p className="mt-2 text-sm text-body">
-                Each customer can generate a unique referral code from their portal profile. When
-                another customer uses that code at checkout, a 5% commission is automatically
-                recorded as a pending referral. Approve and mark as paid once you have processed
-                the payout.
-              </p>
-            </Card>
           </div>
         )}
+
+        {tab === "config" && <RewardConfigTab />}
       </div>
 
       <ConfirmDialog

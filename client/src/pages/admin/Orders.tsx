@@ -185,6 +185,141 @@ interface AdminOrderRow {
   dueAt: string | Date | null;
 }
 
+/** Grid card with inline status transition and completion % editing. */
+function InlineOrderCard({
+  order,
+  onUpdated,
+}: {
+  order: AdminOrderRow;
+  onUpdated: () => void;
+}) {
+  const toast = useToast();
+  const [editPercent, setEditPercent] = useState(false);
+  const [percent, setPercent] = useState(String(order.completionPercent));
+
+  const updateMut = trpc.admin.updateOrder.useMutation({
+    onSuccess() {
+      toast.success("Order updated");
+      setEditPercent(false);
+      onUpdated();
+    },
+    onError(err) {
+      toast.error("Update failed", errorMessage(err));
+    },
+  });
+
+  const transitionMut = trpc.admin.transitionOrder.useMutation({
+    onSuccess() {
+      toast.success("Status updated");
+      onUpdated();
+    },
+    onError(err) {
+      toast.error("Transition failed", errorMessage(err));
+    },
+  });
+
+  const transitions = ORDER_TRANSITIONS[order.status as keyof typeof ORDER_TRANSITIONS] ?? [];
+
+  return (
+    <Card className="flex flex-col gap-3 p-4">
+      <div className="flex items-start justify-between gap-2">
+        <span className="font-mono text-xs font-semibold text-muted">{order.orderNumber}</span>
+        <Badge tone={STATUS_TONES[order.status] ?? "neutral"} className="shrink-0">
+          {STATUS_LABELS[order.status] ?? order.status}
+        </Badge>
+      </div>
+
+      <div>
+        <p className="truncate font-medium text-ink">{order.projectName ?? "Untitled project"}</p>
+        <p className="mt-0.5 truncate text-sm text-muted">{order.customer}</p>
+      </div>
+
+      {/* Completion % */}
+      <div>
+        {editPercent ? (
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={percent}
+              onChange={(e) => setPercent(e.target.value)}
+              className="w-20 rounded border border-line px-2 py-1 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-teal"
+            />
+            <span className="text-sm text-muted">%</span>
+            <Button
+              size="sm"
+              busy={updateMut.isPending}
+              onClick={() =>
+                updateMut.mutate({
+                  orderId: order.id,
+                  completionPercent: Math.min(100, Math.max(0, Number(percent))),
+                })
+              }
+            >
+              Save
+            </Button>
+            <button
+              type="button"
+              className="text-xs text-muted hover:text-ink"
+              onClick={() => {
+                setEditPercent(false);
+                setPercent(String(order.completionPercent));
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="w-full text-left"
+            onClick={() => setEditPercent(true)}
+            title="Click to edit completion %"
+          >
+            <ProgressBar value={order.completionPercent} />
+            <p className="mt-1 text-xs text-muted">{order.completionPercent}% complete — click to edit</p>
+          </button>
+        )}
+      </div>
+
+      {/* Status transitions */}
+      {transitions.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {transitions.map((to) => (
+            <button
+              key={to}
+              type="button"
+              disabled={transitionMut.isPending}
+              className="rounded border border-line px-2 py-0.5 text-xs text-muted hover:border-teal hover:text-teal disabled:opacity-50"
+              onClick={() => transitionMut.mutate({ orderId: order.id, to: to as never })}
+            >
+              → {STATUS_LABELS[to] ?? to}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center justify-between border-t border-line pt-2">
+        <Badge tone={PAYMENT_TONES[order.paymentStatus] ?? "neutral"}>
+          {PAYMENT_LABELS[order.paymentStatus] ?? order.paymentStatus}
+        </Badge>
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-semibold tabular-nums text-ink">
+            {formatMoney(order.totalCents)}
+          </span>
+          <Link
+            href={`/admin/orders/${order.id}`}
+            className="text-sm font-semibold text-teal-dark no-underline hover:text-teal"
+          >
+            Open →
+          </Link>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export function AdminOrdersPage() {
   const [params] = useSearchParams();
   const statusParam = params.get("status") ?? "";
@@ -393,34 +528,11 @@ export function AdminOrdersPage() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {rows.map((order) => (
-              <Link key={order.id} href={`/admin/orders/${order.id}`} className="no-underline">
-                <Card className="h-full transition-shadow hover:shadow-md">
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="font-mono text-xs font-semibold text-muted">
-                      {order.orderNumber}
-                    </span>
-                    <Badge tone={STATUS_TONES[order.status] ?? "neutral"} className="shrink-0">
-                      {STATUS_LABELS[order.status] ?? order.status}
-                    </Badge>
-                  </div>
-                  <p className="mt-2 truncate font-medium text-ink">
-                    {order.projectName ?? "Untitled project"}
-                  </p>
-                  <p className="mt-0.5 truncate text-sm text-muted">{order.customer}</p>
-                  <div className="mt-3">
-                    <ProgressBar value={order.completionPercent} />
-                  </div>
-                  <div className="mt-3 flex items-center justify-between">
-                    <Badge tone={PAYMENT_TONES[order.paymentStatus] ?? "neutral"}>
-                      {PAYMENT_LABELS[order.paymentStatus] ?? order.paymentStatus}
-                    </Badge>
-                    <span className="text-sm font-semibold tabular-nums text-ink">
-                      {formatMoney(order.totalCents)}
-                    </span>
-                  </div>
-                  <p className="mt-2 text-xs text-muted">{formatDate(order.createdAt)}</p>
-                </Card>
-              </Link>
+              <InlineOrderCard
+                key={order.id}
+                order={order}
+                onUpdated={() => void orders.refetch()}
+              />
             ))}
           </div>
         )

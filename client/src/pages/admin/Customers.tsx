@@ -1,16 +1,26 @@
 /**
  * Admin customer directory and customer detail.
  *
- * Email search runs against the blind index on the server: the plaintext address
- * is never stored, yet an exact-match lookup is still possible. Role and status
- * changes are restricted to administrators and always audited.
+ * Features:
+ * - List view (DataTable) and Grid view toggle
+ * - Filter by role and status (All statuses shows all users)
+ * - Password reset: generate temporary password or send reset link
+ * - Suspend / disable / reinstate from grid view
+ * - Full customer detail page with session control
  */
 import { useMemo, useState } from "react";
 import { Link, useParams } from "wouter";
 import {
   Ban,
   CheckCircle2,
+  Copy,
+  Grid2X2,
   KeyRound,
+  LayoutList,
+  Link2,
+  Lock,
+  Mail,
+  RotateCcw,
   Save,
   Search,
   ShieldCheck,
@@ -65,13 +75,239 @@ interface CustomerRow {
   createdAt: string | Date;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Password Reset Modal
+// ─────────────────────────────────────────────────────────────────────────────
+function PasswordResetModal({
+  userId,
+  userName,
+  open,
+  onClose,
+}: {
+  userId: number;
+  userName: string;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const toast = useToast();
+  const [issued, setIssued] = useState<string | null>(null);
+
+  const resetMut = trpc.admin.adminResetPassword.useMutation({
+    onSuccess(result) {
+      setIssued(result.temporaryPassword);
+    },
+    onError(err) {
+      toast.error("Reset failed", errorMessage(err));
+    },
+  });
+
+  const sendLinkMut = trpc.admin.adminSendPasswordResetLink.useMutation({
+    onSuccess() {
+      toast.success("Reset link sent", `An email with a reset link has been sent to ${userName}.`);
+      onClose();
+    },
+    onError(err) {
+      toast.error("Could not send link", errorMessage(err));
+    },
+  });
+
+  function handleClose() {
+    setIssued(null);
+    onClose();
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={handleClose}
+      title="Reset password"
+      description={`Choose how to reset the password for ${userName}.`}
+      footer={<Button variant="outline" onClick={handleClose}>Close</Button>}
+    >
+      {issued ? (
+        <div className="space-y-4">
+          <Alert tone="warning">
+            This temporary password is shown only once. The user will be required to change it at
+            next sign-in. All existing sessions have been revoked.
+          </Alert>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-muted mb-1">Temporary password</p>
+            <code className="block rounded border border-line bg-surface-soft px-3 py-2 font-mono text-sm text-ink break-all">
+              {issued}
+            </code>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            leadingIcon={<Copy className="size-4" aria-hidden="true" />}
+            onClick={() => {
+              void navigator.clipboard.writeText(issued);
+              toast.success("Copied to clipboard");
+            }}
+          >
+            Copy password
+          </Button>
+        </div>
+      ) : (
+        <div className="mt-4 space-y-3">
+          <Alert tone="info">
+            <strong>Option 1 — Generate temporary password:</strong> A random password is generated
+            server-side and shown once. All sessions are revoked. The user must change it on next
+            sign-in.
+          </Alert>
+          <Button
+            fullWidth
+            variant="outline"
+            busy={resetMut.isPending}
+            leadingIcon={<RotateCcw className="size-4" aria-hidden="true" />}
+            onClick={() => resetMut.mutate({ userId })}
+          >
+            Generate temporary password
+          </Button>
+
+          <Alert tone="info">
+            <strong>Option 2 — Send reset link:</strong> An email is sent to the user with a
+            secure link valid for 24 hours. The user sets their own new password.
+          </Alert>
+          <Button
+            fullWidth
+            variant="outline"
+            busy={sendLinkMut.isPending}
+            leadingIcon={<Mail className="size-4" aria-hidden="true" />}
+            onClick={() => sendLinkMut.mutate({ userId })}
+          >
+            Send password reset link
+          </Button>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Customer Grid Card
+// ─────────────────────────────────────────────────────────────────────────────
+function CustomerCard({
+  row,
+  isAdmin,
+  onSuspend,
+  onDeactivate,
+  onReinstate,
+  onResetPassword,
+}: {
+  row: CustomerRow;
+  isAdmin: boolean;
+  onSuspend: (id: number) => void;
+  onDeactivate: (id: number) => void;
+  onReinstate: (id: number) => void;
+  onResetPassword: (id: number, name: string) => void;
+}) {
+  return (
+    <Card className="p-4 flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-semibold text-ink truncate">{row.name}</p>
+          <p className="text-xs text-muted truncate">{row.email}</p>
+          {row.company ? <p className="text-xs text-muted truncate">{row.company}</p> : null}
+        </div>
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <Badge tone={ROLE_TONES[row.role] ?? "neutral"}>{row.role}</Badge>
+          <Badge tone={USER_STATUS_TONES[row.status] ?? "neutral"}>{row.status}</Badge>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-1">
+        {row.emailVerified ? null : <Badge tone="warning">unverified</Badge>}
+        {row.mfaEnabled ? (
+          <Badge tone="success">
+            <ShieldCheck className="mr-1 size-3" aria-hidden="true" />
+            MFA
+          </Badge>
+        ) : null}
+      </div>
+
+      <p className="text-xs text-muted">
+        Last sign-in: {row.lastLoginAt ? formatDateTime(row.lastLoginAt) : "never"}
+      </p>
+
+      <div className="flex flex-wrap gap-2 pt-1 border-t border-line">
+        <Link
+          href={`/admin/customers/${row.id}`}
+          className="text-xs font-semibold text-teal-dark no-underline hover:text-teal"
+        >
+          Open →
+        </Link>
+        {isAdmin && (
+          <>
+            <button
+              type="button"
+              className="text-xs text-muted hover:text-ink flex items-center gap-1"
+              onClick={() => onResetPassword(row.id, row.name)}
+            >
+              <KeyRound className="size-3" aria-hidden="true" />
+              Reset pw
+            </button>
+            {row.status === "active" || row.status === "pending" ? (
+              <>
+                <button
+                  type="button"
+                  className="text-xs text-orange-600 hover:text-orange-800 flex items-center gap-1"
+                  onClick={() => onSuspend(row.id)}
+                >
+                  <Ban className="size-3" aria-hidden="true" />
+                  Suspend
+                </button>
+                <button
+                  type="button"
+                  className="text-xs text-red-600 hover:text-red-800 flex items-center gap-1"
+                  onClick={() => onDeactivate(row.id)}
+                >
+                  <Lock className="size-3" aria-hidden="true" />
+                  Disable
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="text-xs text-green-600 hover:text-green-800 flex items-center gap-1"
+                onClick={() => onReinstate(row.id)}
+              >
+                <CheckCircle2 className="size-3" aria-hidden="true" />
+                Reinstate
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main Customers Page
+// ─────────────────────────────────────────────────────────────────────────────
 export function AdminCustomersPage() {
   const session = useSession();
   const toast = useToast();
+  const utils = trpc.useUtils();
+
   const [search, setSearch] = useState("");
   const [role, setRole] = useState("");
   const [status, setStatus] = useState("");
+  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [createOpen, setCreateOpen] = useState(false);
+
+  // Password reset modal state
+  const [resetTarget, setResetTarget] = useState<{ id: number; name: string } | null>(null);
+
+  // Confirm dialog state
+  const [confirmAction, setConfirmAction] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    variant: "primary" | "danger";
+    onConfirm: () => void;
+  } | null>(null);
 
   const customers = trpc.admin.customers.useQuery({
     search: search.trim() || undefined,
@@ -79,6 +315,17 @@ export function AdminCustomersPage() {
     status: status || undefined,
     limit: 200,
     offset: 0,
+  });
+
+  const setStatusMut = trpc.admin.setCustomerStatus.useMutation({
+    async onSuccess() {
+      await utils.admin.customers.invalidate();
+      toast.success("Account status updated");
+      setConfirmAction(null);
+    },
+    onError(err) {
+      toast.error("Could not change status", errorMessage(err));
+    },
   });
 
   const [staffEmail, setStaffEmail] = useState("");
@@ -95,7 +342,7 @@ export function AdminCustomersPage() {
       setStaffEmail("");
       setStaffFirstName("");
       setStaffLastName("");
-      await customers.refetch();
+      await utils.admin.customers.invalidate();
       toast.success("Account created", "Share the temporary password over a secure channel.");
     },
     onError(error) {
@@ -105,73 +352,139 @@ export function AdminCustomersPage() {
 
   const rows = (customers.data ?? []) as unknown as CustomerRow[];
 
-  const columns: Column<CustomerRow>[] = [
-    {
-      key: "person",
-      header: "Customer",
-      cell: (row) => (
-        <div className="min-w-0">
-          <p className="truncate font-medium text-ink">{row.name}</p>
-          <p className="mt-0.5 truncate text-xs text-muted">{row.email}</p>
-          {row.company ? (
-            <p className="mt-0.5 truncate text-xs text-muted">{row.company}</p>
-          ) : null}
-        </div>
-      ),
-    },
-    {
-      key: "role",
-      header: "Role",
-      hideOnMobile: true,
-      cell: (row) => <Badge tone={ROLE_TONES[row.role] ?? "neutral"}>{row.role}</Badge>,
-    },
-    {
-      key: "status",
-      header: "Status",
-      hideOnMobile: true,
-      cell: (row) => (
-        <div className="flex flex-wrap gap-1.5">
-          <Badge tone={USER_STATUS_TONES[row.status] ?? "neutral"}>{row.status}</Badge>
-          {row.emailVerified ? null : <Badge tone="warning">unverified</Badge>}
-          {row.mfaEnabled ? (
-            <Badge tone="success">
-              <ShieldCheck className="mr-1 size-3" aria-hidden="true" />
-              MFA
-            </Badge>
-          ) : null}
-        </div>
-      ),
-    },
-    {
-      key: "lastLogin",
-      header: "Last sign-in",
-      hideOnMobile: true,
-      cell: (row) => (
-        <span className="text-xs text-muted">
-          {row.lastLoginAt ? formatDateTime(row.lastLoginAt) : "never"}
-        </span>
-      ),
-    },
-    {
-      key: "joined",
-      header: "Joined",
-      align: "right",
-      cell: (row) => <span className="text-xs text-muted">{formatDate(row.createdAt)}</span>,
-    },
-    {
-      key: "go",
-      header: <span className="sr-only">Open</span>,
-      align: "right",
-      cell: (row) => (
-        <Link
-          href={`/admin/customers/${row.id}`}
-          className="text-sm font-semibold text-teal-dark no-underline hover:text-teal"
-        >
-          Open
-        </Link>
-      ),
-    },
-  ];
+  function handleSuspend(id: number) {
+    setConfirmAction({
+      title: "Suspend this account?",
+      message: "The user is signed out everywhere and cannot sign in until reinstated. Their data is retained.",
+      confirmLabel: "Suspend",
+      variant: "danger",
+      onConfirm: () => setStatusMut.mutate({ userId: id, status: "suspended" }),
+    });
+  }
+
+  function handleDeactivate(id: number) {
+    setConfirmAction({
+      title: "Disable this account?",
+      message: "The account is deactivated. The user cannot sign in. Their data is retained.",
+      confirmLabel: "Disable",
+      variant: "danger",
+      onConfirm: () => setStatusMut.mutate({ userId: id, status: "deactivated" }),
+    });
+  }
+
+  function handleReinstate(id: number) {
+    setConfirmAction({
+      title: "Reinstate this account?",
+      message: "The user will be able to sign in again immediately.",
+      confirmLabel: "Reinstate",
+      variant: "primary",
+      onConfirm: () => setStatusMut.mutate({ userId: id, status: "active" }),
+    });
+  }
+
+  const columns: Column<CustomerRow>[] = useMemo(
+    () => [
+      {
+        key: "person",
+        header: "Customer",
+        cell: (row) => (
+          <div className="min-w-0">
+            <p className="truncate font-medium text-ink">{row.name}</p>
+            <p className="mt-0.5 truncate text-xs text-muted">{row.email}</p>
+            {row.company ? (
+              <p className="mt-0.5 truncate text-xs text-muted">{row.company}</p>
+            ) : null}
+          </div>
+        ),
+      },
+      {
+        key: "role",
+        header: "Role",
+        hideOnMobile: true,
+        cell: (row) => <Badge tone={ROLE_TONES[row.role] ?? "neutral"}>{row.role}</Badge>,
+      },
+      {
+        key: "status",
+        header: "Status",
+        hideOnMobile: true,
+        cell: (row) => (
+          <div className="flex flex-wrap gap-1.5">
+            <Badge tone={USER_STATUS_TONES[row.status] ?? "neutral"}>{row.status}</Badge>
+            {row.emailVerified ? null : <Badge tone="warning">unverified</Badge>}
+            {row.mfaEnabled ? (
+              <Badge tone="success">
+                <ShieldCheck className="mr-1 size-3" aria-hidden="true" />
+                MFA
+              </Badge>
+            ) : null}
+          </div>
+        ),
+      },
+      {
+        key: "lastLogin",
+        header: "Last sign-in",
+        hideOnMobile: true,
+        cell: (row) => (
+          <span className="text-xs text-muted">
+            {row.lastLoginAt ? formatDateTime(row.lastLoginAt) : "never"}
+          </span>
+        ),
+      },
+      {
+        key: "joined",
+        header: "Joined",
+        align: "right",
+        cell: (row) => <span className="text-xs text-muted">{formatDate(row.createdAt)}</span>,
+      },
+      {
+        key: "actions",
+        header: <span className="sr-only">Actions</span>,
+        align: "right",
+        cell: (row) => (
+          <div className="flex items-center gap-2 justify-end">
+            {session.isAdmin && (
+              <>
+                <button
+                  type="button"
+                  title="Reset password"
+                  className="text-muted hover:text-ink"
+                  onClick={() => setResetTarget({ id: row.id, name: row.name })}
+                >
+                  <KeyRound className="size-4" aria-hidden="true" />
+                </button>
+                {row.status === "active" || row.status === "pending" ? (
+                  <button
+                    type="button"
+                    title="Suspend"
+                    className="text-orange-500 hover:text-orange-700"
+                    onClick={() => handleSuspend(row.id)}
+                  >
+                    <Ban className="size-4" aria-hidden="true" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    title="Reinstate"
+                    className="text-green-600 hover:text-green-800"
+                    onClick={() => handleReinstate(row.id)}
+                  >
+                    <CheckCircle2 className="size-4" aria-hidden="true" />
+                  </button>
+                )}
+              </>
+            )}
+            <Link
+              href={`/admin/customers/${row.id}`}
+              className="text-sm font-semibold text-teal-dark no-underline hover:text-teal"
+            >
+              Open
+            </Link>
+          </div>
+        ),
+      },
+    ],
+    [session.isAdmin],
+  );
 
   return (
     <>
@@ -191,7 +504,7 @@ export function AdminCustomersPage() {
       />
 
       <Card className="mb-5">
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-[1fr_1fr_1fr_auto]">
           <Input
             label="Search"
             help="Exact email, or partial name and company"
@@ -223,6 +536,28 @@ export function AdminCustomersPage() {
               { value: "deactivated", label: "Deactivated" },
             ]}
           />
+          <div className="flex items-end gap-1 pb-0.5">
+            <button
+              type="button"
+              onClick={() => setViewMode("list")}
+              title="List view"
+              className={`rounded p-1.5 transition-colors ${
+                viewMode === "list" ? "bg-teal/10 text-teal" : "text-muted hover:text-ink"
+              }`}
+            >
+              <LayoutList className="size-4" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("grid")}
+              title="Grid view"
+              className={`rounded p-1.5 transition-colors ${
+                viewMode === "grid" ? "bg-teal/10 text-teal" : "text-muted hover:text-ink"
+              }`}
+            >
+              <Grid2X2 className="size-4" aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </Card>
 
@@ -232,7 +567,13 @@ export function AdminCustomersPage() {
             <Skeleton key={index} className="h-16 w-full" />
           ))}
         </div>
-      ) : (
+      ) : rows.length === 0 ? (
+        <EmptyState
+          icon={Users}
+          title="No accounts match"
+          description="Try a different search term or clear the filters."
+        />
+      ) : viewMode === "list" ? (
         <DataTable
           caption="Customer accounts"
           columns={columns}
@@ -246,8 +587,45 @@ export function AdminCustomersPage() {
             />
           }
         />
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {rows.map((row) => (
+            <CustomerCard
+              key={row.id}
+              row={row}
+              isAdmin={session.isAdmin}
+              onSuspend={handleSuspend}
+              onDeactivate={handleDeactivate}
+              onReinstate={handleReinstate}
+              onResetPassword={(id, name) => setResetTarget({ id, name })}
+            />
+          ))}
+        </div>
       )}
 
+      {/* Password Reset Modal */}
+      {resetTarget && (
+        <PasswordResetModal
+          userId={resetTarget.id}
+          userName={resetTarget.name}
+          open={true}
+          onClose={() => setResetTarget(null)}
+        />
+      )}
+
+      {/* Confirm Dialog for status changes */}
+      <ConfirmDialog
+        open={confirmAction !== null}
+        onClose={() => setConfirmAction(null)}
+        onConfirm={() => confirmAction?.onConfirm()}
+        title={confirmAction?.title ?? ""}
+        message={confirmAction?.message ?? ""}
+        confirmLabel={confirmAction?.confirmLabel ?? "Confirm"}
+        variant={confirmAction?.variant ?? "primary"}
+        busy={setStatusMut.isPending}
+      />
+
+      {/* Create Staff Modal */}
       <Modal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
@@ -276,7 +654,6 @@ export function AdminCustomersPage() {
         }
       >
         {createError ? <Alert tone="danger">{createError}</Alert> : null}
-
         <div className="mt-4 space-y-4">
           <Input
             label="Email"
@@ -310,13 +687,13 @@ export function AdminCustomersPage() {
             ]}
           />
           <Alert tone="info">
-            A random temporary password is generated by the server and shown once after creation. The
-            new user is required to change it at first sign-in, and administrators must also enrol a
-            second factor.
+            A random temporary password is generated by the server and shown once after creation.
+            The new user is required to change it at first sign-in.
           </Alert>
         </div>
       </Modal>
 
+      {/* Issued password Modal */}
       <Modal
         open={issued !== null}
         onClose={() => setIssued(null)}
@@ -342,6 +719,7 @@ export function AdminCustomersPage() {
           className="mt-4"
           size="sm"
           variant="outline"
+          leadingIcon={<Copy className="size-4" aria-hidden="true" />}
           onClick={() => {
             if (issued) void navigator.clipboard.writeText(issued.password);
             toast.success("Copied");
@@ -354,6 +732,9 @@ export function AdminCustomersPage() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Customer Detail Page
+// ─────────────────────────────────────────────────────────────────────────────
 export function AdminCustomerDetailPage() {
   const params = useParams<{ id: string }>();
   const userId = Number(params.id);
@@ -369,6 +750,7 @@ export function AdminCustomerDetailPage() {
   const [suspendOpen, setSuspendOpen] = useState(false);
   const [roleOpen, setRoleOpen] = useState(false);
   const [newRole, setNewRole] = useState("customer");
+  const [resetOpen, setResetOpen] = useState(false);
 
   const setNotesMutation = trpc.admin.setCustomerNotes.useMutation({
     async onSuccess() {
@@ -451,6 +833,13 @@ export function AdminCustomerDetailPage() {
         actions={
           session.isAdmin ? (
             <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setResetOpen(true)}
+                leadingIcon={<KeyRound className="size-4" aria-hidden="true" />}
+              >
+                Reset password
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => {
@@ -566,31 +955,19 @@ export function AdminCustomerDetailPage() {
             <dl className="mt-4 space-y-3 text-sm">
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-body">Role</dt>
-                <dd>
-                  <Badge tone={ROLE_TONES[user.role] ?? "neutral"}>{user.role}</Badge>
-                </dd>
+                <dd><Badge tone={ROLE_TONES[user.role] ?? "neutral"}>{user.role}</Badge></dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-body">Status</dt>
-                <dd>
-                  <Badge tone={USER_STATUS_TONES[user.status] ?? "neutral"}>{user.status}</Badge>
-                </dd>
+                <dd><Badge tone={USER_STATUS_TONES[user.status] ?? "neutral"}>{user.status}</Badge></dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-body">Email verified</dt>
-                <dd>
-                  <Badge tone={user.emailVerified ? "success" : "warning"}>
-                    {user.emailVerified ? "yes" : "no"}
-                  </Badge>
-                </dd>
+                <dd><Badge tone={user.emailVerified ? "success" : "warning"}>{user.emailVerified ? "yes" : "no"}</Badge></dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-body">Two-factor</dt>
-                <dd>
-                  <Badge tone={user.mfaEnabled ? "success" : "neutral"}>
-                    {user.mfaEnabled ? "enabled" : "not enabled"}
-                  </Badge>
-                </dd>
+                <dd><Badge tone={user.mfaEnabled ? "success" : "neutral"}>{user.mfaEnabled ? "enabled" : "not enabled"}</Badge></dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-body">Sign-in method</dt>
@@ -598,9 +975,7 @@ export function AdminCustomerDetailPage() {
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-body">Last sign-in</dt>
-                <dd className="text-ink">
-                  {user.lastLoginAt ? formatDateTime(user.lastLoginAt) : "never"}
-                </dd>
+                <dd className="text-ink">{user.lastLoginAt ? formatDateTime(user.lastLoginAt) : "never"}</dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-body">Lifetime value</dt>
@@ -649,20 +1024,37 @@ export function AdminCustomerDetailPage() {
                 title="Session control"
                 description="Use after a suspected account compromise."
               />
-              <Button
-                className="mt-4"
-                variant="outline"
-                fullWidth
-                busy={revokeSessions.isPending}
-                onClick={() => revokeSessions.mutate({ userId })}
-                leadingIcon={<KeyRound className="size-4" aria-hidden="true" />}
-              >
-                Revoke all sessions
-              </Button>
+              <div className="mt-4 space-y-2">
+                <Button
+                  variant="outline"
+                  fullWidth
+                  busy={revokeSessions.isPending}
+                  onClick={() => revokeSessions.mutate({ userId })}
+                  leadingIcon={<KeyRound className="size-4" aria-hidden="true" />}
+                >
+                  Revoke all sessions
+                </Button>
+                <Button
+                  variant="outline"
+                  fullWidth
+                  onClick={() => setResetOpen(true)}
+                  leadingIcon={<Link2 className="size-4" aria-hidden="true" />}
+                >
+                  Reset password
+                </Button>
+              </div>
             </Card>
           ) : null}
         </div>
       </div>
+
+      {/* Password Reset Modal */}
+      <PasswordResetModal
+        userId={userId}
+        userName={user.name}
+        open={resetOpen}
+        onClose={() => setResetOpen(false)}
+      />
 
       <ConfirmDialog
         open={suspendOpen}

@@ -233,9 +233,28 @@ function PhaseKickoffTab() {
         attachPlaceholders: field === "attachPlaceholders" ? value : (existing?.attachPlaceholders ?? true),
         notifyCustomer: field === "notifyCustomer" ? value : (existing?.notifyCustomer ?? true),
         notifyWebhooks: field === "notifyWebhooks" ? value : (existing?.notifyWebhooks ?? false),
+        completionPercent: (existing as any)?.completionPercent ?? 0,
         enabled: field === "enabled" ? value : (existing?.enabled ?? true),
       });
       toast.success("Config updated.");
+    } catch (e: any) {
+      toast.error(e.message ?? "Failed to update.");
+    }
+  }
+
+  async function setCompletionPercent(phase: string, value: number) {
+    const existing = data?.find(c => c.phase === phase);
+    try {
+      await upsert.mutateAsync({
+        phase,
+        createFolders: existing?.createFolders ?? true,
+        attachPlaceholders: existing?.attachPlaceholders ?? true,
+        notifyCustomer: existing?.notifyCustomer ?? true,
+        notifyWebhooks: existing?.notifyWebhooks ?? false,
+        completionPercent: value,
+        enabled: existing?.enabled ?? true,
+      });
+      toast.success("Auto-completion % saved.");
     } catch (e: any) {
       toast.error(e.message ?? "Failed to update.");
     }
@@ -275,6 +294,18 @@ function PhaseKickoffTab() {
                   {flabel}
                 </label>
               ))}
+            </div>
+            <div className="mt-3 flex items-center gap-3 text-sm">
+              <label className="text-gray-600 shrink-0">Auto-set completion % on entry:</label>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                defaultValue={(config as any)?.completionPercent ?? 0}
+                onBlur={e => setCompletionPercent(key, Math.min(100, Math.max(0, Number(e.target.value))))}
+                className="w-20 rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-teal-500"
+              />
+              <span className="text-gray-400 text-xs">% (0 = do not auto-set)</span>
             </div>
           </Card>
         );

@@ -698,6 +698,7 @@ export const adminSecurityRouter = router({
       smtpConfigured: env.smtp.enabled,
       graphEmailConfigured: env.graph.emailEnabled,
       emailTransport: env.graph.emailEnabled ? "graph" : env.smtp.enabled ? "smtp" : "none",
+      // Note: graphEmailConfigured may also be true if set via admin panel (DB settings).
       stripeConfigured: env.stripe.enabled,
       storageDriver: env.storage.driver,
       emailQueue: queue,
@@ -718,7 +719,7 @@ export const adminSecurityRouter = router({
     .input(z.object({ to: z.string().trim().toLowerCase().email().max(254) }))
     .mutation(async ({ ctx, input }) => {
       const { isEmailEnabled } = await import("../services/email.js");
-      if (!isEmailEnabled()) {
+      if (!(await isEmailEnabled())) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
           message: "No email transport configured. Set SMTP_HOST or GRAPH_EMAIL_SENDER.",
@@ -743,6 +744,28 @@ export const adminSecurityRouter = router({
       });
       return { ok: true as const };
     }),
+
+  /** Return current email transport config from DB settings (for admin panel status display). */
+  getEmailConfig: adminProcedure.query(async () => {
+    const { getSetting } = await import("../services/settings.js");
+    const [tenantId, clientId, clientSecret, emailSender, smtpHost] = await Promise.all([
+      getSetting("email.graph_tenant_id"),
+      getSetting("email.graph_client_id"),
+      getSetting("email.graph_client_secret"),
+      getSetting("email.graph_email_sender"),
+      getSetting("email.smtp_host"),
+    ]);
+    const graphConfigured = Boolean(tenantId && clientId && clientSecret && emailSender);
+    const smtpConfigured = Boolean(smtpHost) || env.smtp.enabled;
+    return {
+      transport: graphConfigured ? "graph" : smtpConfigured ? "smtp" : "none",
+      graphConfigured,
+      smtpConfigured,
+      graphTenantId: tenantId ?? env.graph.tenantId ?? "",
+      graphClientId: clientId ?? env.graph.clientId ?? "",
+      graphEmailSender: emailSender ?? env.graph.emailSender ?? "",
+    };
+  }),
 
   retryFailedEmails: adminProcedure.mutation(async () => {
     const result = await db

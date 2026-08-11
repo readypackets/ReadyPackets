@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { trpc } from "../../lib/trpc";
 import { Card } from "../../components/ui/Surface";
 import { Button } from "../../components/ui/Button";
@@ -26,13 +26,15 @@ interface GraphForm {
 }
 
 export default function EmailSettings() {
-  const { success, error } = useToast();
-  const health = trpc.adminSecurity.health.useQuery();
+  const toast = useToast();
+  const utils = trpc.useUtils();
+
+  // Use the dedicated getEmailConfig endpoint which reads from DB settings.
+  const emailConfig = trpc.adminSecurity.getEmailConfig.useQuery();
   const updateSetting = trpc.adminSecurity.updateSetting.useMutation();
   const sendTest = trpc.adminSecurity.sendTestEmail.useMutation();
 
-  const currentTransport: Transport =
-    (health.data as { emailTransport?: string } | undefined)?.emailTransport as Transport ?? "none";
+  const currentTransport: Transport = (emailConfig.data?.transport as Transport) ?? "none";
 
   const [activeTab, setActiveTab] = useState<"smtp" | "graph" | "test">("smtp");
   const [testEmail, setTestEmail] = useState("");
@@ -53,6 +55,18 @@ export default function EmailSettings() {
   });
   const [saving, setSaving] = useState(false);
 
+  // Pre-populate form fields from DB config when data loads.
+  useEffect(() => {
+    if (!emailConfig.data) return;
+    const d = emailConfig.data;
+    setGraphForm((f) => ({
+      ...f,
+      tenantId: d.graphTenantId || f.tenantId,
+      clientId: d.graphClientId || f.clientId,
+      emailSender: d.graphEmailSender || f.emailSender,
+    }));
+  }, [emailConfig.data]);
+
   async function saveSmtp() {
     setSaving(true);
     try {
@@ -68,9 +82,10 @@ export default function EmailSettings() {
       for (const s of settings) {
         await updateSetting.mutateAsync({ key: s.key, value: s.value });
       }
-      success("SMTP settings saved. Restart the service to apply.");
+      await utils.adminSecurity.getEmailConfig.invalidate();
+      toast.success("SMTP settings saved", "Email will be sent via SMTP on the next delivery cycle.");
     } catch {
-      error("Failed to save SMTP settings.");
+      toast.error("Failed to save SMTP settings");
     } finally {
       setSaving(false);
     }
@@ -89,22 +104,23 @@ export default function EmailSettings() {
       for (const s of settings) {
         await updateSetting.mutateAsync({ key: s.key, value: s.value });
       }
-      success("Microsoft Graph settings saved. Restart to apply.");
+      await utils.adminSecurity.getEmailConfig.invalidate();
+      toast.success("Microsoft Graph settings saved", "Email will now be sent via Microsoft Graph API.");
     } catch {
-      error("Failed to save Graph settings.");
+      toast.error("Failed to save Graph settings");
     } finally {
       setSaving(false);
     }
   }
 
-  async function sendTestEmail() {
+  async function handleSendTest() {
     if (!testEmail) return;
     try {
       await sendTest.mutateAsync({ to: testEmail });
-      success(`Test email sent to ${testEmail}`);
+      toast.success(`Test email sent to ${testEmail}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to send test email.";
-      error(msg);
+      toast.error(msg);
     }
   }
 
@@ -137,15 +153,19 @@ export default function EmailSettings() {
                 : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400"
             }`}
           >
-            {currentTransport === "graph" ? "Graph" : currentTransport === "smtp" ? "SMTP" : "Not configured"}
+            {currentTransport === "graph"
+              ? "Configured — Graph"
+              : currentTransport === "smtp"
+              ? "Configured — SMTP"
+              : "Not configured"}
           </span>
         </div>
       </Card>
 
       <Alert tone="info">
-        Settings saved here are stored in the database and take effect after the next service
-        restart. For production deployments, you can also set environment variables directly in{" "}
-        <code>/etc/readypackets/portal.env</code>.
+        Settings saved here are stored in the database and take effect immediately — no service
+        restart required. For production deployments, you can also set environment variables
+        directly in <code>/etc/readypackets/portal.env</code>.
       </Alert>
 
       {/* Tab bar */}
@@ -318,7 +338,7 @@ export default function EmailSettings() {
               </FieldShell>
             </div>
             <Button
-              onClick={sendTestEmail}
+              onClick={handleSendTest}
               busy={sendTest.isPending}
               disabled={!testEmail || currentTransport === "none"}
               variant="primary"

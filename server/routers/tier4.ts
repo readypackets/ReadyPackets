@@ -18,6 +18,7 @@ import {
   newsletterSubscribers,
   referrals,
   securityLogs,
+  siteSettings,
   users,
 } from "../db/schema.js";
 import { decryptField, randomToken } from "../security/crypto.js";
@@ -247,6 +248,71 @@ const referralRouter = router({
     await db.update(users).set({ referralCode: code }).where(eq(users.id, ctx.session.user.id));
     return { code };
   }),
+
+  /** Get the referral reward configuration. */
+  getRewardConfig: adminProcedure.query(async () => {
+    const rows = await db
+      .select({ key: siteSettings.settingKey, value: siteSettings.settingValue })
+      .from(siteSettings)
+      .where(
+        and(
+          eq(siteSettings.settingKey, "referral.reward_type"),
+        )
+      );
+    // Also fetch all referral settings
+    const allSettings = await db
+      .select({ key: siteSettings.settingKey, value: siteSettings.settingValue })
+      .from(siteSettings)
+      .where(sql`setting_key LIKE 'referral.%'`);
+    const map: Record<string, string> = {};
+    for (const s of allSettings) map[s.key] = s.value ?? "";
+    return {
+      rewardType: map["referral.reward_type"] ?? "cash",
+      cashAmountCents: Number(map["referral.cash_amount_cents"] ?? "0"),
+      discountPercent: Number(map["referral.discount_percent"] ?? "5"),
+      commissionPercent: Number(map["referral.commission_percent"] ?? "5"),
+      minOrderCents: Number(map["referral.min_order_cents"] ?? "0"),
+      enabled: map["referral.enabled"] !== "false",
+      couponPrefix: map["referral.coupon_prefix"] ?? "REF-",
+    };
+  }),
+
+  /** Save the referral reward configuration. */
+  saveRewardConfig: adminProcedure
+    .input(
+      z.object({
+        rewardType: z.enum(["cash", "coupon", "both"]),
+        cashAmountCents: z.number().int().min(0),
+        discountPercent: z.number().min(0).max(100),
+        commissionPercent: z.number().min(0).max(100),
+        minOrderCents: z.number().int().min(0),
+        enabled: z.boolean(),
+        couponPrefix: z.string().max(20).default("REF-"),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const settings: Record<string, string> = {
+        "referral.reward_type": input.rewardType,
+        "referral.cash_amount_cents": String(input.cashAmountCents),
+        "referral.discount_percent": String(input.discountPercent),
+        "referral.commission_percent": String(input.commissionPercent),
+        "referral.min_order_cents": String(input.minOrderCents),
+        "referral.enabled": input.enabled ? "true" : "false",
+        "referral.coupon_prefix": input.couponPrefix,
+      };
+      for (const [key, value] of Object.entries(settings)) {
+        const existing = await db
+          .select({ settingKey: siteSettings.settingKey })
+          .from(siteSettings)
+          .where(eq(siteSettings.settingKey, key))
+          .limit(1);
+        if (existing.length > 0) {
+          await db.update(siteSettings).set({ settingValue: value }).where(eq(siteSettings.settingKey, key));
+        } else {
+          await db.insert(siteSettings).values({ settingKey: key, settingValue: value, category: "referral", isSecret: false });
+        }
+      }
+    }),
 });
 
 // ── Login page configurator ───────────────────────────────────────────────────

@@ -1,15 +1,17 @@
 /**
  * Microsoft Graph API email transport.
  *
- * Used as the primary transport when GRAPH_EMAIL_SENDER is configured.
- * Falls back to SMTP automatically if Graph fails or is not configured.
+ * Settings are read from the database (email.graph_* keys) at call time,
+ * falling back to environment variables. This means changes saved through
+ * the admin panel take effect immediately without a service restart.
+ *
  * Requires the following Microsoft Entra app permissions:
  *   - Mail.Send (application permission, not delegated)
- *   - User.Read (for token validation)
  */
 import { ClientSecretCredential } from "@azure/identity";
 import { env } from "../config/env.js";
 import { logger } from "../observability/logger.js";
+import { getSetting } from "./settings.js";
 
 interface GraphMailMessage {
   to: string;
@@ -22,36 +24,56 @@ interface GraphMailMessage {
 /** Cached access token with expiry. */
 let cachedToken: { value: string; expiresAt: number } | null = null;
 let credential: ClientSecretCredential | null = null;
+/** Track the credential key so we can detect config changes. */
+let credentialKey = "";
 
-function getCredential(): ClientSecretCredential | null {
-  if (!env.graph.enabled || !env.graph.emailEnabled) return null;
-  if (!env.graph.tenantId || !env.graph.clientId || !env.graph.clientSecret) return null;
-  if (credential) return credential;
-  credential = new ClientSecretCredential(
-    env.graph.tenantId,
-    env.graph.clientId,
-    env.graph.clientSecret,
-  );
-  return credential;
+/** Read Graph config from DB settings, falling back to env vars. */
+async function getGraphConfig(): Promise<{
+  tenantId: string | null;
+  clientId: string | null;
+  clientSecret: string | null;
+  emailSender: string | null;
+}> {
+  const [tenantId, clientId, clientSecret, emailSender] = await Promise.all([
+    getSetting("email.graph_tenant_id").then((v) => v ?? env.graph.tenantId ?? null),
+    getSetting("email.graph_client_id").then((v) => v ?? env.graph.clientId ?? null),
+    getSetting("email.graph_client_secret").then((v) => v ?? env.graph.clientSecret ?? null),
+    getSetting("email.graph_email_sender").then((v) => v ?? env.graph.emailSender ?? null),
+  ]);
+  return { tenantId, clientId, clientSecret, emailSender };
 }
 
-async function getAccessToken(): Promise<string | null> {
-  const cred = getCredential();
-  if (!cred) return null;
+async function getAccessToken(): Promise<{ token: string; sender: string } | null> {
+  const config = await getGraphConfig();
+  if (!config.tenantId || !config.clientId || !config.clientSecret || !config.emailSender) {
+    return null;
+  }
+
+  // Re-create credential if config changed.
+  const newKey = `${config.tenantId}:${config.clientId}`;
+  if (!credential || credentialKey !== newKey) {
+    credential = new ClientSecretCredential(
+      config.tenantId,
+      config.clientId,
+      config.clientSecret,
+    );
+    credentialKey = newKey;
+    cachedToken = null;
+  }
 
   // Return cached token if it has more than 60 seconds remaining.
   if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
-    return cachedToken.value;
+    return { token: cachedToken.value, sender: config.emailSender };
   }
 
   try {
-    const tokenResponse = await cred.getToken("https://graph.microsoft.com/.default");
+    const tokenResponse = await credential.getToken("https://graph.microsoft.com/.default");
     if (!tokenResponse) return null;
     cachedToken = {
       value: tokenResponse.token,
       expiresAt: tokenResponse.expiresOnTimestamp,
     };
-    return tokenResponse.token;
+    return { token: tokenResponse.token, sender: config.emailSender };
   } catch (error) {
     logger.error("Failed to obtain Microsoft Graph access token", {
       error: error instanceof Error ? error.message : String(error),
@@ -65,13 +87,11 @@ async function getAccessToken(): Promise<string | null> {
  * Returns true on success, false on failure (caller should fall back to SMTP).
  */
 export async function sendViaGraph(message: GraphMailMessage): Promise<boolean> {
-  if (!env.graph.emailEnabled || !env.graph.emailSender) return false;
+  const tokenData = await getAccessToken();
+  if (!tokenData) return false;
 
-  const token = await getAccessToken();
-  if (!token) return false;
-
+  const { token, sender } = tokenData;
   const fromName = message.fromName ?? "ReadyPackets";
-  const sender = env.graph.emailSender;
 
   const body = {
     message: {
@@ -124,13 +144,10 @@ export async function sendViaGraph(message: GraphMailMessage): Promise<boolean> 
 }
 
 /** True when Graph email transport is configured and credentials are present. */
-export function isGraphEmailEnabled(): boolean {
-  return (
-    env.graph.emailEnabled &&
-    Boolean(env.graph.emailSender) &&
-    Boolean(env.graph.tenantId) &&
-    Boolean(env.graph.clientId) &&
-    Boolean(env.graph.clientSecret)
+export async function isGraphEmailEnabled(): Promise<boolean> {
+  const config = await getGraphConfig();
+  return Boolean(
+    config.tenantId && config.clientId && config.clientSecret && config.emailSender,
   );
 }
 
@@ -138,4 +155,5 @@ export function isGraphEmailEnabled(): boolean {
 export function invalidateGraphCredential(): void {
   cachedToken = null;
   credential = null;
+  credentialKey = "";
 }
