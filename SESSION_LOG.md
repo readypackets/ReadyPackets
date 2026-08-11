@@ -1049,3 +1049,22 @@ The shared selector is now available in the public header and in the authenticat
 Validation completed with zero TypeScript errors and 142 passing tests. The client and server release artifacts were built and deployed to the VPS. `readypackets.service` restarted successfully and `https://myportal.readypackets.com/api/health/ready` returned `{"status":"ready"}`. The previous client bundle remains preserved on the host as a timestamped rollback artifact.
 
 ---
+
+
+---
+
+## 14. Explicit visible appearance controls — August 11, 2026
+
+### 14.1 Request received
+
+> there should be a button to choose light dark or system mode on the portal and website thats clearly visible
+
+### 14.2 Implementation and deployment
+
+The prior appearance control used a compact icon that opened the three-way picker, which did not meet the request for immediately visible selection. It was replaced with a labeled segmented control containing three directly selectable buttons: **System**, **Light**, and **Dark**. The selected choice is highlighted and is exposed with radio-group semantics. System remains the default for a visitor without a saved preference.
+
+The visible segmented control is rendered directly in the desktop public header and authenticated portal/admin top bar. For narrow public screens, it is shown as a labeled **Appearance** section within the mobile navigation panel, where all three choices remain direct actions.
+
+Zero TypeScript errors and 142 automated tests passed. The production client and server bundles were built and deployed, the service restarted cleanly, and the readiness endpoint returned `{"status":"ready"}`. A browser check of the deployed public homepage confirmed System, Light, and Dark are visible as separate header buttons.
+
+---

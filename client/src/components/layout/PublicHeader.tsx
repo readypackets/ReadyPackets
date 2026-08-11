@@ -168,6 +168,11 @@ export function PublicHeader() {
               ))}
             </nav>
 
+            <div className="mt-4 border-t border-line pt-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Appearance</p>
+              <ThemeToggle />
+            </div>
+
             <div className="mt-4 flex flex-col gap-2 border-t border-line pt-4">
               {authenticated ? (
                 <LinkButton
