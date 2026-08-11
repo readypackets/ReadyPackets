@@ -109,6 +109,47 @@ export const integrationsRouter = router({
         .where(eq(webhookEndpoints.id, input.id));
     }),
 
+  /** Purpose-built configuration for the P101 and P201 phase-start webhooks. */
+  phaseStartWebhookConfigs: staffProcedure.query(async () => {
+    const endpoints = await db.select({
+      id: webhookEndpoints.id,
+      name: webhookEndpoints.name,
+      url: webhookEndpoints.url,
+      events: webhookEndpoints.events,
+      enabled: webhookEndpoints.enabled,
+      createdAt: webhookEndpoints.createdAt,
+    }).from(webhookEndpoints).orderBy(desc(webhookEndpoints.createdAt));
+    return (["P101", "P201"] as const).map((eventType) => {
+      const endpoint = endpoints.find((candidate) => Array.isArray(candidate.events) && candidate.events.includes(eventType));
+      return { eventType, endpoint: endpoint ?? null };
+    });
+  }),
+
+  savePhaseStartWebhookConfig: adminProcedure
+    .input(z.object({
+      eventType: z.enum(["P101", "P201"]),
+      url: z.string().trim().url().max(500).refine((value) => new URL(value).protocol === "https:", "Webhook URLs must use HTTPS."),
+      secret: z.string().max(256).optional(),
+      enabled: z.boolean().default(true),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const existing = (await db.select().from(webhookEndpoints).orderBy(desc(webhookEndpoints.createdAt)))
+        .find((candidate) => Array.isArray(candidate.events) && candidate.events.includes(input.eventType));
+      const name = input.eventType === "P101" ? "Phase I Start — P101" : "Phase II Start — P201";
+      if (existing) {
+        const patch: Record<string, unknown> = { name, url: input.url, events: [input.eventType], enabled: input.enabled };
+        if (input.secret) patch.secretEnc = encryptField(input.secret, `webhook:${existing.id}`);
+        await db.update(webhookEndpoints).set(patch).where(eq(webhookEndpoints.id, existing.id));
+        await recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "webhook.phase_endpoint_saved", entityType: "webhook_endpoint", entityId: existing.id, summary: `${input.eventType} webhook endpoint updated` });
+        return { id: existing.id };
+      }
+      const insert = await db.insert(webhookEndpoints).values({ name, url: input.url, events: [input.eventType], enabled: input.enabled, secretEnc: null });
+      const id = (insert[0] as { insertId: number }).insertId;
+      if (input.secret) await db.update(webhookEndpoints).set({ secretEnc: encryptField(input.secret, `webhook:${id}`) }).where(eq(webhookEndpoints.id, id));
+      await recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "webhook.phase_endpoint_saved", entityType: "webhook_endpoint", entityId: id, summary: `${input.eventType} webhook endpoint configured` });
+      return { id };
+    }),
+
   webhookDeliveries: staffProcedure
     .input(
       z.object({
@@ -144,8 +185,28 @@ export const integrationsRouter = router({
     .mutation(async ({ input }) => {
       await db
         .update(webhookDeliveries)
-        .set({ status: "pending", runAfter: new Date(), lastError: null })
+        .set({ status: "pending", runAfter: new Date(), lastError: null, responseCode: null, responseDetail: null })
         .where(eq(webhookDeliveries.id, input.deliveryId));
+    }),
+
+  /** Create a fresh delivery row while retaining the original delivery history. */
+  redeliverWebhook: adminProcedure
+    .input(z.object({ deliveryId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const rows = await db.select().from(webhookDeliveries).where(eq(webhookDeliveries.id, input.deliveryId)).limit(1);
+      const delivery = rows[0];
+      if (!delivery) throw new TRPCError({ code: "NOT_FOUND", message: "Webhook delivery not found." });
+      const insert = await db.insert(webhookDeliveries).values({
+        endpointId: delivery.endpointId,
+        eventType: delivery.eventType,
+        payload: delivery.payload,
+        status: "pending",
+        attempts: 0,
+        runAfter: new Date(),
+      });
+      const id = (insert[0] as { insertId: number }).insertId;
+      await recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "webhook.redelivered", entityType: "webhook_delivery", entityId: id, summary: `Redelivery created from webhook delivery ${delivery.id}` });
+      return { id };
     }),
 
   // =========================================================================

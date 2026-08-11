@@ -203,10 +203,11 @@ async function ensureFolder(folderPath: string): Promise<string> {
  * Upload a small placeholder file to a SharePoint folder.
  * Returns the uploaded file's item ID.
  */
-async function uploadPlaceholder(
+async function uploadTextFile(
   folderId: string,
   fileName: string,
-  content: string
+  content: string,
+  contentType = "text/plain"
 ): Promise<string> {
   const { driveId } = await getGraphRuntimeConfig();
   if (!driveId) throw new Error("GRAPH_SHAREPOINT_DRIVE_ID must be set.");
@@ -218,18 +219,22 @@ async function uploadPlaceholder(
     method: "PUT",
     headers: {
       Authorization: `Bearer ${token}`,
-      "Content-Type": "text/plain",
+      "Content-Type": contentType,
     },
     body: content,
   });
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`Placeholder upload failed (${response.status}): ${text.slice(0, 200)}`);
+    throw new Error(`SharePoint file upload failed (${response.status}): ${text.slice(0, 300)}`);
   }
 
   const data = (await response.json()) as { id: string };
   return data.id;
+}
+
+async function uploadPlaceholder(folderId: string, fileName: string, content: string): Promise<string> {
+  return uploadTextFile(folderId, fileName, content);
 }
 
 // ---------------------------------------------------------------------------
@@ -253,6 +258,50 @@ const DEFAULT_PLACEHOLDERS: Record<string, string[]> = {
   in_production: ["PRODUCTION_BRIEF.txt"],
   delivered: ["DELIVERY_RECEIPT.txt"],
 };
+
+export async function exportIntakeMarkdownToPhaseTwo(orderId: number, markdown: string): Promise<void> {
+  const graphConfig = await getGraphRuntimeConfig();
+  if (!graphConfig.enabled) {
+    logger.info("sharepoint.intake_markdown.skipped", { orderId, reason: "Graph not configured" });
+    return;
+  }
+
+  const orderRows = await db
+    .select({ orderNumber: orders.orderNumber, userId: orders.userId })
+    .from(orders)
+    .where(eq(orders.id, orderId))
+    .limit(1);
+  if (!orderRows[0]) throw new Error("Order not found for intake export.");
+
+  const order = orderRows[0];
+  const customer = await getUserById(order.userId);
+  const customerFolder = customer?.customerNumber ?? `RP-CUST-${String(order.userId).padStart(6, "0")}`;
+  const folderPath = `${graphConfig.rootFolderPath}/customers/${customerFolder}/orders/${order.orderNumber}/Phase II/Docs`;
+  const logInsert = await db.insert(sharepointSyncLog).values({
+    orderId,
+    operationType: "intake_markdown",
+    status: "pending",
+    sharepointPath: `${folderPath}/INTAKE_ANSWERS.md`,
+    attempts: 1,
+  });
+  const logId = insertedId(logInsert);
+
+  try {
+    const folderId = await ensureFolder(folderPath);
+    await uploadTextFile(folderId, "INTAKE_ANSWERS.md", markdown, "text/markdown; charset=utf-8");
+    await db.update(sharepointSyncLog).set({ status: "succeeded" }).where(eq(sharepointSyncLog.id, logId));
+    await recordActivity({
+      actorUserId: null,
+      action: "sharepoint.intake_markdown_exported",
+      entityType: "order",
+      entityId: orderId,
+      summary: `Intake answers exported to Phase II Docs for ${order.orderNumber}`,
+    });
+  } catch (error) {
+    await db.update(sharepointSyncLog).set({ status: "failed", errorMessage: error instanceof Error ? error.message.slice(0, 800) : String(error).slice(0, 800) }).where(eq(sharepointSyncLog.id, logId));
+    throw error;
+  }
+}
 
 export async function queueFullOrderFolderProvisioning(orderId: number): Promise<void> {
   // Every order receives the full Phase I-IV hierarchy. The jobs are idempotent:
@@ -672,21 +721,30 @@ async function deliverWebhook(delivery: {
       signal: AbortSignal.timeout(10_000),
     });
 
+    const responseDetail = (await response.text().catch(() => "")).slice(0, 1000) || response.statusText || null;
     if (response.ok) {
       await db
         .update(webhookDeliveries)
         .set({
           status: "delivered",
           responseCode: response.status,
+          responseDetail,
           attempts: delivery.attempts + 1,
+          lastError: null,
           deliveredAt: new Date(),
         })
         .where(eq(webhookDeliveries.id, delivery.id));
     } else {
-      throw new Error(`HTTP ${response.status}`);
+      const detail = responseDetail ? `HTTP ${response.status}: ${responseDetail}` : `HTTP ${response.status}`;
+      const error = new Error(detail);
+      (error as Error & { responseCode?: number; responseDetail?: string | null }).responseCode = response.status;
+      (error as Error & { responseCode?: number; responseDetail?: string | null }).responseDetail = responseDetail;
+      throw error;
     }
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
+    const responseCode = err && typeof err === "object" && "responseCode" in err ? Number((err as { responseCode?: unknown }).responseCode) || null : null;
+    const responseDetail = err && typeof err === "object" && "responseDetail" in err ? String((err as { responseDetail?: unknown }).responseDetail ?? "").slice(0, 1000) || null : null;
     const nextAttempt = delivery.attempts + 1;
     const backoffMinutes = [1, 5, 15, 60, 240][Math.min(nextAttempt - 1, 4)] ?? 240;
     const runAfter = new Date(Date.now() + backoffMinutes * 60_000);
@@ -695,7 +753,8 @@ async function deliverWebhook(delivery: {
       .update(webhookDeliveries)
       .set({
         status: nextAttempt >= 5 ? "failed" : "pending",
-        responseCode: null,
+        responseCode,
+        responseDetail,
         attempts: nextAttempt,
         lastError: errorMsg.slice(0, 500),
         runAfter,

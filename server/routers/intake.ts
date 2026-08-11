@@ -23,6 +23,7 @@ import { decryptField, encryptField } from "../security/crypto.js";
 import { recordActivity } from "../observability/audit.js";
 import { getSetting, getSettingNumber } from "../services/settings.js";
 import { OrderStateError, assertOrderAccess, transitionOrder } from "../services/orders.js";
+import { exportIntakeMarkdownToPhaseTwo } from "../services/sharepoint.js";
 import { protectedProcedure, router } from "../trpc/trpc.js";
 import { INTAKE_OUTCOMES, INTEGRITY_CHOICES } from "../../shared/domain.js";
 import { insertedId } from "../db/result.js";
@@ -164,6 +165,39 @@ function toTrpcError(error: unknown): never {
     throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
   }
   throw error;
+}
+
+function renderIntakeMarkdown(input: {
+  orderId: number;
+  submissionId: number;
+  projectName: string | null;
+  desiredOutcomes: string[];
+  integrityChoice: string | null;
+  submittedAt: Date;
+  answers: Map<string, string>;
+}): string {
+  const lines = [
+    "# ReadyPackets Intake Answers",
+    "",
+    `- **Order ID:** ${input.orderId}`,
+    `- **Submission ID:** ${input.submissionId}`,
+    `- **Project:** ${input.projectName?.trim() || "Not provided"}`,
+    `- **Submitted:** ${input.submittedAt.toISOString()}`,
+    `- **Desired outcomes:** ${input.desiredOutcomes.join(", ") || "Not provided"}`,
+    `- **Integrity choice:** ${input.integrityChoice || "Not provided"}`,
+    "",
+  ];
+
+  let currentSection = "";
+  for (const question of INTAKE_QUESTIONS) {
+    if (question.section !== currentSection) {
+      currentSection = question.section;
+      lines.push(`## ${currentSection}`, "");
+    }
+    const answer = (input.answers.get(question.key) ?? "").trim() || "Not provided";
+    lines.push(`### ${question.label}`, "", answer, "");
+  }
+  return `${lines.join("\n").trim()}\n`;
 }
 
 async function getOrCreateSubmission(orderId: number, userId: number): Promise<number> {
@@ -428,10 +462,30 @@ export const intakeRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: problems.join(" ") });
       }
 
+      const submittedAt = new Date();
       await db
         .update(intakeSubmissions)
-        .set({ status: "submitted", submittedAt: new Date() })
+        .set({ status: "submitted", submittedAt })
         .where(eq(intakeSubmissions.id, submission.id));
+
+      const intakeMarkdown = renderIntakeMarkdown({
+        orderId: input.orderId,
+        submissionId: submission.id,
+        projectName: decryptField(submission.projectNameEnc, `intake:${submission.id}`),
+        desiredOutcomes: outcomes,
+        integrityChoice: submission.integrityChoice,
+        submittedAt,
+        answers: answerMap,
+      });
+      void exportIntakeMarkdownToPhaseTwo(input.orderId, intakeMarkdown).catch((error) =>
+        recordActivity({
+          actorUserId: null,
+          action: "sharepoint.intake_markdown_export_failed",
+          entityType: "order",
+          entityId: input.orderId,
+          summary: `Intake Markdown export queued unsuccessfully: ${error instanceof Error ? error.message.slice(0, 180) : String(error).slice(0, 180)}`,
+        }),
+      );
 
       void recordActivity({
         actorUserId: ctx.session.user.id,

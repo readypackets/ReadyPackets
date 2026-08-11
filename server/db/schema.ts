@@ -1412,6 +1412,7 @@ export const webhookDeliveries = mysqlTable(
     payload: json("payload"),
     status: varchar("status", { length: 16 }).notNull().default("pending"),
     responseCode: int("response_code"),
+    responseDetail: varchar("response_detail", { length: 1000 }),
     attempts: int("attempts").notNull().default(0),
     lastError: varchar("last_error", { length: 500 }),
     runAfter: timestamp("run_after").notNull().defaultNow(),

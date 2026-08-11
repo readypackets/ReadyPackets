@@ -783,3 +783,29 @@ TypeScript typecheck completed with zero errors. The full test suite completed s
 ### Deployment status
 
 Deployed to `https://myportal.readypackets.com` on the Cloud Computer. Production service healthy after restart.
+
+## 2026-08-11 — Microsoft Graph Delivery, Checkout Coupons, Intake Export, and Phase Webhooks
+
+### User request
+
+The user reported that Microsoft Graph email delivery did not work for password-reset and new-account verification emails. They also requested checkout coupon entry and application, automatic export of completed intake answers to a Phase II Markdown document, configurable Phase I P101 and Phase II P201 automation webhook URLs, plus delivery logging, status capture, and redelivery.
+
+### Microsoft Graph root cause and correction
+
+The production logs showed `Invalid tenant id provided` during `adminSecurity.sendTestEmail`. The database values for the Microsoft Graph tenant ID and client ID each had a trailing whitespace character, making their stored length 37 rather than the required 36-character GUID format. The saved Graph client secret and sender address were also normalized. A direct client-credential token request then completed successfully without sending mail.
+
+The two recent queued password-reset / verification messages were requeued after the correction and both were delivered successfully through Microsoft Graph. Their queue status is `sent`. The earlier dashboard alerts remain in the audit history but have been marked resolved. The transport code now trims all database-backed Graph values before constructing a credential, preventing future whitespace from breaking delivery.
+
+### Delivered functionality
+
+The checkout page now supports a coupon code that automatically validates when the field loses focus, on Enter, or by clicking the explicit **Apply** button. A valid coupon immediately shows the calculated discount and the revised amount due, while the authoritative coupon application remains server-side in the Stripe Checkout creation flow.
+
+When an intake is submitted, the platform renders all customer answers, outcomes, integrity choice, project name, order ID, and submission timestamp into `INTAKE_ANSWERS.md`. It then exports this file to the order's SharePoint `Phase II/Docs` folder. The export is non-blocking for customer intake completion and receives a detailed success or failure record in `sharepoint_sync_log`.
+
+The Integrations → Webhook Endpoints tab now contains dedicated HTTPS configuration cards for **Phase I Start — P101** and **Phase II Start — P201**, including optional HMAC secrets and enable/disable controls. Existing generic endpoint management remains available for other event types.
+
+Webhook Delivery Log now displays response code and diagnostic text. A failed or pending delivery can be retried in place; **Redeliver** creates a fresh queued delivery while preserving the original record, giving administrators an auditable delivery history.
+
+### Validation and deployment
+
+TypeScript typecheck completed with zero errors. The complete test suite completed successfully: 8 test files and 142 tests passed. The production client and server bundles were rebuilt, migration `0008_webhook_response_detail.sql` was applied, the service restarted cleanly, and the readiness endpoint returned `{"status":"ready"}`.

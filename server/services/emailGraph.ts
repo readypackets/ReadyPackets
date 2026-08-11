@@ -28,19 +28,29 @@ let credential: ClientSecretCredential | null = null;
 let credentialKey = "";
 
 /** Read Graph config from DB settings, falling back to env vars. */
+function normalizeGraphValue(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized || null;
+}
+
 async function getGraphConfig(): Promise<{
   tenantId: string | null;
   clientId: string | null;
   clientSecret: string | null;
   emailSender: string | null;
 }> {
-  const [tenantId, clientId, clientSecret, emailSender] = await Promise.all([
-    getSetting("email.graph_tenant_id").then((v) => v ?? env.graph.tenantId ?? null),
-    getSetting("email.graph_client_id").then((v) => v ?? env.graph.clientId ?? null),
-    getSetting("email.graph_client_secret").then((v) => v ?? env.graph.clientSecret ?? null),
-    getSetting("email.graph_email_sender").then((v) => v ?? env.graph.emailSender ?? null),
+  const [storedTenantId, storedClientId, storedClientSecret, storedEmailSender] = await Promise.all([
+    getSetting("email.graph_tenant_id"),
+    getSetting("email.graph_client_id"),
+    getSetting("email.graph_client_secret"),
+    getSetting("email.graph_email_sender"),
   ]);
-  return { tenantId, clientId, clientSecret, emailSender };
+  return {
+    tenantId: normalizeGraphValue(storedTenantId ?? env.graph.tenantId),
+    clientId: normalizeGraphValue(storedClientId ?? env.graph.clientId),
+    clientSecret: normalizeGraphValue(storedClientSecret ?? env.graph.clientSecret),
+    emailSender: normalizeGraphValue(storedEmailSender ?? env.graph.emailSender),
+  };
 }
 
 async function getAccessToken(): Promise<{ token: string; sender: string } | null> {

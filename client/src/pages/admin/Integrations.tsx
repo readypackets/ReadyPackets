@@ -71,7 +71,8 @@ function WebhooksTab() {
 
   return (
     <div>
-      <div className="flex justify-end mb-4">
+      <PhaseStartWebhookConfigPanel />
+      <div className="flex justify-end mb-4 mt-6">
         <Button size="sm" onClick={openNew}>Add endpoint</Button>
       </div>
 
@@ -128,6 +129,62 @@ function WebhooksTab() {
   );
 }
 
+function PhaseStartWebhookConfigPanel() {
+  const toast = useToast();
+  const configs = trpc.integrations.phaseStartWebhookConfigs.useQuery();
+  const save = trpc.integrations.savePhaseStartWebhookConfig.useMutation({
+    onSuccess: async () => {
+      await configs.refetch();
+      toast.success("Phase-start webhook saved", "The next matching phase kickoff will queue a signed payload to this URL.");
+    },
+    onError: (cause) => toast.error("Could not save phase-start webhook", cause.message),
+  });
+  const [forms, setForms] = useState<Record<"P101" | "P201", { url: string; secret: string; enabled: boolean }>>({
+    P101: { url: "", secret: "", enabled: true },
+    P201: { url: "", secret: "", enabled: true },
+  });
+
+  useEffect(() => {
+    if (!configs.data) return;
+    setForms((current) => {
+      const next = { ...current };
+      for (const config of configs.data) {
+        next[config.eventType] = {
+          url: config.endpoint?.url ?? "",
+          secret: "",
+          enabled: config.endpoint?.enabled ?? true,
+        };
+      }
+      return next;
+    });
+  }, [configs.data]);
+
+  const copy = (eventType: "P101" | "P201") => eventType === "P101"
+    ? { title: "Phase I Start — P101", description: "Sends the Phase I intake-start payload when Phase I is kicked off for an order." }
+    : { title: "Phase II Start — P201", description: "Sends the Phase II synthesis-start payload when Phase II is kicked off for an order." };
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {(["P101", "P201"] as const).map((eventType) => {
+        const details = copy(eventType);
+        const form = forms[eventType];
+        return (
+          <Card key={eventType} className="space-y-3">
+            <div>
+              <h3 className="font-semibold text-brand-navy">{details.title}</h3>
+              <p className="mt-1 text-sm text-gray-600">{details.description}</p>
+            </div>
+            <Input label="Destination URL" type="url" value={form.url} onChange={(event) => setForms((current) => ({ ...current, [eventType]: { ...current[eventType], url: event.target.value } }))} placeholder="https://automation.example.com/webhooks/readypackets" />
+            <Input label="HMAC secret (leave blank to keep existing)" type="password" value={form.secret} onChange={(event) => setForms((current) => ({ ...current, [eventType]: { ...current[eventType], secret: event.target.value } }))} placeholder="Optional signing secret" />
+            <label className="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" checked={form.enabled} onChange={(event) => setForms((current) => ({ ...current, [eventType]: { ...current[eventType], enabled: event.target.checked } }))} /> Enabled</label>
+            <Button size="sm" busy={save.isPending} disabled={!form.url.trim()} onClick={() => save.mutate({ eventType, url: form.url.trim(), secret: form.secret || undefined, enabled: form.enabled })}>Save {eventType} webhook</Button>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Delivery log tab
 // ---------------------------------------------------------------------------
@@ -137,6 +194,10 @@ function DeliveryLogTab() {
   const [status, setStatus] = useState("");
   const { data, refetch } = trpc.integrations.webhookDeliveries.useQuery({ page, status: status || undefined });
   const retry = trpc.integrations.retryWebhookDelivery.useMutation({ onSuccess: () => refetch() });
+  const redeliver = trpc.integrations.redeliverWebhook.useMutation({
+    onSuccess: () => { void refetch(); toast.success("Redelivery queued", "A fresh delivery record has been created while preserving the original log."); },
+    onError: (cause) => toast.error("Could not queue redelivery", cause.message),
+  });
   const toast = useToast();
 
   return (
@@ -157,6 +218,7 @@ function DeliveryLogTab() {
               <th className="py-2 pr-4">Status</th>
               <th className="py-2 pr-4">Attempts</th>
               <th className="py-2 pr-4">Response</th>
+              <th className="py-2 pr-4">Diagnostic</th>
               <th className="py-2 pr-4">Date</th>
               <th className="py-2">Actions</th>
             </tr>
@@ -176,23 +238,20 @@ function DeliveryLogTab() {
                 </td>
                 <td className="py-2 pr-4">{d.attempts}</td>
                 <td className="py-2 pr-4">{d.responseCode ?? "—"}</td>
+                <td className="py-2 pr-4 max-w-xs"><span className="block truncate text-xs text-gray-600" title={d.lastError ?? d.responseDetail ?? ""}>{d.lastError ?? d.responseDetail ?? "—"}</span></td>
                 <td className="py-2 pr-4 text-gray-500">
                   {new Date(d.createdAt).toLocaleDateString()}
                 </td>
                 <td className="py-2">
-                  {(d.status === "failed" || d.status === "pending") && (
-                    <button
-                      onClick={() => retry.mutate({ deliveryId: d.id })}
-                      className="text-brand-teal text-xs hover:underline"
-                    >
-                      Retry
-                    </button>
-                  )}
+                  <div className="flex gap-3">
+                    {(d.status === "failed" || d.status === "pending") && <button onClick={() => retry.mutate({ deliveryId: d.id })} className="text-brand-teal text-xs hover:underline">Retry now</button>}
+                    <button onClick={() => redeliver.mutate({ deliveryId: d.id })} className="text-brand-teal text-xs hover:underline">Redeliver</button>
+                  </div>
                 </td>
               </tr>
             ))}
             {!data?.rows.length && (
-              <tr><td colSpan={6} className="py-8 text-center text-gray-400">No deliveries.</td></tr>
+              <tr><td colSpan={7} className="py-8 text-center text-gray-400">No deliveries.</td></tr>
             )}
           </tbody>
         </table>
