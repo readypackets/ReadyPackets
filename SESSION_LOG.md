@@ -962,3 +962,28 @@ The live verifier initially reported two edge-specific false negatives: Cloudfla
 The customer collaboration, configurable admin navigation, visible My Business Packets rename, purge-scheduler confirmation, migrations, build, deployment, and live security verification requested in the inherited feature batch are complete. The next action is to commit and push these source changes and this session record to the private `readypackets/ReadyPackets` repository.
 
 ---
+
+
+---
+
+## 11. Architecture and master-prompt assessment — August 11, 2026
+
+### 11.1 Request received
+
+> what else is missing from this application based on the architecture and master prompt?
+
+### 11.2 Response and assessment method
+
+The response was to review the current self-hosted architecture, the historic master prompt, the Batch 39 gap-analysis response, relevant payment/cart source code, the current production integration status, and the test/deployment record. This assessment intentionally distinguishes an **implemented capability**, a **production configuration dependency**, a **required acceptance test**, and an **intentional exception** from a feature that is genuinely absent.
+
+The detailed evidence-based report is stored as `docs/IMPLEMENTATION_GAP_ASSESSMENT_2026-08-11.md`.
+
+### 11.3 Result
+
+The core operations platform is substantially present. The recommended next release is the commerce path: the normal order builder currently creates an order and navigates to its detail view rather than the existing checkout surface, so checkout coupons, Stripe redirect, payment return messaging, a persistent cart, and recommendations are not available in the live customer journey. The review also identified that database-stored Stripe settings are not consistently used by actual checkout/webhook execution, Stripe webhook processing needs an explicit idempotency guard, and the payment lifecycle lacks focused automated and Stripe test-mode acceptance coverage.
+
+The report records the customer’s requested coupon behavior, full cart, tier-per-packet-group enforcement, non-coercive upsells/recommendations, Stripe Checkout hand-off, signed webhook confirmation, and paid-order update as P0/P1 work. It also records outstanding operational proof work: Stripe test mode, Graph/SharePoint, multi-target backup restore, SAML pilot, and Docker clean-install validation.
+
+The historic references to Manus OAuth and a PWA/service worker are intentional exceptions, not defects: the application is self-hosted without Manus runtime dependencies and PWA support remains disabled at the user’s request.
+
+---
