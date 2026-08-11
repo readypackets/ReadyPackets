@@ -205,7 +205,7 @@ export function OrderDetailPage() {
                 </span>
                 <LinkButton
                   size="sm"
-                  href={`/portal/orders/${order.id}/nda`}
+                  href={`/portal/orders/${order.id}/mnda`}
                   leadingIcon={<FileSignature className="size-4" aria-hidden="true" />}
                 >
                   Review and sign
@@ -502,11 +502,11 @@ export function OrderDetailPage() {
               <li className="flex items-center justify-between gap-3">
                 <span className="text-body">Mutual NDA</span>
                 {mnda.data?.accepted ? (
-                  <Link href={`/portal/orders/${order.id}/nda`} className="text-sm font-medium">
+                  <Link href={`/portal/orders/${order.id}/mnda`} className="text-sm font-medium">
                     Signed {formatDate(mnda.data.acceptedAt)}
                   </Link>
                 ) : (
-                  <Link href={`/portal/orders/${order.id}/nda`} className="text-sm font-medium">
+                  <Link href={`/portal/orders/${order.id}/mnda`} className="text-sm font-medium">
                     Sign now
                   </Link>
                 )}

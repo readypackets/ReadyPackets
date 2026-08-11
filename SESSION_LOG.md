@@ -829,3 +829,19 @@ Administrators using the customer portal now see a prominent **Admin panel** sho
 ### Validation and deployment
 
 TypeScript typecheck completed with zero errors. The full suite completed successfully with 142 passing tests. The production client/server bundles were rebuilt and deployed, migration `0009_mnda_v1.sql` was applied, the service restarted cleanly, and the readiness endpoint returned `{"status":"ready"}`.
+
+## 2026-08-11 — MNDA Acceptance Route Correction
+
+### User report
+
+The customer portal returned a branded 404 page when the user selected **Review and sign** for the MNDA at `/portal/orders/2/nda`.
+
+### Root cause and correction
+
+The registered application route is `/portal/orders/:id/mnda`, but three customer-facing links in `OrderDetail.tsx` used `/portal/orders/:id/nda`. The route mismatch sent customers to the generic not-found page before the MNDA component could load.
+
+All three links were corrected to `/portal/orders/:id/mnda`, including the action-required card and the signed/unsigned MNDA status links. The client was rebuilt and deployed. The service restart completed successfully and the readiness endpoint returned `{"status":"ready"}`.
+
+### Phase webhook configuration
+
+Phase-start payload URLs are configured at **Admin → Integrations → Webhook Endpoints**. The top of that page contains dedicated cards named **Phase I Start — P101** and **Phase II Start — P201**, each with a required HTTPS destination URL, optional HMAC signing secret, and an enable/disable control. The same page's **Delivery Log** tab displays delivery result, response code, diagnostics, retry, and redelivery controls.
