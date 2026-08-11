@@ -552,12 +552,14 @@ export function AdminCustomersPage() {
         description="Every account on the platform, including staff and administrators."
         actions={
           session.isAdmin ? (
-            <Button
-              onClick={() => setCreateOpen(true)}
-              leadingIcon={<UserPlus className="size-4" aria-hidden="true" />}
-            >
-              New staff account
-            </Button>
+            <div className="flex items-center gap-2">
+              <LinkButton href="/admin/customers/trash" variant="outline" leadingIcon={<Trash2 className="size-4" aria-hidden="true" />}>
+                Account trash
+              </LinkButton>
+              <Button onClick={() => setCreateOpen(true)} leadingIcon={<UserPlus className="size-4" aria-hidden="true" />}>
+                New staff account
+              </Button>
+            </div>
           ) : null
         }
       />
@@ -795,6 +797,61 @@ export function AdminCustomersPage() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Customer Detail Page
 // ─────────────────────────────────────────────────────────────────────────────
+type TrashedCustomerRow = {
+  id: number;
+  name: string;
+  email: string;
+  company: string | null;
+  role: string;
+  status: string;
+  emailVerified: boolean;
+  mfaEnabled: boolean;
+  createdAt: string | Date;
+  deletedAt: string | Date | null;
+};
+
+export function AdminCustomerTrashPage() {
+  const toast = useToast();
+  const utils = trpc.useUtils();
+  const trashed = trpc.admin.trashedCustomers.useQuery();
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [restoreId, setRestoreId] = useState<number | null>(null);
+  const [bulkRestoreOpen, setBulkRestoreOpen] = useState(false);
+  const restore = trpc.admin.restoreCustomer.useMutation({
+    async onSuccess() {
+      setRestoreId(null);
+      await Promise.all([trashed.refetch(), utils.admin.customers.invalidate()]);
+      toast.success("Account restored", "The account is active and visible in the customer directory again.");
+    },
+    onError(error) { toast.error("Could not restore account", errorMessage(error)); },
+  });
+  const bulkRestore = trpc.admin.bulkRestoreCustomers.useMutation({
+    async onSuccess(result) {
+      setSelectedIds([]);
+      setBulkRestoreOpen(false);
+      await Promise.all([trashed.refetch(), utils.admin.customers.invalidate()]);
+      toast.success(`${result.count} account(s) restored`);
+    },
+    onError(error) { toast.error("Could not restore accounts", errorMessage(error)); },
+  });
+  const rows = (trashed.data ?? []) as unknown as TrashedCustomerRow[];
+  const columns: Column<TrashedCustomerRow>[] = [
+    { key: "select", header: <Checkbox label="Select all trashed accounts" checked={rows.length > 0 && rows.every((row) => selectedIds.includes(row.id))} onChange={(event) => setSelectedIds(event.target.checked ? rows.map((row) => row.id) : [])} />, cell: (row) => <Checkbox label={`Select ${row.name}`} checked={selectedIds.includes(row.id)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...new Set([...current, row.id])] : current.filter((id) => id !== row.id))} /> },
+    { key: "account", header: "Account", cell: (row) => <div><p className="font-medium text-ink">{row.name}</p><p className="text-xs text-muted">{row.email}</p>{row.company ? <p className="mt-0.5 text-xs text-muted">{row.company}</p> : null}</div> },
+    { key: "role", header: "Role", hideOnMobile: true, cell: (row) => <Badge tone={ROLE_TONES[row.role] ?? "neutral"}>{row.role}</Badge> },
+    { key: "deleted", header: "Moved to trash", hideOnMobile: true, cell: (row) => <span className="text-sm text-body">{formatDate(row.deletedAt)}</span> },
+    { key: "restore", header: <span className="sr-only">Restore</span>, align: "right", cell: (row) => <Button size="sm" variant="outline" onClick={() => setRestoreId(row.id)}>Restore</Button> },
+  ];
+  return <>
+    <ConfirmDialog open={restoreId !== null} onClose={() => setRestoreId(null)} onConfirm={() => { if (restoreId !== null) restore.mutate({ userId: restoreId }); }} title="Restore this account?" message="The account will be reactivated and can sign in again immediately." confirmLabel="Restore account" cancelLabel="Cancel" variant="primary" busy={restore.isPending} />
+    <ConfirmDialog open={bulkRestoreOpen} onClose={() => setBulkRestoreOpen(false)} onConfirm={() => bulkRestore.mutate({ userIds: selectedIds, confirmation: "RESTORE_FROM_TRASH" })} title="Restore selected accounts?" message={`This reactivates ${selectedIds.length} selected account(s) and permits them to sign in again.`} confirmLabel="Restore selected accounts" cancelLabel="Cancel" variant="primary" busy={bulkRestore.isPending} />
+    <PageHeader title="Account trash" description="Soft-deleted accounts remain recoverable until the configured retention window expires." breadcrumb={{ href: "/admin/customers", label: "Customers" }} actions={<LinkButton href="/admin/customers" variant="outline">Back to customers</LinkButton>} />
+    <Alert tone="info" className="mb-5">Restoring an account preserves its customer ID, order history, files, tickets, and activity trail.</Alert>
+    {selectedIds.length > 0 ? <Card className="mb-5 border-success/40 bg-success/5"><div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-medium text-ink">{selectedIds.length} account(s) selected</p><Button variant="primary" onClick={() => setBulkRestoreOpen(true)}>Restore selected accounts</Button></div></Card> : null}
+    {trashed.isLoading ? <div className="space-y-3">{Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-16 w-full" />)}</div> : <DataTable caption="Accounts in trash" columns={columns} rows={rows} rowKey={(row) => row.id} empty={<EmptyState icon={Trash2} title="Account trash is empty" description="Deleted accounts will appear here until the retention window expires." />} />}
+  </>;
+}
+
 export function AdminCustomerDetailPage() {
   const params = useParams<{ id: string }>();
   const userId = Number(params.id);

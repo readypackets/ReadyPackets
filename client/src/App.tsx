@@ -62,7 +62,7 @@ import { WorkspacesPage } from "@/pages/portal/Workspaces";
 
 import { AdminDashboard } from "@/pages/admin/Dashboard";
 import { AdminOrderDetailPage, AdminOrdersPage, AdminOrderTrashPage } from "@/pages/admin/Orders";
-import { AdminCustomerDetailPage, AdminCustomersPage } from "@/pages/admin/Customers";
+import { AdminCustomerDetailPage, AdminCustomersPage, AdminCustomerTrashPage } from "@/pages/admin/Customers";
 import { AdminCatalogPage } from "@/pages/admin/Catalog";
 import { AdminTicketDetailPage, AdminTicketsPage } from "@/pages/admin/Tickets";
 import { AdminModerationPage } from "@/pages/admin/Moderation";
@@ -299,6 +299,7 @@ function AdminRoutes() {
         <Route path="/admin/orders/trash" component={AdminOrderTrashPage} />
         <Route path="/admin/orders/:id" component={AdminOrderDetailPage} />
         <Route path="/admin/customers" component={AdminCustomersPage} />
+        <Route path="/admin/customers/trash" component={AdminCustomerTrashPage} />
         <Route path="/admin/customers/:id" component={AdminCustomerDetailPage} />
         <Route path="/admin/tickets" component={AdminTicketsPage} />
         <Route path="/admin/tickets/:id" component={AdminTicketDetailPage} />

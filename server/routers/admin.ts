@@ -617,6 +617,17 @@ export const adminRouter = router({
       return { ok: true as const };
     }),
 
+  bulkRestoreOrders: adminProcedure
+    .input(z.object({ orderIds: z.array(z.number().int().positive()).min(1).max(200), confirmation: z.literal("RESTORE_FROM_TRASH") }))
+    .mutation(async ({ ctx, input }) => {
+      const ids = [...new Set(input.orderIds)];
+      const rows = await db.select({ id: orders.id }).from(orders).where(and(inArray(orders.id, ids), sql`${orders.deletedAt} IS NOT NULL`));
+      if (rows.length === 0) throw new TRPCError({ code: "NOT_FOUND", message: "No trashed orders were found to restore." });
+      await db.update(orders).set({ deletedAt: null }).where(inArray(orders.id, rows.map((row) => row.id)));
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "order.bulk_restore", entityType: "order", entityId: 0, summary: `Administrator restored ${rows.length} order(s) from trash`, ipAddress: ctx.clientIp });
+      return { ok: true as const, count: rows.length };
+    }),
+
   restoreOrder: adminProcedure
     .input(z.object({ orderId: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
@@ -671,6 +682,32 @@ export const adminRouter = router({
         lastLoginAt: user.lastLoginAt,
         createdAt: user.createdAt,
       }));
+    }),
+
+  trashedCustomers: adminProcedure
+    .input(z.object({ limit: z.number().int().min(1).max(200).default(100) }).optional())
+    .query(async ({ input }) => {
+      const rows = await db
+        .select()
+        .from(users)
+        .where(sql`${users.deletedAt} IS NOT NULL`)
+        .orderBy(desc(users.deletedAt))
+        .limit(input?.limit ?? 100);
+      return rows.map((row) => {
+        const user = decryptUser(row);
+        return {
+          id: user.id,
+          name: displayNameOf(user),
+          email: user.email,
+          company: user.company,
+          role: user.role,
+          status: user.status,
+          emailVerified: user.emailVerified,
+          mfaEnabled: user.mfaEnabled,
+          createdAt: user.createdAt,
+          deletedAt: row.deletedAt,
+        };
+      });
     }),
 
   customerDetail: staffProcedure
@@ -887,6 +924,17 @@ export const adminRouter = router({
       for (const userId of ids) { await softDeleteUser(userId); await revokeAllUserSessions(userId, "account_deleted"); }
       void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "customer.bulk_soft_delete", entityType: "user", entityId: 0, severity: "warning", summary: `Administrator moved ${ids.length} customer account(s) to trash`, ipAddress: ctx.clientIp });
       return { ok: true as const, count: ids.length };
+    }),
+
+  bulkRestoreCustomers: adminProcedure
+    .input(z.object({ userIds: z.array(z.number().int().positive()).min(1).max(200), confirmation: z.literal("RESTORE_FROM_TRASH") }))
+    .mutation(async ({ ctx, input }) => {
+      const ids = [...new Set(input.userIds)];
+      const rows = await db.select({ id: users.id }).from(users).where(and(inArray(users.id, ids), sql`${users.deletedAt} IS NOT NULL`));
+      if (rows.length === 0) throw new TRPCError({ code: "NOT_FOUND", message: "No trashed accounts were found to restore." });
+      for (const row of rows) await restoreUser(row.id);
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "customer.bulk_restore", entityType: "user", entityId: 0, summary: `Administrator restored ${rows.length} account(s) from trash`, ipAddress: ctx.clientIp });
+      return { ok: true as const, count: rows.length };
     }),
 
   restoreCustomer: adminProcedure

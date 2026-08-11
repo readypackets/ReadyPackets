@@ -624,6 +624,8 @@ export function AdminOrderTrashPage() {
   const toast = useToast();
   const utils = trpc.useUtils();
   const [restoreId, setRestoreId] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [bulkRestoreOpen, setBulkRestoreOpen] = useState(false);
   const trashed = trpc.admin.trashedOrders.useQuery();
   const restore = trpc.admin.restoreOrder.useMutation({
     async onSuccess() {
@@ -633,9 +635,20 @@ export function AdminOrderTrashPage() {
     },
     onError(error) { toast.error("Could not restore order", errorMessage(error)); },
   });
-  const columns: Column<{
+  const bulkRestore = trpc.admin.bulkRestoreOrders.useMutation({
+    async onSuccess(result) {
+      setSelectedIds([]);
+      setBulkRestoreOpen(false);
+      await Promise.all([trashed.refetch(), utils.admin.orders.invalidate()]);
+      toast.success(`${result.count} order(s) restored`);
+    },
+    onError(error) { toast.error("Could not restore orders", errorMessage(error)); },
+  });
+  const rows = (trashed.data ?? []) as Array<{
     id: number; orderNumber: string; customer: string; status: string; paymentStatus: string; totalCents: number; projectName: string | null; createdAt: string | Date; deletedAt: string | Date | null;
-  }>[] = [
+  }>;
+  const columns: Column<(typeof rows)[number]>[] = [
+    { key: "select", header: <Checkbox label="Select all trashed orders" checked={rows.length > 0 && rows.every((order) => selectedIds.includes(order.id))} onChange={(event) => setSelectedIds(event.target.checked ? rows.map((order) => order.id) : [])} />, cell: (order) => <Checkbox label={`Select ${order.orderNumber}`} checked={selectedIds.includes(order.id)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...new Set([...current, order.id])] : current.filter((id) => id !== order.id))} /> },
     { key: "order", header: "Order", cell: (order) => <div><p className="font-mono text-xs font-semibold text-muted">{order.orderNumber}</p><p className="mt-0.5 font-medium text-ink">{order.projectName ?? "Untitled project"}</p></div> },
     { key: "customer", header: "Customer", cell: (order) => <span className="text-sm text-body">{order.customer}</span> },
     { key: "deleted", header: "Moved to trash", cell: (order) => <span className="text-sm text-body">{formatDate(order.deletedAt)}</span> },
@@ -644,9 +657,11 @@ export function AdminOrderTrashPage() {
   ];
   return <>
     <ConfirmDialog open={restoreId !== null} onClose={() => setRestoreId(null)} onConfirm={() => { if (restoreId !== null) restore.mutate({ orderId: restoreId }); }} title="Restore this order?" message="The order will return to the active order queue and become visible to its customer again." confirmLabel="Restore order" cancelLabel="Cancel" variant="primary" busy={restore.isPending} />
+    <ConfirmDialog open={bulkRestoreOpen} onClose={() => setBulkRestoreOpen(false)} onConfirm={() => bulkRestore.mutate({ orderIds: selectedIds, confirmation: "RESTORE_FROM_TRASH" })} title="Restore selected orders?" message={`This restores ${selectedIds.length} selected order(s) to the active queue and preserves their customer, payment, history, and files.`} confirmLabel="Restore selected orders" cancelLabel="Cancel" variant="primary" busy={bulkRestore.isPending} />
     <PageHeader title="Order trash" description="Soft-deleted orders remain recoverable until the configured retention window expires." breadcrumb={{ href: "/admin/orders", label: "Order queue" }} actions={<LinkButton href="/admin/orders" variant="outline">Back to order queue</LinkButton>} />
     <Alert tone="info" className="mb-5">Restoring an order preserves its order number, payment state, history, files, and customer association.</Alert>
-    {trashed.isLoading ? <div className="space-y-3">{Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-16 w-full" />)}</div> : <DataTable caption="Orders in trash" columns={columns} rows={trashed.data ?? []} rowKey={(order) => order.id} empty={<EmptyState icon={Trash2} title="Order trash is empty" description="Deleted orders will appear here until the retention window expires." />} />}
+    {selectedIds.length > 0 ? <Card className="mb-5 border-success/40 bg-success/5"><div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-medium text-ink">{selectedIds.length} order(s) selected</p><Button variant="primary" onClick={() => setBulkRestoreOpen(true)}>Restore selected orders</Button></div></Card> : null}
+    {trashed.isLoading ? <div className="space-y-3">{Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-16 w-full" />)}</div> : <DataTable caption="Orders in trash" columns={columns} rows={rows} rowKey={(order) => order.id} empty={<EmptyState icon={Trash2} title="Order trash is empty" description="Deleted orders will appear here until the retention window expires." />} />}
   </>;
 }
 

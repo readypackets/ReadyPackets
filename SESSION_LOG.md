@@ -1092,3 +1092,27 @@ A visible **Continue with Single Sign-On** button was added to the regular sign-
 Type checking completed with zero errors, the full suite passed with 142 tests, client/server artifacts were built without stylesheet optimization warnings, and the new release was deployed. The readiness endpoint returned `{"status":"ready"}`; a timestamped previous client build is retained on the VPS for rollback.
 
 ---
+
+
+---
+
+## 16. Account trash and bulk recovery — August 11, 2026
+
+### 16.1 Request received
+
+> the trash can option is missinf from the customer accounts page so if a user is sent to the trash it cant be restored. there should also be a bulk restore options for accounts in the trash
+> there should be a bulk restore for the order trash
+
+The supplied customer-directory screenshot confirmed that `/admin/customers` did not expose a trash destination. The supplied order-trash screenshot confirmed that existing trashed orders could only be restored individually.
+
+### 16.2 Implementation and deployment
+
+An administrator-only **Account trash** button was added to the Customers page and routes to `/admin/customers/trash`. The page lists soft-deleted accounts, displays their account identity, role, and deletion date, and includes individual restore plus selection checkboxes and a confirmed **Restore selected accounts** action. Restoring reactivates the account without losing its customer ID, history, files, tickets, or activity trail.
+
+The existing Order trash page now has selection checkboxes, a selected-order banner, and a confirmed **Restore selected orders** action in addition to its single-item restore capability. Both bulk endpoints select only records that are still trashed, require the exact restore confirmation value, restore only that validated subset, write administrative activity records, and refresh the active management queues.
+
+The server now includes `trashedCustomers`, `bulkRestoreCustomers`, and `bulkRestoreOrders` admin procedures. Existing retention/purge behavior remains unchanged.
+
+TypeScript passed with zero errors and the full test suite passed with 142 tests. Production artifacts were built and deployed; `readypackets.service` restarted successfully, the readiness endpoint returned `{"status":"ready"}`, and the previous client bundle was kept as a rollback artifact.
+
+---
