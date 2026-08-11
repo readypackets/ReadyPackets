@@ -68,6 +68,57 @@
   --shadow-raised: 0 2px 4px rgb(13 27 42 / 0.08), 0 16px 40px -20px rgb(13 27 42 / 0.2);
 }
 
+/*
+ * A genuine branded dark appearance. The token names remain identical, so every
+ * token-based component changes as a coherent system rather than becoming a
+ * collection of one-off dark variants. Navy remains the foundation, with teal
+ * and gold retained as the primary and accent colors.
+ */
+html.dark {
+  color-scheme: dark;
+  --color-navy: #071824;
+  --color-navy-raised: #0d2635;
+  --color-navy-elevated: #123444;
+  --color-navy-border: #275064;
+
+  --color-ink: #f2f8f8;
+  --color-body: #c4d2d8;
+  --color-muted: #92a8b2;
+  --color-line: #284656;
+  --color-surface: #091a27;
+  --color-surface-soft: #102634;
+  --color-surface-sunken: #142f3e;
+
+  --color-teal: #2ec4b6;
+  --color-teal-dark: #55d6c9;
+  --color-teal-light: #8ce8dc;
+  --color-gold: #e2c26a;
+  --color-gold-dark: #c9a84c;
+
+  --color-success: #57cf91;
+  --color-warning: #efbd65;
+  --color-danger: #ff8d87;
+  --color-info: #6dbcf0;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.28), 0 12px 28px -16px rgb(0 0 0 / 0.68);
+  --shadow-raised: 0 2px 5px rgb(0 0 0 / 0.36), 0 20px 44px -20px rgb(0 0 0 / 0.78);
+}
+
+/* Legacy layout utilities retain their visual role while respecting dark mode. */
+html.dark [class~="bg-white"],
+html.dark [class~="bg-white/95"],
+html.dark [class~="hover:bg-white"]:hover {
+  background-color: var(--color-surface) !important;
+}
+html.dark [class~="bg-gray-100"],
+html.dark [class~="hover:bg-gray-100"]:hover {
+  background-color: var(--color-surface-soft) !important;
+}
+html.dark .text-gray-500,
+html.dark .text-gray-700,
+html.dark .text-slate-900 {
+  color: var(--color-body) !important;
+}
+
 @layer base {
   *,
   *::before,

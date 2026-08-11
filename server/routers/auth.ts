@@ -18,6 +18,7 @@ import {
   emailVerificationTokens,
   passwordResetTokens,
   registrationFields,
+  samlConfigs,
   users,
 } from "../db/schema.js";
 import {
@@ -142,11 +143,13 @@ async function issueVerificationEmail(userId: number, email: string, name: strin
 export const authRouter = router({
   /** Bootstrap payload for the client: session state plus public configuration. */
   session: publicProcedure.query(async ({ ctx }) => {
-    const [maintenance, registrationEnabled, policy] = await Promise.all([
+    const [maintenance, registrationEnabled, policy, ssoRows] = await Promise.all([
       getMaintenanceState(),
       isFeatureEnabled("registration", true),
       getPasswordPolicy(),
+      db.select({ name: samlConfigs.name }).from(samlConfigs).where(eq(samlConfigs.enabled, true)).limit(1),
     ]);
+    const sso = { enabled: ssoRows.length > 0, name: ssoRows[0]?.name ?? null };
 
     if (!ctx.session) {
       return {
@@ -156,6 +159,7 @@ export const authRouter = router({
         restricted: false,
         maintenance,
         registrationEnabled,
+        sso,
         passwordPolicy: policy,
         csrfToken: null as string | null,
       };
@@ -181,6 +185,7 @@ export const authRouter = router({
       restricted: ctx.session.restricted,
       maintenance,
       registrationEnabled,
+      sso,
       passwordPolicy: policy,
       csrfToken: ctx.session.csrfSecret,
     };

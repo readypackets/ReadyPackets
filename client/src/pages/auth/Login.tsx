@@ -261,6 +261,24 @@ export function LoginPage() {
         >
           Sign in
         </Button>
+
+        <div className="border-t border-line pt-4">
+          <Button
+            type="button"
+            fullWidth
+            variant="outline"
+            disabled={!session.sso.enabled || maintenanceBlocking}
+            leadingIcon={<ShieldCheck className="size-4" aria-hidden="true" />}
+            onClick={() => { window.location.assign("/api/saml/login"); }}
+          >
+            Continue with Single Sign-On
+          </Button>
+          <p className="mt-2 text-center text-xs text-muted">
+            {session.sso.enabled
+              ? `Use ${session.sso.name ?? "your organization’s"} single sign-on.`
+              : "Single Sign-On will be available after an administrator enables a SAML identity provider."}
+          </p>
+        </div>
       </form>
 
       <div className="mt-6 border-t border-line pt-5">

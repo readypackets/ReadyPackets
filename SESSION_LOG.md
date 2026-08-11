@@ -1068,3 +1068,27 @@ The visible segmented control is rendered directly in the desktop public header 
 Zero TypeScript errors and 142 automated tests passed. The production client and server bundles were built and deployed, the service restarted cleanly, and the readiness endpoint returned `{"status":"ready"}`. A browser check of the deployed public homepage confirmed System, Light, and Dark are visible as separate header buttons.
 
 ---
+
+
+---
+
+## 15. Global branded themes and Single Sign-On entry — August 11, 2026
+
+### 15.1 Request received
+
+> i dont see a button or toggle for dark mode changes
+> add a button for Single Sign On
+
+The user subsequently confirmed, with Light and Dark homepage screenshots, that the labeled appearance control changed state but the general page palette did not visibly change.
+
+### 15.2 Implementation and deployment
+
+The global stylesheet now defines a full ReadyPackets **dark palette** behind `html.dark`: deep navy application surfaces, blue-navy elevated panels, high-contrast off-white text, teal primary controls, and gold accent values. Existing token-based components change together, while narrowly scoped compatibility rules remap legacy white/gray layout utilities. This preserves ReadyPackets brand colors while making global dark and light appearances visibly distinct. Light retains the intentional navy public hero as a branded surface; application backgrounds, navigation chrome, cards, panels, text, borders, and controls change by mode.
+
+The verified public header retains direct System, Light, and Dark controls. Selecting Light removes the root dark class and restores the white application background/header. Selecting Dark applies a deep branded navy header, content/background surfaces, cards, and high-contrast text; this was confirmed visually in a live browser after deployment. Evidence is saved in `docs/verification/theme-and-sso-check-2026-08-11.md`.
+
+A visible **Continue with Single Sign-On** button was added to the regular sign-in form. The session bootstrap now exposes only `enabled` and a display name for an active SAML provider. When an administrator enables SAML through the existing Entra/SSO configuration, the button routes to the existing `/api/saml/login` endpoint. When no provider is active, the button remains visibly disabled with an explanation. No certificate, issuer, IdP endpoint, or other SAML configuration detail is exposed publicly.
+
+Type checking completed with zero errors, the full suite passed with 142 tests, client/server artifacts were built without stylesheet optimization warnings, and the new release was deployed. The readiness endpoint returned `{"status":"ready"}`; a timestamped previous client build is retained on the VPS for rollback.
+
+---

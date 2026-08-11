@@ -55,6 +55,7 @@ interface SessionContextValue {
     estimatedCompletion: string | null;
   } | null;
   registrationEnabled: boolean;
+  sso: { enabled: boolean; name: string | null };
   passwordPolicy: {
     minLength: number;
     maxLength: number;
@@ -127,6 +128,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       restricted: data?.restricted ?? false,
       maintenance: data?.maintenance ?? null,
       registrationEnabled: data?.registrationEnabled ?? true,
+      sso: data?.sso ?? { enabled: false, name: null },
       passwordPolicy: data?.passwordPolicy ?? null,
       refresh,
       isAdmin: user?.role === "admin",
