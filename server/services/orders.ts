@@ -22,6 +22,7 @@ import { decryptField, encryptField, generateOrderNumber } from "../security/cry
 import { logger } from "../observability/logger.js";
 import { recordActivity } from "../observability/audit.js";
 import { priceSelection } from "./catalog.js";
+import { fireAutomations } from "./emailAutomations.js";
 import { ORDER_TRANSITIONS, type OrderStatus } from "../../shared/domain.js";
 import { insertedId } from "../db/result.js";
 
@@ -108,6 +109,9 @@ export async function createOrder(input: CreateOrderInput) {
     },
     ipAddress: input.ipAddress ?? null,
   });
+
+  // Fire order.created automation triggers (non-fatal).
+  void fireAutomations("order.created", { userId: input.userId });
 
   return { orderId, orderNumber, quote };
 }
@@ -218,6 +222,23 @@ export async function transitionOrder(input: TransitionInput) {
   });
 
   await enqueuePhaseJobs(input.orderId, input.to);
+
+  // Fire email automation triggers based on the new order state.
+  const orderRow = await db
+    .select({ userId: orders.userId })
+    .from(orders)
+    .where(eq(orders.id, input.orderId))
+    .limit(1);
+  const userId = orderRow[0]?.userId;
+  if (userId) {
+    if (input.to === "delivered") {
+      void fireAutomations("order.delivered", { userId });
+    } else if (input.to === "closed") {
+      void fireAutomations("order.closed", { userId });
+    } else {
+      void fireAutomations("order.phase_changed", { userId });
+    }
+  }
 
   return { changed: true as const, from, to: input.to };
 }

@@ -51,6 +51,7 @@ import { recordActivity, recordSecurityEvent } from "../observability/audit.js";
 import { revokeAllUserSessions } from "../auth/session.js";
 import {
   OrderStateError,
+  createOrder,
   getOrderStats,
   transitionOrder,
 } from "../services/orders.js";
@@ -187,6 +188,44 @@ export const adminRouter = router({
         createdAt: row.createdAt,
         dueAt: row.dueAt,
       }));
+    }),
+
+  /** Create an order on behalf of a customer (admin/staff initiated). */
+  createOrderForCustomer: staffProcedure
+    .input(
+      z.object({
+        userId: z.number().int().positive(),
+        selections: z
+          .array(z.object({ productId: z.number().int().positive(), quantity: z.number().int().min(1).default(1) }))
+          .min(1),
+        projectName: z.string().trim().max(200).optional(),
+        integrityChoice: z.string().trim().max(60).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const result = await createOrder({
+          userId: input.userId,
+          selections: input.selections,
+          projectName: input.projectName ?? null,
+          integrityChoice: input.integrityChoice ?? null,
+          actorUserId: ctx.session.user.id,
+          actorRole: ctx.session.user.role,
+          ipAddress: ctx.clientIp,
+        });
+        void recordActivity({
+          actorUserId: ctx.session.user.id,
+          actorRole: ctx.session.user.role,
+          action: "order.admin_created",
+          entityType: "order",
+          entityId: result.orderId,
+          summary: `Admin created order ${result.orderNumber} for user ${input.userId}`,
+          ipAddress: ctx.clientIp,
+        });
+        return result;
+      } catch (error) {
+        toTrpcError(error);
+      }
     }),
 
   orderDetail: staffProcedure

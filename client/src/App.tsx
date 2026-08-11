@@ -89,6 +89,10 @@ import { AdminLoginConfig } from "@/pages/admin/LoginConfig";
 import { AdminSIEMExport } from "@/pages/admin/SIEMExport";
 import { AdminActivityReplay } from "@/pages/admin/ActivityReplay";
 import { AdminPreferences } from "@/pages/admin/AdminPreferences";
+import { AdminAPIKeysPage } from "@/pages/admin/APIKeys";
+import { AdminCouponsPage } from "@/pages/admin/Coupons";
+import { AdminPayoutsPage } from "@/pages/admin/Payouts";
+import { AdminChangelogPage } from "@/pages/admin/Changelog";
 
 /** Full-page loader shown while the session is being resolved. */
 function BootScreen() {
@@ -290,6 +294,10 @@ function AdminRoutes() {
         <Route path="/admin/siem-export" component={AdminSIEMExport} />
         <Route path="/admin/activity-replay" component={AdminActivityReplay} />
         <Route path="/admin/preferences" component={AdminPreferences} />
+        <Route path="/admin/api-keys" component={AdminAPIKeysPage} />
+        <Route path="/admin/coupons" component={AdminCouponsPage} />
+        <Route path="/admin/payouts" component={AdminPayoutsPage} />
+        <Route path="/admin/changelog" component={AdminChangelogPage} />
         <Route component={NotFoundPage} />
       </Switch>
     </AdminLayout>

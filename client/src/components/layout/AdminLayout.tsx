@@ -4,6 +4,10 @@
  * Visually distinct from the customer portal — darker chrome, explicit role badge
  * — so staff always know which surface they are operating in. The navigation is
  * filtered by role, and the server enforces the same boundary independently.
+ *
+ * The sidebar uses `fixed inset-y-0` so it stays in place while the main content
+ * scrolls. The nav list itself is `overflow-y-auto` so it scrolls independently
+ * when there are more items than screen height allows.
  */
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
@@ -17,6 +21,7 @@ import {
   Gauge,
   Gift,
   History,
+  Key,
   LayoutDashboard,
   LifeBuoy,
   Link2,
@@ -24,6 +29,7 @@ import {
   LogOut,
   Mail,
   Menu,
+  Newspaper,
   Package,
   Plug,
   ScrollText,
@@ -32,6 +38,7 @@ import {
   ShieldCheck,
   Star,
   Subscript,
+  Tag,
   Users,
   Webhook,
   X,
@@ -68,6 +75,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { href: "/admin/catalog", label: "Catalogue", icon: Package, adminOnly: true },
       { href: "/admin/moderation", label: "Moderation", icon: Star },
       { href: "/admin/content", label: "Site content", icon: ScrollText, adminOnly: true },
+      { href: "/admin/changelog", label: "Changelog", icon: Newspaper, adminOnly: true },
     ],
   },
   {
@@ -82,6 +90,8 @@ const NAV: { section: string; items: NavItem[] }[] = [
     items: [
       { href: "/admin/finance", label: "Finance", icon: CreditCard, adminOnly: true },
       { href: "/admin/subscriptions", label: "Subscriptions", icon: Subscript, adminOnly: true },
+      { href: "/admin/coupons", label: "Coupons", icon: Tag, adminOnly: true },
+      { href: "/admin/payouts", label: "Payouts", icon: Gift, adminOnly: true },
       { href: "/admin/referrals", label: "Referrals", icon: Gift, adminOnly: true },
       { href: "/admin/newsletter", label: "Newsletter", icon: Mail, adminOnly: true },
     ],
@@ -97,6 +107,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
     section: "Platform",
     items: [
       { href: "/admin/integrations", label: "Integrations", icon: Link2, adminOnly: true },
+      { href: "/admin/api-keys", label: "API keys", icon: Key, adminOnly: true },
       { href: "/admin/inbound-webhooks", label: "Inbound webhooks", icon: Webhook, adminOnly: true },
       { href: "/admin/outbound", label: "Outbound connections", icon: Plug, adminOnly: true },
       { href: "/admin/ai-hub", label: "AI hub", icon: Bot, adminOnly: true },
@@ -143,8 +154,8 @@ export function AdminLayout({ children }: { children: ReactNode }) {
         const items = group.items.filter((item) => !item.adminOnly || session.isAdmin);
         if (items.length === 0) return null;
         return (
-          <div key={group.section} className="mb-6">
-            <p className="px-3 pb-2 text-xs font-semibold uppercase tracking-wider text-white/40">
+          <div key={group.section} className="mb-5">
+            <p className="px-3 pb-1.5 text-xs font-semibold uppercase tracking-wider text-white/40">
               {group.section}
             </p>
             <ul className="space-y-0.5">
@@ -156,7 +167,7 @@ export function AdminLayout({ children }: { children: ReactNode }) {
                     <Link
                       href={item.href}
                       aria-current={active ? "page" : undefined}
-                      className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm no-underline transition-colors ${
+                      className={`flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm no-underline transition-colors ${
                         active
                           ? "bg-teal/20 font-semibold text-white"
                           : "text-white/70 hover:bg-white/5 hover:text-white"
@@ -175,53 +186,62 @@ export function AdminLayout({ children }: { children: ReactNode }) {
     </nav>
   );
 
+  const userFooter = (
+    <div className="shrink-0 border-t border-white/10 px-4 py-4">
+      <p className="truncate text-sm font-medium text-white">
+        {session.user?.preferredName ?? session.user?.firstName ?? session.user?.email}
+      </p>
+      <p className="mt-1">
+        <Badge tone={session.isAdmin ? "danger" : "teal"}>{session.user?.role}</Badge>
+      </p>
+      <div className="mt-3 space-y-0.5">
+        <Link
+          href="/portal"
+          className="block rounded-lg px-3 py-1.5 text-sm text-white/70 no-underline hover:bg-white/5 hover:text-white"
+        >
+          Customer portal
+        </Link>
+        <button
+          type="button"
+          onClick={() => logout.mutate()}
+          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-1.5 text-left text-sm text-white/70 transition-colors hover:bg-white/5 hover:text-white"
+        >
+          <LogOut className="size-4" aria-hidden="true" />
+          Sign out
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div className="flex min-h-dvh bg-surface-soft">
-      {/* Desktop sidebar */}
-      <aside className="hidden w-64 shrink-0 flex-col bg-navy px-4 py-6 lg:flex">
-        <Link href="/admin" className="mb-8 flex items-center gap-2.5 px-2 no-underline">
-          <img
-            src={BRAND_ASSETS.icon.px64}
-            alt=""
-            width={32}
-            height={32}
-            className="size-8"
-            aria-hidden="true"
-          />
-          <span className="min-w-0">
-            <span className="block truncate text-sm font-semibold text-white">
-              {BRAND.companyShortName}
+      {/* Desktop sidebar — fixed so it stays while main content scrolls */}
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 flex-col bg-navy lg:flex">
+        {/* Logo */}
+        <div className="shrink-0 px-4 py-5">
+          <Link href="/admin" className="flex items-center gap-2.5 px-2 no-underline">
+            <img
+              src={BRAND_ASSETS.icon.px64}
+              alt=""
+              width={32}
+              height={32}
+              className="size-8"
+              aria-hidden="true"
+            />
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-semibold text-white">
+                {BRAND.companyShortName}
+              </span>
+              <span className="block text-xs text-white/50">Administration</span>
             </span>
-            <span className="block text-xs text-white/50">Administration</span>
-          </span>
-        </Link>
-
-        <div className="flex-1 overflow-y-auto">{navigation}</div>
-
-        <div className="mt-6 border-t border-white/10 pt-4">
-          <p className="truncate px-3 text-sm font-medium text-white">
-            {session.user?.preferredName ?? session.user?.firstName ?? session.user?.email}
-          </p>
-          <p className="mt-1 px-3">
-            <Badge tone={session.isAdmin ? "danger" : "teal"}>{session.user?.role}</Badge>
-          </p>
-          <div className="mt-3 space-y-1">
-            <Link
-              href="/portal"
-              className="block rounded-lg px-3 py-2 text-sm text-white/70 no-underline hover:bg-white/5 hover:text-white"
-            >
-              Customer portal
-            </Link>
-            <button
-              type="button"
-              onClick={() => logout.mutate()}
-              className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-white/70 transition-colors hover:bg-white/5 hover:text-white"
-            >
-              <LogOut className="size-4" aria-hidden="true" />
-              Sign out
-            </button>
-          </div>
+          </Link>
         </div>
+
+        {/* Scrollable nav */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-2">{navigation}</div>
+
+        {/* User footer — always visible */}
+        {userFooter}
       </aside>
 
       {/* Mobile drawer */}
@@ -232,8 +252,8 @@ export function AdminLayout({ children }: { children: ReactNode }) {
             onClick={() => setOpen(false)}
             aria-hidden="true"
           />
-          <div className="absolute inset-y-0 left-0 flex w-72 flex-col bg-navy px-4 py-6">
-            <div className="mb-6 flex items-center justify-between">
+          <div className="absolute inset-y-0 left-0 flex w-72 flex-col bg-navy">
+            <div className="shrink-0 flex items-center justify-between px-4 py-4">
               <span className="text-sm font-semibold text-white">Administration</span>
               <Button
                 variant="ghost"
@@ -245,21 +265,23 @@ export function AdminLayout({ children }: { children: ReactNode }) {
                 <X className="size-5" aria-hidden="true" />
               </Button>
             </div>
-            <div className="flex-1 overflow-y-auto">{navigation}</div>
-            <button
-              type="button"
-              onClick={() => logout.mutate()}
-              className="mt-4 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-white/70 hover:bg-white/5 hover:text-white"
-            >
-              <LogOut className="size-4" aria-hidden="true" />
-              Sign out
-            </button>
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-2">{navigation}</div>
+            <div className="shrink-0 border-t border-white/10 px-4 py-4">
+              <button
+                type="button"
+                onClick={() => logout.mutate()}
+                className="flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm text-white/70 hover:bg-white/5 hover:text-white"
+              >
+                <LogOut className="size-4" aria-hidden="true" />
+                Sign out
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
 
-      {/* Main column */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      {/* Main column — offset by sidebar width on desktop */}
+      <div className="flex min-w-0 flex-1 flex-col lg:pl-64">
         <header className="flex items-center gap-3 border-b border-line bg-white px-4 py-3 lg:hidden">
           <Button
             variant="ghost"

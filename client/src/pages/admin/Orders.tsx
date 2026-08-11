@@ -12,8 +12,11 @@ import {
   ArrowRight,
   ClipboardList,
   Download,
+  Grid2X2,
+  LayoutList,
   Lock,
   MessageSquarePlus,
+  Plus,
   Save,
   Search,
   Send,
@@ -25,7 +28,7 @@ import { trpc, errorMessage } from "@/lib/trpc";
 import { useSession } from "@/lib/session";
 import { formatBytes, formatDate, formatDateTime, formatMoney, humanizeKey } from "@/lib/utils";
 import { Button, LinkButton } from "@/components/ui/Button";
-import { Checkbox, Input, Select, Textarea } from "@/components/ui/Field";
+import { Checkbox, FieldShell, Input, Select, Textarea } from "@/components/ui/Field";
 import {
   Alert,
   Badge,
@@ -35,7 +38,7 @@ import {
   Skeleton,
 } from "@/components/ui/Surface";
 import { DataTable, ProgressBar, TabStrip, type Column } from "@/components/ui/DataDisplay";
-import { ConfirmDialog } from "@/components/ui/Modal";
+import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { PageHeader } from "@/components/layout/PortalLayout";
 import {
@@ -44,6 +47,128 @@ import {
   STATUS_LABELS,
   STATUS_TONES,
 } from "../portal/orderStatus";
+
+/** Modal for admins to create an order on behalf of a customer. */
+function CreateOrderModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const toast = useToast();
+  const utils = trpc.useUtils();
+  const [userId, setUserId] = useState("");
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [projectName, setProjectName] = useState("");
+  const [selectedProducts, setSelectedProducts] = useState<number[]>([]);
+
+  const customers = trpc.admin.customers.useQuery(
+    { search: customerSearch || undefined, limit: 20 },
+    { enabled: open },
+  );
+  const catalog = trpc.admin.catalog.useQuery(undefined, { enabled: open });
+
+  const createMut = trpc.admin.createOrderForCustomer.useMutation({
+    async onSuccess(result) {
+      toast.success("Order created", `Order ${result.orderNumber} created successfully.`);
+      await utils.admin.orders.invalidate();
+      onClose();
+      setUserId("");
+      setCustomerSearch("");
+      setProjectName("");
+      setSelectedProducts([]);
+    },
+    onError(error) {
+      toast.error("Could not create order", errorMessage(error));
+    },
+  });
+
+  const allProducts = catalog.data?.flatMap((g) => g.products) ?? [];
+
+  function toggleProduct(id: number) {
+    setSelectedProducts((prev) =>
+      prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id],
+    );
+  }
+
+  function handleSubmit() {
+    if (!userId || selectedProducts.length === 0) return;
+    createMut.mutate({
+      userId: Number(userId),
+      selections: selectedProducts.map((productId) => ({ productId, quantity: 1 })),
+      projectName: projectName.trim() || undefined,
+    });
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Create order for customer"
+      description="Select a customer and one or more packets to create an order on their behalf."
+    >
+      <div className="space-y-4">
+        <Input
+          label="Search customer"
+          placeholder="Name or email…"
+          value={customerSearch}
+          onChange={(e) => setCustomerSearch(e.target.value)}
+        />
+        <FieldShell label="Customer" required>
+          <select
+            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-teal"
+            value={userId}
+            onChange={(e) => setUserId(e.target.value)}
+          >
+            <option value="">Select a customer…</option>
+            {(customers.data ?? []).map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name} — {c.email}
+              </option>
+            ))}
+          </select>
+        </FieldShell>
+        <Input
+          label="Project name"
+          placeholder="Optional"
+          value={projectName}
+          onChange={(e) => setProjectName(e.target.value)}
+        />
+        <FieldShell label="Packets" required>
+          <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-line p-2">
+            {allProducts.length === 0 ? (
+              <p className="p-2 text-sm text-muted">Loading catalogue…</p>
+            ) : (
+              allProducts.map((p) => (
+                <label key={p.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 hover:bg-surface-soft">
+                  <input
+                    type="checkbox"
+                    className="size-4 accent-teal"
+                    checked={selectedProducts.includes(p.id)}
+                    onChange={() => toggleProduct(p.id)}
+                  />
+                  <span className="min-w-0 flex-1 text-sm text-ink">{p.name}</span>
+                  {p.priceCents ? (
+                    <span className="shrink-0 text-xs text-muted">{formatMoney(p.priceCents)}</span>
+                  ) : (
+                    <span className="shrink-0 text-xs text-muted">Custom quote</span>
+                  )}
+                </label>
+              ))
+            )}
+          </div>
+        </FieldShell>
+        <div className="flex justify-end gap-3 pt-2">
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            busy={createMut.isPending}
+            disabled={!userId || selectedProducts.length === 0}
+            onClick={handleSubmit}
+          >
+            Create order
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 interface AdminOrderRow {
   id: number;
@@ -65,6 +190,8 @@ export function AdminOrdersPage() {
   const statusParam = params.get("status") ?? "";
   const [status, setStatus] = useState(statusParam);
   const [search, setSearch] = useState("");
+  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+  const [createOpen, setCreateOpen] = useState(false);
 
   const orders = trpc.admin.orders.useQuery({
     status: (status || undefined) as never,
@@ -177,40 +304,76 @@ export function AdminOrdersPage() {
 
   return (
     <>
+      <CreateOrderModal open={createOpen} onClose={() => setCreateOpen(false)} />
       <PageHeader
         title="Order queue"
         description="All orders across the platform, newest first."
         actions={
-          <Button
-            variant="outline"
-            busy={exportCsv.isPending}
-            onClick={() => exportCsv.mutate({})}
-            leadingIcon={<Download className="size-4" aria-hidden="true" />}
-          >
-            Export CSV
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              busy={exportCsv.isPending}
+              onClick={() => exportCsv.mutate({})}
+              leadingIcon={<Download className="size-4" aria-hidden="true" />}
+            >
+              Export CSV
+            </Button>
+            <Button
+              onClick={() => setCreateOpen(true)}
+              leadingIcon={<Plus className="size-4" aria-hidden="true" />}
+            >
+              Create order
+            </Button>
+          </div>
         }
       />
 
       <Card className="mb-5">
-        <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
-          <Input
-            label="Search"
-            placeholder="Order number, customer, or project"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            leadingIcon={<Search className="size-4" aria-hidden="true" />}
-          />
-          <Select
-            label="Status"
-            className="sm:w-60"
-            value={status}
-            onChange={(event) => setStatus(event.target.value)}
-            options={[
-              { value: "", label: "All statuses" },
-              ...Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
-            ]}
-          />
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="flex-1 min-w-48">
+            <Input
+              label="Search"
+              placeholder="Order number, customer, or project"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              leadingIcon={<Search className="size-4" aria-hidden="true" />}
+            />
+          </div>
+          <div className="w-48">
+            <Select
+              label="Status"
+              value={status}
+              onChange={(event) => setStatus(event.target.value)}
+              options={[
+                { value: "", label: "All statuses" },
+                ...Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+              ]}
+            />
+          </div>
+          <div className="flex items-center gap-1 pb-0.5">
+            <button
+              type="button"
+              onClick={() => setViewMode("list")}
+              className={`rounded p-1.5 transition-colors ${
+                viewMode === "list" ? "bg-teal/10 text-teal" : "text-muted hover:text-ink"
+              }`}
+              aria-label="List view"
+              aria-pressed={viewMode === "list"}
+            >
+              <LayoutList className="size-4" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("grid")}
+              className={`rounded p-1.5 transition-colors ${
+                viewMode === "grid" ? "bg-teal/10 text-teal" : "text-muted hover:text-ink"
+              }`}
+              aria-label="Grid view"
+              aria-pressed={viewMode === "grid"}
+            >
+              <Grid2X2 className="size-4" aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </Card>
 
@@ -220,6 +383,47 @@ export function AdminOrdersPage() {
             <Skeleton key={index} className="h-16 w-full" />
           ))}
         </div>
+      ) : viewMode === "grid" ? (
+        rows.length === 0 ? (
+          <EmptyState
+            icon={ClipboardList}
+            title="No orders match"
+            description="Adjust the status filter or search term."
+          />
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {rows.map((order) => (
+              <Link key={order.id} href={`/admin/orders/${order.id}`} className="no-underline">
+                <Card className="h-full transition-shadow hover:shadow-md">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-mono text-xs font-semibold text-muted">
+                      {order.orderNumber}
+                    </span>
+                    <Badge tone={STATUS_TONES[order.status] ?? "neutral"} className="shrink-0">
+                      {STATUS_LABELS[order.status] ?? order.status}
+                    </Badge>
+                  </div>
+                  <p className="mt-2 truncate font-medium text-ink">
+                    {order.projectName ?? "Untitled project"}
+                  </p>
+                  <p className="mt-0.5 truncate text-sm text-muted">{order.customer}</p>
+                  <div className="mt-3">
+                    <ProgressBar value={order.completionPercent} />
+                  </div>
+                  <div className="mt-3 flex items-center justify-between">
+                    <Badge tone={PAYMENT_TONES[order.paymentStatus] ?? "neutral"}>
+                      {PAYMENT_LABELS[order.paymentStatus] ?? order.paymentStatus}
+                    </Badge>
+                    <span className="text-sm font-semibold tabular-nums text-ink">
+                      {formatMoney(order.totalCents)}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs text-muted">{formatDate(order.createdAt)}</p>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        )
       ) : (
         <DataTable
           caption="Orders"
