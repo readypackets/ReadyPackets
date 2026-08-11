@@ -12,6 +12,7 @@ import { useMemo, useState } from "react";
 import { Link, useParams } from "wouter";
 import {
   Ban,
+  BadgeCheck,
   CheckCircle2,
   Copy,
   Grid2X2,
@@ -20,6 +21,7 @@ import {
   Link2,
   Lock,
   Mail,
+  MailCheck,
   RotateCcw,
   Save,
   Search,
@@ -194,6 +196,8 @@ function CustomerCard({
   onDeactivate,
   onReinstate,
   onResetPassword,
+  onVerifyEmail,
+  onValidateAccount,
 }: {
   row: CustomerRow;
   isAdmin: boolean;
@@ -201,6 +205,8 @@ function CustomerCard({
   onDeactivate: (id: number) => void;
   onReinstate: (id: number) => void;
   onResetPassword: (id: number, name: string) => void;
+  onVerifyEmail: (id: number) => void;
+  onValidateAccount: (id: number) => void;
 }) {
   return (
     <Card className="p-4 flex flex-col gap-3">
@@ -246,6 +252,14 @@ function CustomerCard({
             >
               <KeyRound className="size-3" aria-hidden="true" />
               Reset pw
+            </button>
+            {!row.emailVerified ? (
+              <button type="button" className="text-xs text-teal-dark hover:text-teal flex items-center gap-1" onClick={() => onVerifyEmail(row.id)}>
+                <MailCheck className="size-3" aria-hidden="true" /> Verify email
+              </button>
+            ) : null}
+            <button type="button" className="text-xs text-green-700 hover:text-green-800 flex items-center gap-1" onClick={() => onValidateAccount(row.id)}>
+              <BadgeCheck className="size-3" aria-hidden="true" /> Validate
             </button>
             {row.status === "active" || row.status === "pending" ? (
               <>
@@ -328,6 +342,22 @@ export function AdminCustomersPage() {
     },
   });
 
+  const verifyEmailMut = trpc.admin.adminVerifyEmail.useMutation({
+    async onSuccess() {
+      await utils.admin.customers.invalidate();
+      toast.success("Email verified", "The account no longer needs email validation.");
+    },
+    onError(err) { toast.error("Could not verify email", errorMessage(err)); },
+  });
+
+  const validateAccountMut = trpc.admin.adminValidateAccount.useMutation({
+    async onSuccess() {
+      await utils.admin.customers.invalidate();
+      toast.success("Account validated", "The account is active and its email is verified.");
+    },
+    onError(err) { toast.error("Could not validate account", errorMessage(err)); },
+  });
+
   const [staffEmail, setStaffEmail] = useState("");
   const [staffFirstName, setStaffFirstName] = useState("");
   const [staffLastName, setStaffLastName] = useState("");
@@ -370,6 +400,14 @@ export function AdminCustomersPage() {
       variant: "danger",
       onConfirm: () => setStatusMut.mutate({ userId: id, status: "deactivated" }),
     });
+  }
+
+  function handleVerifyEmail(id: number) {
+    verifyEmailMut.mutate({ userId: id });
+  }
+
+  function handleValidateAccount(id: number) {
+    validateAccountMut.mutate({ userId: id });
   }
 
   function handleReinstate(id: number) {
@@ -451,6 +489,14 @@ export function AdminCustomersPage() {
                   onClick={() => setResetTarget({ id: row.id, name: row.name })}
                 >
                   <KeyRound className="size-4" aria-hidden="true" />
+                </button>
+                {!row.emailVerified ? (
+                  <button type="button" title="Verify email" className="text-teal-600 hover:text-teal-800" onClick={() => handleVerifyEmail(row.id)}>
+                    <MailCheck className="size-4" aria-hidden="true" />
+                  </button>
+                ) : null}
+                <button type="button" title="Validate account" className="text-green-600 hover:text-green-800" onClick={() => handleValidateAccount(row.id)}>
+                  <BadgeCheck className="size-4" aria-hidden="true" />
                 </button>
                 {row.status === "active" || row.status === "pending" ? (
                   <button
@@ -598,6 +644,8 @@ export function AdminCustomersPage() {
               onDeactivate={handleDeactivate}
               onReinstate={handleReinstate}
               onResetPassword={(id, name) => setResetTarget({ id, name })}
+              onVerifyEmail={handleVerifyEmail}
+              onValidateAccount={handleValidateAccount}
             />
           ))}
         </div>
@@ -762,6 +810,16 @@ export function AdminCustomerDetailPage() {
     },
   });
 
+  const verifyEmail = trpc.admin.adminVerifyEmail.useMutation({
+    async onSuccess() { await detail.refetch(); toast.success("Email verified", "The account no longer requires email validation."); },
+    onError(error) { toast.error("Could not verify email", errorMessage(error)); },
+  });
+
+  const validateAccount = trpc.admin.adminValidateAccount.useMutation({
+    async onSuccess() { await detail.refetch(); toast.success("Account validated", "The account is active and the email address is verified."); },
+    onError(error) { toast.error("Could not validate account", errorMessage(error)); },
+  });
+
   const setStatus = trpc.admin.setCustomerStatus.useMutation({
     async onSuccess() {
       setSuspendOpen(false);
@@ -833,6 +891,14 @@ export function AdminCustomerDetailPage() {
         actions={
           session.isAdmin ? (
             <div className="flex flex-wrap gap-2">
+              {!user.emailVerified ? (
+                <Button variant="outline" busy={verifyEmail.isPending} onClick={() => verifyEmail.mutate({ userId })} leadingIcon={<MailCheck className="size-4" aria-hidden="true" />}>
+                  Verify email
+                </Button>
+              ) : null}
+              <Button variant="outline" busy={validateAccount.isPending} onClick={() => validateAccount.mutate({ userId })} leadingIcon={<BadgeCheck className="size-4" aria-hidden="true" />}>
+                Validate account
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => setResetOpen(true)}

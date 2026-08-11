@@ -1549,6 +1549,26 @@ export const adminRouter = router({
       return { ok: true as const };
     }),
 
+  /** Validate an account for access: activate it and mark its email address verified. */
+  adminValidateAccount: adminProcedure
+    .input(z.object({ userId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      await db
+        .update(users)
+        .set({ emailVerified: true, status: "active", lockedUntil: null, failedLoginCount: 0 })
+        .where(eq(users.id, input.userId));
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: "admin",
+        action: "customer.account_validated",
+        entityType: "user",
+        entityId: input.userId,
+        summary: "Administrator validated the customer account and email address",
+        ipAddress: ctx.clientIp,
+      });
+      return { ok: true as const };
+    }),
+
   /** Create a new policy document (slug + title). Versions are added via publishPolicyVersion. */
   createPolicyDocument: adminProcedure
     .input(

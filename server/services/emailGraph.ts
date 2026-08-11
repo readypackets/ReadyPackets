@@ -92,6 +92,25 @@ async function getAccessToken(): Promise<{ token: string; sender: string } | nul
   }
 }
 
+/** Validate configured Graph credentials without sending a message. */
+export async function validateGraphConfiguration(): Promise<{ valid: boolean; sender: string | null; expiresAt: number | null; error: string | null }> {
+  const config = await getGraphConfig();
+  if (!config.tenantId || !config.clientId || !config.clientSecret || !config.emailSender) {
+    return { valid: false, sender: config.emailSender, expiresAt: null, error: "Tenant ID, client ID, client secret, and sender mailbox are all required." };
+  }
+
+  try {
+    const validationCredential = new ClientSecretCredential(config.tenantId, config.clientId, config.clientSecret);
+    const token = await validationCredential.getToken("https://graph.microsoft.com/.default");
+    if (!token?.token) return { valid: false, sender: config.emailSender, expiresAt: null, error: "Microsoft Graph did not issue an access token." };
+    return { valid: true, sender: config.emailSender, expiresAt: token.expiresOnTimestamp, error: null };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn("Microsoft Graph configuration validation failed", { error: message.slice(0, 500) });
+    return { valid: false, sender: config.emailSender, expiresAt: null, error: message.slice(0, 500) };
+  }
+}
+
 /**
  * Send an email via Microsoft Graph API.
  * Returns true on success, false on failure (caller should fall back to SMTP).

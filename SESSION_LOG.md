@@ -809,3 +809,23 @@ Webhook Delivery Log now displays response code and diagnostic text. A failed or
 ### Validation and deployment
 
 TypeScript typecheck completed with zero errors. The complete test suite completed successfully: 8 test files and 142 tests passed. The production client and server bundles were rebuilt, migration `0008_webhook_response_detail.sql` was applied, the service restarted cleanly, and the readiness endpoint returned `{"status":"ready"}`.
+
+## 2026-08-11 — Graph Validation, MNDA v1.0, Account Validation, and Panel Switching
+
+### User request
+
+The user requested a Microsoft Graph API validation button, publication of the supplied MNDA as version 1.0, administrator account and email validation controls, and easy switching between the administrator view and the administrator's own customer portal.
+
+### Delivered
+
+A new **Validate Graph API** button now appears beside Microsoft Graph settings. It obtains a Microsoft Graph application token without sending a message, displays the configured sender and access-token expiry on success, and returns a clear credential failure on error. The existing **Send Test** action remains the explicit end-to-end mailbox delivery test.
+
+The supplied MNDA was published as policy version **1.0**, effective August 11, 2026. The earlier 2026.03 version remains immutable for audit and historical acceptance records. Because the policy center checks the newest published version, customers who need the MNDA are now prompted against version 1.0.
+
+Customer administration now includes **Verify email** and **Validate account** actions in grid, list, and account-detail views. Verify email only removes the email-confirmation requirement. Validate account marks the email verified, restores the account to active, clears any lock state, and resets failed-login tracking; every action is recorded in the activity audit log.
+
+Administrators using the customer portal now see a prominent **Admin panel** shortcut in the top bar and sidebar/mobile drawer. The existing administrator-side customer portal link remains available for the reverse direction.
+
+### Validation and deployment
+
+TypeScript typecheck completed with zero errors. The full suite completed successfully with 142 passing tests. The production client/server bundles were rebuilt and deployed, migration `0009_mnda_v1.sql` was applied, the service restarted cleanly, and the readiness endpoint returned `{"status":"ready"}`.

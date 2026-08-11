@@ -7,7 +7,7 @@
  */
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { ChevronLeft, LogOut, Menu, X } from "lucide-react";
+import { ChevronLeft, LogOut, Menu, PanelTopOpen, X } from "lucide-react";
 import { BRAND, BRAND_ASSETS } from "@shared/brand";
 import { trpc, errorMessage } from "@/lib/trpc";
 import { useSession, type UserRole } from "@/lib/session";
@@ -178,6 +178,12 @@ export function PortalLayout({
               <p className="truncate text-xs text-white/50">{user.email}</p>
             </div>
           </div>
+          {variant === "portal" && session.user?.role === "admin" ? (
+            <Link href="/admin" className="mt-3 flex min-h-11 w-full items-center gap-3 rounded-lg bg-teal/20 px-3 text-sm font-semibold text-white no-underline transition-colors hover:bg-teal/30">
+              <PanelTopOpen className="size-4" aria-hidden="true" />
+              Switch to admin panel
+            </Link>
+          ) : null}
           <button
             type="button"
             onClick={() => logout.mutate()}
@@ -216,6 +222,12 @@ export function PortalLayout({
               </button>
             </div>
             <div className="flex-1">{navigation}</div>
+            {variant === "portal" && session.user?.role === "admin" ? (
+              <Link href="/admin" className="mt-5 flex min-h-11 items-center gap-3 rounded-lg bg-teal/20 px-3 text-sm font-semibold text-white no-underline hover:bg-teal/30">
+                <PanelTopOpen className="size-4" aria-hidden="true" />
+                Switch to admin panel
+              </Link>
+            ) : null}
             <button
               type="button"
               onClick={() => logout.mutate()}
@@ -250,6 +262,13 @@ export function PortalLayout({
           </Link>
 
           <div className="flex-1" />
+
+          {variant === "portal" && session.user?.role === "admin" ? (
+            <Link href="/admin" className="hidden items-center gap-2 rounded-lg bg-teal px-3 py-2 text-sm font-semibold text-white no-underline hover:bg-teal-dark sm:flex">
+              <PanelTopOpen className="size-4" aria-hidden="true" />
+              Admin panel
+            </Link>
+          ) : null}
 
           {variant === "portal" && !user.emailVerified ? (
             <span className="hidden rounded-full bg-warning/12 px-3 py-1 text-xs font-semibold text-warning sm:inline">

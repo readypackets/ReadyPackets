@@ -730,6 +730,22 @@ export const adminSecurityRouter = router({
     };
   }),
 
+  validateGraphEmail: adminProcedure.mutation(async ({ ctx }) => {
+    const { validateGraphConfiguration } = await import("../services/emailGraph.js");
+    const result = await validateGraphConfiguration();
+    void recordActivity({
+      actorUserId: ctx.session.user.id,
+      actorRole: "admin",
+      action: result.valid ? "email.graph_validated" : "email.graph_validation_failed",
+      summary: result.valid ? "Microsoft Graph access token acquired successfully" : `Microsoft Graph validation failed: ${result.error ?? "unknown error"}`,
+      ipAddress: ctx.clientIp,
+    });
+    if (!result.valid) {
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: result.error ?? "Microsoft Graph validation failed." });
+    }
+    return { ok: true as const, sender: result.sender, expiresAt: result.expiresAt };
+  }),
+
   sendTestEmail: adminProcedure
     .input(z.object({ to: z.string().trim().toLowerCase().email().max(254) }))
     .mutation(async ({ ctx, input }) => {
@@ -745,7 +761,7 @@ export const adminSecurityRouter = router({
       } catch (error) {
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
-          message: `SMTP delivery failed: ${
+          message: `Email delivery failed: ${
             error instanceof Error ? error.message : "unknown error"
           }`,
         });
@@ -754,7 +770,7 @@ export const adminSecurityRouter = router({
         actorUserId: ctx.session.user.id,
         actorRole: "admin",
         action: "email.test_sent",
-        summary: "Administrator sent an SMTP test message",
+        summary: "Administrator sent an outbound email test message",
         ipAddress: ctx.clientIp,
       });
       return { ok: true as const };

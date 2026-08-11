@@ -33,6 +33,7 @@ export default function EmailSettings() {
   const emailConfig = trpc.adminSecurity.getEmailConfig.useQuery();
   const updateSetting = trpc.adminSecurity.updateSetting.useMutation();
   const sendTest = trpc.adminSecurity.sendTestEmail.useMutation();
+  const validateGraph = trpc.adminSecurity.validateGraphEmail.useMutation();
 
   const currentTransport: Transport = (emailConfig.data?.transport as Transport) ?? "none";
 
@@ -110,6 +111,17 @@ export default function EmailSettings() {
       toast.error("Failed to save Graph settings");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleValidateGraph() {
+    try {
+      const result = await validateGraph.mutateAsync();
+      const expires = result.expiresAt ? new Date(result.expiresAt).toLocaleString() : "the configured expiry";
+      toast.success("Microsoft Graph validated", `Access token acquired for ${result.sender}. Token expires ${expires}.`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Microsoft Graph validation failed.";
+      toast.error("Microsoft Graph validation failed", msg);
     }
   }
 
@@ -306,11 +318,15 @@ export default function EmailSettings() {
               />
             </FieldShell>
           </div>
-          <div className="flex justify-end pt-2">
+          <div className="flex flex-wrap justify-end gap-3 pt-2">
+            <Button onClick={handleValidateGraph} busy={validateGraph.isPending} variant="secondary">
+              Validate Graph API
+            </Button>
             <Button onClick={saveGraph} busy={saving} variant="primary">
               Save Graph settings
             </Button>
           </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400">Validation requests a Microsoft Graph access token without sending an email. Use <strong>Send Test</strong> to confirm mailbox delivery.</p>
         </Card>
       )}
 
