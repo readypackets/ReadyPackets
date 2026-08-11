@@ -71,16 +71,38 @@ export default defineConfig({
         chunkFileNames: "assets/[name].[hash].js",
         assetFileNames: "assets/[name].[hash][extname]",
         manualChunks(id) {
-          if (id.includes("node_modules")) {
-            if (id.includes("react-dom") || id.includes("/react/") || id.includes("scheduler")) {
-              return "react";
-            }
-            if (id.includes("@trpc") || id.includes("@tanstack")) return "data";
-            if (id.includes("lucide-react")) return "icons";
-            if (id.includes("recharts") || id.includes("d3-")) return "charts";
-            return "vendor";
+          if (!id.includes("node_modules")) return undefined;
+
+          // React ecosystem must be a single chunk to avoid circular
+          // initialisation errors. react, react-dom, react-router, and
+          // scheduler all share internal module-level state and must
+          // initialise in a deterministic order. Splitting them across
+          // chunks that have cross-references produces the
+          // "Cannot set properties of undefined (setting 'Activity')"
+          // crash that shows as a blank white page.
+          if (
+            id.includes("/react/") ||
+            id.includes("/react-dom/") ||
+            id.includes("/react-router/") ||
+            id.includes("/scheduler/") ||
+            id.includes("/use-sync-external-store/")
+          ) {
+            return "react";
           }
-          return undefined;
+
+          // tRPC + TanStack Query share peer deps with React; keep them
+          // in their own chunk so they can import from "react" cleanly.
+          if (id.includes("/@trpc/") || id.includes("/@tanstack/")) {
+            return "data";
+          }
+
+          if (id.includes("/lucide-react/")) return "icons";
+          if (id.includes("/recharts/") || id.includes("/d3-")) return "charts";
+
+          // Everything else goes to vendor. Do NOT put wouter or any
+          // package that imports react here — vendor is loaded before
+          // react and a forward reference produces the init crash above.
+          return "vendor";
         },
       },
     },
