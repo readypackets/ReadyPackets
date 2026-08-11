@@ -13,7 +13,6 @@ import { SessionProvider } from "@/lib/session";
 import { ToastProvider } from "@/components/ui/Toast";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { App } from "@/App";
-import { PwaInstallPrompt, PwaUpdatePrompt } from "@/components/PwaPrompts";
 import "@/styles/index.css";
 
 const queryClient = new QueryClient({
@@ -52,8 +51,6 @@ createRoot(container).render(
           <ToastProvider>
             <SessionProvider>
               <App />
-              <PwaInstallPrompt />
-              <PwaUpdatePrompt />
             </SessionProvider>
           </ToastProvider>
         </QueryClientProvider>
