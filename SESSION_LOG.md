@@ -551,3 +551,38 @@ The `validateCoupon` procedure is a query, not a mutation. The checkout page was
 - Client build: 6.08s, 4 chunks, no warnings
 
 *Session log updated as required by project instructions.*
+
+---
+
+## Session: Blank White Page Fix — Aug 11, 2026
+
+### User Report
+The site at https://myportal.readypackets.com showed a blank white page. The page title ("ReadyPackets — Your Business...") was visible, confirming the HTML shell loaded, but React was not rendering.
+
+### Diagnosis
+1. Server health: `{"status":"ready"}` — app running fine
+2. nginx: active, TLS working
+3. CSP nonce: matched between header and HTML — not the issue
+4. JS assets: all returning HTTP 200 — not the issue
+5. **Root cause found**: Running `node --input-type=module` on the built `react.CMp0-T6l.js` bundle produced:
+   ```
+   Cannot set properties of undefined (setting 'Activity')
+   ```
+   The Vite build was emitting a **circular chunk dependency**: `vendor → react → vendor`. This caused a JavaScript module initialisation order failure — the `vendor` chunk was loading before `react`, but vendor contained modules that imported from react, so react's exports were `undefined` at the time vendor tried to use them.
+
+6. The circular dependency was introduced by the `manualChunks` config using substring matching (`id.includes("react-dom")`) which didn't catch `react-router` — it fell into the `vendor` chunk. Since `react-router` imports from `react`, this created the cycle.
+
+### Fix Applied
+Updated `vite.config.ts` `manualChunks` to:
+- Use exact path segment matching (`/react/`, `/react-dom/`, `/react-router/`, `/scheduler/`, `/use-sync-external-store/`) instead of substring matching
+- Consolidate the entire React ecosystem into one `react` chunk so all internal state initialises in a single deterministic pass
+- Added comments explaining the circular init crash and why the fix works
+
+### Result
+- `react OK` and `vendor OK` from Node module load test
+- No circular chunk warnings in Vite build output
+- React bundle size reduced from 455 KB → 194 KB (react-router moved out of vendor)
+- Site renders correctly at https://myportal.readypackets.com
+
+### Commit
+`b94513b` — "fix: eliminate circular chunk dependency causing blank white page"
