@@ -706,3 +706,41 @@ The site was showing a blank white page due to a circular JavaScript chunk depen
 ### Deployment
 - Commit: `83ab65e` (local, pending push — GitHub token needs `repo` scope)
 - Production: deployed to https://myportal.readypackets.com, health: `{"status":"ok"}`
+
+---
+
+## Session — Aug 11 2026 (Part 3): 9 new platform features
+
+### Prompts
+1. Fix the login process (MFA loop)
+2. List what's missing from the build
+3. Add missing features + admin create orders + order grid view + order automation triggers + improve menu scrolling
+4. Add 10 more items (password reset, filter fix, order grid inline edit, completion % automation, customer grid, email settings fix, referral reward config, order automation engine, phase action editor, 3-2-1 backup)
+5. Add 9 new features (email validation bypass, account gating, login block, launch countdown, fix order portal visibility, price visibility toggle, unique customer IDs, unique order IDs, Policy Center)
+
+### Work completed
+- **MFA login loop fixed**: `rotateSession()` after MFA success; `revokePendingMfaSessions()` before new login
+- **Rate limit fix**: `BEHIND_CLOUDFLARE=true` in production env; per-user IP tracking restored
+- **Filter bugs fixed**: "All statuses" now correctly sends `undefined` not `""` to server
+- **Password reset**: admin can generate temp password or send reset link from customer detail
+- **Customer grid view**: grid/list toggle with suspend/disable/reset from card
+- **Order grid inline editing**: status dropdown + completion % slider directly on grid cards
+- **Order completion % automation**: phase kickoff config now sets completion % automatically
+- **Email settings fix**: `emailGraph.ts` now reads from DB settings (not just env vars); `getEmailConfig` procedure added
+- **Referral reward config**: reward type (cash/coupon), rate, and min order configurable in admin
+- **Order automation engine**: trigger→action rules for all order lifecycle events
+- **Phase action editor**: completion % per phase in Integrations → Phase Kickoff
+- **3-2-1 backup script**: `deploy/backup-321.sh` with 7 cloud targets (S3, Wasabi, B2, OneDrive, SharePoint, Google Drive, Dropbox)
+- **Policy Center**: full CRUD, versioning, version history, download/preview, acceptance tracking
+- **Portal Policies page**: pending policy prompts with accept button
+- **Unique customer IDs**: `RP-CUST-000001` format on registration
+- **Unique order IDs**: `RP-C000001-2608-XXXXXX` embedding customer ID
+- **Login block**: `login_block` feature flag disables all logins (maintenance bypass still works)
+- **Email verification bypass**: `email_verification_bypass` flag auto-verifies new accounts
+- **Show prices toggle**: `show_prices` feature flag controls public catalogue pricing visibility
+- **Launch countdown**: configurable countdown widget in System → Launch Countdown tab
+- **Admin verify email**: manually mark customer email as verified from customer detail panel
+- **Portal order visibility fix**: `refetchOnMount:always` ensures admin-created orders appear immediately
+
+### Commit
+`643c51c` — pushed to readypackets/ReadyPackets main
