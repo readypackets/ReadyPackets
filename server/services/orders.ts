@@ -13,7 +13,9 @@ import {
   intakeSubmissions,
   mndaAcceptances,
   orderItems,
+  orderAutomationRules,
   orderStatusHistory,
+  orderShares,
   orders,
   phaseJobs,
   phaseKickoffConfigs,
@@ -141,6 +143,38 @@ export async function createOrder(input: CreateOrderInput) {
   return { orderId, orderNumber, quote };
 }
 
+/** Apply active admin-configured order actions for a lifecycle event. */
+export async function applyOrderAutomationRules(
+  orderId: number,
+  triggerType: "order_status" | "payment_status" | "intake_submitted" | "phase_started",
+  triggerValue?: string,
+): Promise<void> {
+  const rules = await db
+    .select()
+    .from(orderAutomationRules)
+    .where(and(eq(orderAutomationRules.isActive, true), eq(orderAutomationRules.triggerType, triggerType)))
+    .orderBy(orderAutomationRules.sortOrder);
+
+  for (const rule of rules) {
+    if (rule.triggerValue && rule.triggerValue !== (triggerValue ?? null)) continue;
+    if (rule.actionType === "set_completion_percent" && rule.completionPercent !== null) {
+      await db
+        .update(orders)
+        .set({ completionPercent: Math.max(0, Math.min(100, rule.completionPercent)) })
+        .where(eq(orders.id, orderId));
+      void recordActivity({
+        actorUserId: null,
+        actorRole: "system",
+        action: "order.automation_applied",
+        entityType: "order",
+        entityId: orderId,
+        summary: `Order automation \"${rule.name}\" set completion to ${rule.completionPercent}%`,
+        changes: { ruleId: rule.id, triggerType, triggerValue: triggerValue ?? null, completionPercent: rule.completionPercent },
+      });
+    }
+  }
+}
+
 export interface TransitionInput {
   orderId: number;
   to: OrderStatus;
@@ -247,6 +281,7 @@ export async function transitionOrder(input: TransitionInput) {
   });
 
   await enqueuePhaseJobs(input.orderId, input.to);
+  await applyOrderAutomationRules(input.orderId, "order_status", input.to);
 
   // Fire email automation triggers based on the new order state.
   const orderRow = await db
@@ -326,7 +361,7 @@ export async function listOrdersForUser(userId: number): Promise<OrderSummary[]>
       dueAt: orders.dueAt,
     })
     .from(orders)
-    .where(and(eq(orders.userId, userId), isNull(orders.deletedAt)))
+    .where(and(sql`(${orders.userId} = ${userId} OR EXISTS (SELECT 1 FROM order_shares os WHERE os.order_id = ${orders.id} AND os.shared_with_user_id = ${userId} AND os.revoked_at IS NULL))`, isNull(orders.deletedAt)))
     .orderBy(desc(orders.createdAt));
 
   if (rows.length === 0) return [];

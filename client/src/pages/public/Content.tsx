@@ -88,7 +88,7 @@ export function AboutPage() {
             <p>
               A mutual NDA is executed before we see your concept. Inside the portal, every file
               access is logged, personal data is encrypted at rest, and your material is never used
-              to train external AI models. Our{" "}
+              to train external systems. Our{" "}
               <Link href="/privacy">privacy policy</Link> sets out the retention schedule in full.
             </p>
           </div>

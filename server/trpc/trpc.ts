@@ -19,6 +19,7 @@ import { ipMatchesAny } from "../security/ipAddress.js";
 import { recordSecurityEvent } from "../observability/audit.js";
 import { logger } from "../observability/logger.js";
 import { raiseAlert } from "../observability/audit.js";
+import { hasPendingRequiredPolicies } from "../services/policies.js";
 import type { AppContext } from "./context.js";
 
 const t = initTRPC.context<AppContext>().create({
@@ -116,7 +117,28 @@ const requireCompleteSession = middleware(async ({ ctx, next }) => {
   return next({ ctx: { ...ctx, session } });
 });
 
-export const protectedProcedure = publicProcedure.use(requireCompleteSession);
+/**
+ * Complete-session access without a policy gate. Use only for policy review,
+ * acceptance, logout, password/security recovery, and the session bootstrap.
+ */
+export const policyAcceptanceProcedure = publicProcedure.use(requireCompleteSession);
+
+const requireRequiredPolicies = middleware(async ({ ctx, next }) => {
+  const session = ctx.session;
+  if (!session) throw new TRPCError({ code: "UNAUTHORIZED", message: "Authentication required." });
+  // Staff and admins retain operational access so they can manage policies and
+  // assist customers even when their own customer-facing acceptance is pending.
+  if (session.user.role === "admin" || session.user.role === "staff") {
+    return next({ ctx: { ...ctx, session } });
+  }
+  if (await hasPendingRequiredPolicies(session.user.id)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "REQUIRED_POLICY_ACCEPTANCE" });
+  }
+  return next({ ctx: { ...ctx, session } });
+});
+
+/** Standard customer-facing application access requires current policy acceptance. */
+export const protectedProcedure = policyAcceptanceProcedure.use(requireRequiredPolicies);
 
 const requireStaff = middleware(async ({ ctx, next }) => {
   const session = ctx.session;

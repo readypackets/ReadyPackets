@@ -20,8 +20,12 @@ import {
   intakeAnswers,
   intakeSubmissions,
   orderNotes,
+  orderQuestionTemplates,
   orderQuestions,
+  orderAnswers,
+  orderAnswerHistory,
   orderItems,
+  orderAutomationRules,
   orders,
   packetGroups,
   policyAcceptances,
@@ -54,6 +58,7 @@ import { revokeAllUserSessions } from "../auth/session.js";
 import {
   OrderStateError,
   createOrder,
+  applyOrderAutomationRules,
   getOrderStats,
   transitionOrder,
 } from "../services/orders.js";
@@ -140,7 +145,10 @@ export const adminRouter = router({
     .input(
       z
         .object({
-          status: z.enum(ORDER_STATUSES).optional(),
+          status: z.preprocess(
+            (value) => (value === "" || value === "all" || value == null ? undefined : value),
+            z.enum(ORDER_STATUSES).optional(),
+          ),
           limit: z.number().int().min(1).max(200).default(50),
           offset: z.number().int().min(0).default(0),
         })
@@ -389,6 +397,9 @@ export const adminRouter = router({
       if (Object.keys(patch).length === 0) return { ok: true as const };
 
       await db.update(orders).set(patch).where(eq(orders.id, input.orderId));
+      if (input.paymentStatus !== undefined) {
+        await applyOrderAutomationRules(input.orderId, "payment_status", input.paymentStatus);
+      }
       void recordActivity({
         actorUserId: ctx.session.user.id,
         actorRole: ctx.session.user.role,
@@ -478,6 +489,72 @@ export const adminRouter = router({
       return { ok: true as const, questionId };
     }),
 
+  /* Phase 1 question template bank and administrator answer workflow. */
+  questionTemplates: staffProcedure
+    .input(z.object({ phase: z.string().trim().max(16).optional(), includeInactive: z.boolean().default(false) }).optional())
+    .query(async ({ input }) => {
+      const conditions = [] as ReturnType<typeof eq>[];
+      if (input?.phase) conditions.push(eq(orderQuestionTemplates.phase, input.phase));
+      if (!input?.includeInactive) conditions.push(eq(orderQuestionTemplates.isActive, true));
+      return db.select().from(orderQuestionTemplates).where(conditions.length ? and(...conditions) : undefined).orderBy(orderQuestionTemplates.sortOrder, orderQuestionTemplates.id);
+    }),
+
+  upsertQuestionTemplate: staffProcedure
+    .input(z.object({
+      id: z.number().int().positive().optional(),
+      name: z.string().trim().min(2).max(190),
+      question: z.string().trim().min(5).max(2_000),
+      phase: z.enum(["phase_1", "phase_2"]).default("phase_1"),
+      required: z.boolean().default(true),
+      sortOrder: z.number().int().min(0).default(0),
+      isActive: z.boolean().default(true),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const values = { name: input.name, question: input.question, phase: input.phase, required: input.required, sortOrder: input.sortOrder, isActive: input.isActive };
+      if (input.id) { await db.update(orderQuestionTemplates).set(values).where(eq(orderQuestionTemplates.id, input.id)); return { id: input.id }; }
+      const result = await db.insert(orderQuestionTemplates).values({ ...values, createdByUserId: ctx.session.user.id });
+      return { id: insertedId(result) };
+    }),
+
+  applyQuestionTemplate: staffProcedure
+    .input(z.object({ orderId: z.number().int().positive(), templateId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const template = (await db.select().from(orderQuestionTemplates).where(and(eq(orderQuestionTemplates.id, input.templateId), eq(orderQuestionTemplates.isActive, true))).limit(1))[0];
+      if (!template) throw new TRPCError({ code: "NOT_FOUND", message: "Question template not found." });
+      const inserted = await db.insert(orderQuestions).values({ orderId: input.orderId, askedByUserId: ctx.session.user.id, questionEnc: encryptField(template.question, "order_question:pending") ?? "", required: template.required, sortOrder: template.sortOrder });
+      const questionId = insertedId(inserted);
+      await db.update(orderQuestions).set({ questionEnc: encryptField(template.question, `order_question:${questionId}`) ?? "" }).where(eq(orderQuestions.id, questionId));
+      return { ok: true as const, questionId };
+    }),
+
+  answerOrderQuestionAsAdmin: staffProcedure
+    .input(z.object({ questionId: z.number().int().positive(), body: z.string().trim().min(1).max(10_000) }))
+    .mutation(async ({ ctx, input }) => {
+      const question = (await db.select({ id: orderQuestions.id, orderId: orderQuestions.orderId }).from(orderQuestions).where(eq(orderQuestions.id, input.questionId)).limit(1))[0];
+      if (!question) throw new TRPCError({ code: "NOT_FOUND", message: "Question not found." });
+      const existing = (await db.select().from(orderAnswers).where(eq(orderAnswers.questionId, input.questionId)).limit(1))[0];
+      if (existing) {
+        await db.insert(orderAnswerHistory).values({ answerId: existing.id, previousAnswerEnc: existing.answerEnc, version: existing.version, changedByUserId: ctx.session.user.id });
+        await db.update(orderAnswers).set({ answerEnc: encryptField(input.body, `order_answer:${existing.id}`) ?? "", version: existing.version + 1, answeredByUserId: ctx.session.user.id }).where(eq(orderAnswers.id, existing.id));
+      } else {
+        const result = await db.insert(orderAnswers).values({ questionId: input.questionId, orderId: question.orderId, answeredByUserId: ctx.session.user.id, answerEnc: encryptField(input.body, "order_answer:pending") ?? "" });
+        const answerId = insertedId(result);
+        await db.update(orderAnswers).set({ answerEnc: encryptField(input.body, `order_answer:${answerId}`) ?? "" }).where(eq(orderAnswers.id, answerId));
+      }
+      await db.update(orderQuestions).set({ status: "answered" }).where(eq(orderQuestions.id, input.questionId));
+      return { ok: true as const };
+    }),
+
+  bulkSoftDeleteOrders: adminProcedure
+    .input(z.object({ orderIds: z.array(z.number().int().positive()).min(1).max(200), confirmation: z.literal("MOVE_TO_TRASH") }))
+    .mutation(async ({ ctx, input }) => {
+      const ids = [...new Set(input.orderIds)];
+      const now = new Date();
+      await db.update(orders).set({ deletedAt: now }).where(inArray(orders.id, ids));
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "order.bulk_soft_delete", entityType: "order", entityId: 0, severity: "warning", summary: `Administrator moved ${ids.length} order(s) to trash`, ipAddress: ctx.clientIp });
+      return { ok: true as const, count: ids.length };
+    }),
+
   softDeleteOrder: adminProcedure
     .input(
       z.object({
@@ -512,8 +589,14 @@ export const adminRouter = router({
       z
         .object({
           search: z.string().trim().max(190).optional(),
-          role: z.enum(USER_ROLES).optional(),
-          status: z.string().trim().max(24).optional(),
+          role: z.preprocess(
+            (value) => (value === "" || value === "all" || value == null ? undefined : value),
+            z.enum(USER_ROLES).optional(),
+          ),
+          status: z.preprocess(
+            (value) => (value === "" || value === "all" || value == null ? undefined : value),
+            z.string().trim().max(24).optional(),
+          ),
           limit: z.number().int().min(1).max(200).default(50),
           offset: z.number().int().min(0).default(0),
         })
@@ -733,6 +816,31 @@ export const adminRouter = router({
         ipAddress: ctx.clientIp,
       });
       return { ok: true as const };
+    }),
+
+  forceCustomerOnboarding: adminProcedure
+    .input(z.object({ userId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      await db.update(users).set({ onboardingCompletedAt: null, onboardingForcedAt: new Date() }).where(eq(users.id, input.userId));
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "customer.force_onboarding", entityType: "user", entityId: input.userId, summary: "Administrator required customer to view onboarding again", ipAddress: ctx.clientIp });
+      return { ok: true as const };
+    }),
+
+  forceAllCustomerOnboarding: adminProcedure.mutation(async ({ ctx }) => {
+    const result = await db.update(users).set({ onboardingCompletedAt: null, onboardingForcedAt: new Date() }).where(and(eq(users.role, "customer"), eq(users.status, "active"), isNull(users.deletedAt)));
+    const count = Number((result as { affectedRows?: number }).affectedRows ?? 0);
+    void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "customer.force_onboarding_all", entityType: "user", entityId: 0, summary: `Administrator required ${count} customers to view onboarding again`, ipAddress: ctx.clientIp });
+    return { ok: true as const, count };
+  }),
+
+  bulkSoftDeleteCustomers: adminProcedure
+    .input(z.object({ userIds: z.array(z.number().int().positive()).min(1).max(200), confirmation: z.literal("MOVE_TO_TRASH") }))
+    .mutation(async ({ ctx, input }) => {
+      const ids = [...new Set(input.userIds)].filter((id) => id !== ctx.session.user.id);
+      if (ids.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "You cannot move your own account to trash." });
+      for (const userId of ids) { await softDeleteUser(userId); await revokeAllUserSessions(userId, "account_deleted"); }
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "customer.bulk_soft_delete", entityType: "user", entityId: 0, severity: "warning", summary: `Administrator moved ${ids.length} customer account(s) to trash`, ipAddress: ctx.clientIp });
+      return { ok: true as const, count: ids.length };
     }),
 
   restoreCustomer: adminProcedure
@@ -1569,6 +1677,49 @@ export const adminRouter = router({
       return { ok: true as const };
     }),
 
+  /* ---------------------------------------------------------------- */
+  /* Configurable order automation                                     */
+  /* ---------------------------------------------------------------- */
+
+  orderAutomationRules: adminProcedure.query(async () =>
+    db.select().from(orderAutomationRules).orderBy(orderAutomationRules.sortOrder, orderAutomationRules.id),
+  ),
+
+  upsertOrderAutomationRule: adminProcedure
+    .input(z.object({
+      id: z.number().int().positive().optional(),
+      name: z.string().trim().min(2).max(190),
+      triggerType: z.enum(["order_status", "payment_status", "intake_submitted", "phase_started"]),
+      triggerValue: z.string().trim().max(64).optional(),
+      completionPercent: z.number().int().min(0).max(100),
+      isActive: z.boolean().default(true),
+      sortOrder: z.number().int().min(0).default(0),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const values = {
+        name: input.name,
+        triggerType: input.triggerType,
+        triggerValue: input.triggerValue || null,
+        actionType: "set_completion_percent",
+        completionPercent: input.completionPercent,
+        isActive: input.isActive,
+        sortOrder: input.sortOrder,
+      };
+      if (input.id) {
+        await db.update(orderAutomationRules).set(values).where(eq(orderAutomationRules.id, input.id));
+        return { id: input.id };
+      }
+      const result = await db.insert(orderAutomationRules).values({ ...values, createdByUserId: ctx.session.user.id });
+      return { id: insertedId(result) };
+    }),
+
+  deleteOrderAutomationRule: adminProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ input }) => {
+      await db.delete(orderAutomationRules).where(eq(orderAutomationRules.id, input.id));
+      return { ok: true as const };
+    }),
+
   /** Create a new policy document (slug + title). Versions are added via publishPolicyVersion. */
   createPolicyDocument: adminProcedure
     .input(
@@ -1596,6 +1747,29 @@ export const adminRouter = router({
         ipAddress: ctx.clientIp,
       });
       return { ok: true as const, id: insertedId(inserted) };
+    }),
+
+  /** Change whether customers must accept the currently published policy version. */
+  updatePolicyRequirement: adminProcedure
+    .input(z.object({ policyId: z.number().int().positive(), requiresAcceptance: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      await db
+        .update(policyDocuments)
+        .set({ requiresAcceptance: input.requiresAcceptance })
+        .where(eq(policyDocuments.id, input.policyId));
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: "admin",
+        action: "policy.requirement_updated",
+        entityType: "policy_document",
+        entityId: input.policyId,
+        summary: input.requiresAcceptance
+          ? "Administrator marked policy acceptance as required"
+          : "Administrator marked policy acceptance as optional",
+        changes: { requiresAcceptance: input.requiresAcceptance },
+        ipAddress: ctx.clientIp,
+      });
+      return { ok: true as const };
     }),
 
   /** List all policy acceptances for a user. */

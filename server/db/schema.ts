@@ -61,6 +61,8 @@ export const users = mysqlTable(
     mustChangePassword: boolean("must_change_password").notNull().default(false),
     mfaEnabled: boolean("mfa_enabled").notNull().default(false),
     onboardingCompletedAt: timestamp("onboarding_completed_at"),
+    /** When set after onboarding completion, the customer must complete the wizard again. */
+    onboardingForcedAt: timestamp("onboarding_forced_at"),
     lastLoginAt: timestamp("last_login_at"),
     lastLoginIp: varchar("last_login_ip", { length: 64 }),
     failedLoginCount: int("failed_login_count").notNull().default(0),
@@ -1744,6 +1746,61 @@ export const meetingBookings = mysqlTable("meeting_bookings", {
 
 // ── Tier 3: Portal wizard slides ──────────────────────────────────────────────
 
+export const orderAutomationRules = mysqlTable(
+  "order_automation_rules",
+  {
+    id: id(),
+    name: varchar("name", { length: 190 }).notNull(),
+    triggerType: varchar("trigger_type", { length: 48 }).notNull(),
+    triggerValue: varchar("trigger_value", { length: 64 }),
+    actionType: varchar("action_type", { length: 48 }).notNull().default("set_completion_percent"),
+    completionPercent: int("completion_percent"),
+    isActive: boolean("is_active").notNull().default(true),
+    sortOrder: int("sort_order").notNull().default(0),
+    createdByUserId: int("created_by_user_id"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    triggerIdx: index("order_automation_trigger_idx").on(table.triggerType, table.triggerValue),
+    activeIdx: index("order_automation_active_idx").on(table.isActive),
+  }),
+);
+
+export const orderQuestionTemplates = mysqlTable(
+  "order_question_templates",
+  {
+    id: id(),
+    name: varchar("name", { length: 190 }).notNull(),
+    question: text("question").notNull(),
+    phase: varchar("phase", { length: 16 }).notNull().default("phase_1"),
+    required: boolean("required").notNull().default(true),
+    sortOrder: int("sort_order").notNull().default(0),
+    isActive: boolean("is_active").notNull().default(true),
+    createdByUserId: int("created_by_user_id"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({ phaseIdx: index("order_question_template_phase_idx").on(table.phase, table.isActive) }),
+);
+
+export const portalAnnouncements = mysqlTable(
+  "portal_announcements",
+  {
+    id: id(),
+    title: varchar("title", { length: 255 }).notNull(),
+    bodyMarkdown: text("body_markdown").notNull(),
+    audience: varchar("audience", { length: 24 }).notNull().default("all"),
+    isActive: boolean("is_active").notNull().default(true),
+    startsAt: timestamp("starts_at"),
+    endsAt: timestamp("ends_at"),
+    createdByUserId: int("created_by_user_id"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({ visibleIdx: index("portal_announcement_visible_idx").on(table.isActive, table.startsAt, table.endsAt) }),
+);
+
 export const portalWizardSlides = mysqlTable("portal_wizard_slides", {
   id: id(),
   title: varchar("title", { length: 255 }).notNull(),
@@ -1896,3 +1953,23 @@ export const loginPageConfig = mysqlTable("login_page_config", {
   updatedByUserId: int("updated_by_user_id"),
   updatedAt: updatedAt(),
 });
+
+// ── Customer collaboration workspaces ─────────────────────────────────────────
+export const customerWorkspaces = mysqlTable("customer_workspaces", {
+  id: id(),
+  name: varchar("name", { length: 190 }).notNull(),
+  slug: varchar("slug", { length: 96 }).notNull(),
+  ownerUserId: int("owner_user_id").notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (table) => ({ slugUnique: uniqueIndex("customer_workspace_slug_unique").on(table.slug), ownerIdx: index("customer_workspace_owner_idx").on(table.ownerUserId) }));
+
+export const customerWorkspaceMembers = mysqlTable("customer_workspace_members", {
+  id: id(),
+  workspaceId: int("workspace_id").notNull(),
+  userId: int("user_id").notNull(),
+  role: varchar("role", { length: 24 }).notNull().default("member"),
+  invitedByUserId: int("invited_by_user_id"),
+  createdAt: createdAt(),
+  revokedAt: timestamp("revoked_at"),
+}, (table) => ({ workspaceUserUnique: uniqueIndex("customer_workspace_member_unique").on(table.workspaceId, table.userId), userIdx: index("customer_workspace_member_user_idx").on(table.userId) }));

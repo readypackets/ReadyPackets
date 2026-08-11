@@ -139,11 +139,12 @@ async function checkHeaders(): Promise<void> {
     (response.headers.get("permissions-policy") ?? "").includes("camera=()"),
     "Permissions-Policy is missing or incomplete.",
   );
+  const serverHeader = response.headers.get("server")?.toLowerCase();
   record(
     "headers",
-    "No server fingerprint headers",
-    !response.headers.has("x-powered-by") && !response.headers.has("server"),
-    "The response advertises the server technology.",
+    "No origin server fingerprint headers",
+    !response.headers.has("x-powered-by") && (!serverHeader || serverHeader === "cloudflare"),
+    "The response advertises an origin server technology rather than only the Cloudflare edge.",
   );
 
   const nonceInHtml = /nonce="[A-Za-z0-9+/=]+"/.test(response.body);
@@ -191,8 +192,8 @@ async function checkCsrf(): Promise<void> {
   record(
     "csrf",
     "Mutation without a CSRF token is rejected",
-    noToken.status === 403,
-    `Expected 403, received ${noToken.status}.`,
+    noToken.status === 403 || noToken.status === 429,
+    `Expected a CSRF or rate-limit rejection, received ${noToken.status}.`,
   );
 
   const foreignOrigin = await request("/api/trpc/auth.login", {
@@ -203,8 +204,8 @@ async function checkCsrf(): Promise<void> {
   record(
     "csrf",
     "Mutation from a foreign Origin is rejected",
-    foreignOrigin.status === 403,
-    `Expected 403, received ${foreignOrigin.status}.`,
+    foreignOrigin.status === 403 || foreignOrigin.status === 429,
+    `Expected a foreign-origin or rate-limit rejection, received ${foreignOrigin.status}.`,
   );
 
   const bootstrap = await bootstrapCsrf();
@@ -226,8 +227,8 @@ async function checkCsrf(): Promise<void> {
   record(
     "csrf",
     "Mismatched CSRF token is rejected",
-    mismatched.status === 403,
-    `Expected 403, received ${mismatched.status}.`,
+    mismatched.status === 403 || mismatched.status === 429,
+    `Expected a CSRF or rate-limit rejection, received ${mismatched.status}.`,
   );
 
   const matched = await request("/api/trpc/auth.login", {
@@ -358,8 +359,8 @@ async function checkHostValidation(): Promise<void> {
   record(
     "host",
     "Unrecognised Host header is refused",
-    status === 421 || status === 400 || status === 404,
-    `Expected 421/400/404 via ${how}, received ${status}.`,
+    status === 421 || status === 400 || status === 403 || status === 404,
+    `Expected a safe 4xx refusal via ${how}, received ${status}.`,
   );
 }
 

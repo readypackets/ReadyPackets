@@ -42,6 +42,7 @@ export function PortalDashboard() {
   const orders = trpc.orders.list.useQuery(undefined, { refetchOnMount: "always" });
   const tickets = trpc.tickets.unreadCount.useQuery();
   const mfa = trpc.auth.mfaStatus.useQuery();
+  const announcements = trpc.tier3.announcements.visible.useQuery();
 
   const resend = trpc.auth.resendVerification.useMutation({
     onSuccess() {
@@ -102,7 +103,7 @@ export function PortalDashboard() {
     <>
       <PageHeader
         title={`Welcome back, ${user?.preferredName || user?.firstName || "there"}`}
-        description="Everything about your engagements in one place: orders, deliverables, and support."
+        description="Everything about your engagements in one place: orders, My Business Packets, and support."
         actions={
           <LinkButton
             href="/portal/orders/new"
@@ -178,35 +179,17 @@ export function PortalDashboard() {
         </Card>
       ) : null}
 
+      {(announcements.data ?? []).length > 0 ? <Card className="mb-6 border-teal/30"><CardHeader title="Announcements" description="Updates from the ReadyPackets team." /> <div className="mt-4 space-y-3">{(announcements.data ?? []).map((announcement) => <div key={announcement.id} className="rounded-lg border border-line bg-surface-soft p-3"><p className="font-medium text-ink">{announcement.title}</p><p className="mt-1 whitespace-pre-wrap text-sm text-body">{announcement.bodyMarkdown}</p></div>)}</div></Card> : null}
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {summary.isLoading ? (
           Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-24 w-full" />)
         ) : (
           <>
-            <StatTile
-              label="Active orders"
-              value={summary.data?.active ?? 0}
-              icon={ClipboardList}
-              tone="teal"
-            />
-            <StatTile
-              label="Delivered"
-              value={summary.data?.delivered ?? 0}
-              icon={FileCheck2}
-              tone="success"
-            />
-            <StatTile
-              label="Awaiting payment"
-              value={summary.data?.awaitingPayment ?? 0}
-              icon={MailCheck}
-              tone="warning"
-            />
-            <StatTile
-              label="Unread replies"
-              value={tickets.data ?? 0}
-              icon={Inbox}
-              tone="navy"
-            />
+            <Link href="/portal/orders" className="no-underline"><StatTile label="Active orders" value={summary.data?.active ?? 0} icon={ClipboardList} tone="teal" /></Link>
+            <Link href="/portal/files" className="no-underline"><StatTile label="Delivered" value={summary.data?.delivered ?? 0} icon={FileCheck2} tone="success" /></Link>
+            <Link href="/portal/orders" className="no-underline"><StatTile label="Awaiting payment" value={summary.data?.awaitingPayment ?? 0} icon={MailCheck} tone="warning" /></Link>
+            <Link href="/portal/support" className="no-underline"><StatTile label="Unread replies" value={tickets.data ?? 0} icon={Inbox} tone="navy" /></Link>
           </>
         )}
       </div>
@@ -308,7 +291,7 @@ export function PortalDashboard() {
                 fullWidth
                 leadingIcon={<FileText className="size-4" aria-hidden="true" />}
               >
-                My deliverables
+                My Business Packets
               </LinkButton>
               <LinkButton
                 href="/portal/tickets"

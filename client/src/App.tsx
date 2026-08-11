@@ -17,6 +17,7 @@ import {
   MessagesSquare,
   ScrollText,
   ShieldCheck,
+  UsersRound,
   UserCog,
 } from "lucide-react";
 import { useSession } from "@/lib/session";
@@ -57,6 +58,7 @@ import { NewTicketPage, TicketDetailPage, TicketsListPage } from "@/pages/portal
 import { CommunityPage, NewTopicPage, TopicDetailPage } from "@/pages/portal/Community";
 import { ProfilePage } from "@/pages/portal/Profile";
 import { MfaSetupPage, SecurityPage } from "@/pages/portal/Security";
+import { WorkspacesPage } from "@/pages/portal/Workspaces";
 
 import { AdminDashboard } from "@/pages/admin/Dashboard";
 import { AdminOrderDetailPage, AdminOrdersPage } from "@/pages/admin/Orders";
@@ -72,6 +74,8 @@ import { AdminFinancePage } from "@/pages/admin/Finance";
 import { AdminIntegrationsPage } from "@/pages/admin/Integrations";
 import EmailSettings from "@/pages/admin/EmailSettings";
 import EmailAutomations from "@/pages/admin/EmailAutomations";
+import { AdminOrderAutomations } from "@/pages/admin/OrderAutomations";
+import { AdminQuestionTemplates } from "@/pages/admin/QuestionTemplates";
 import Checkout from "@/pages/portal/Checkout";
 import Wizard from "@/pages/portal/Wizard";
 import { AdminCRM } from "@/pages/admin/CRM";
@@ -96,6 +100,9 @@ import { AdminPayoutsPage } from "@/pages/admin/Payouts";
 import { AdminChangelogPage } from "@/pages/admin/Changelog";
 import { PolicyCenterPage } from "@/pages/admin/PolicyCenter";
 import { PoliciesPage } from "@/pages/portal/Policies";
+import { AdminEntraSetupPage } from "@/pages/admin/EntraSetup";
+import { AdminAnnouncementsPage } from "@/pages/admin/Announcements";
+import { AdminNavigationPage } from "@/pages/admin/Navigation";
 
 /** Full-page loader shown while the session is being resolved. */
 function BootScreen() {
@@ -163,10 +170,23 @@ function RequireAuth({ children }: { children: ReactNode }) {
 function PortalRoutes() {
   const session = useSession();
   const [location, navigate] = useLocation();
-  const unread = trpc.tickets.unreadCount.useQuery(undefined, {
+  const pendingPolicies = trpc.account.pendingPolicies.useQuery(undefined, {
     enabled: session.authenticated && !session.restricted,
+    refetchOnMount: "always",
+  });
+  const hasPendingRequiredPolicies = (pendingPolicies.data?.length ?? 0) > 0;
+  const unread = trpc.tickets.unreadCount.useQuery(undefined, {
+    enabled: session.authenticated && !session.restricted && !hasPendingRequiredPolicies,
     refetchInterval: 120_000,
   });
+
+  // Required policies lock customer portal navigation until accepted. The policy
+  // page and security controls remain reachable so the customer can accept or sign out.
+  useEffect(() => {
+    if (hasPendingRequiredPolicies && !location.startsWith("/portal/policies") && !location.startsWith("/portal/security")) {
+      navigate("/portal/policies?required=1", { replace: true });
+    }
+  }, [hasPendingRequiredPolicies, location, navigate]);
 
   // Administrators without a second factor are confined to enrolment.
   useEffect(() => {
@@ -190,7 +210,8 @@ function PortalRoutes() {
       items: [
         { href: "/portal", label: "Dashboard", icon: LayoutDashboard, exact: true },
         { href: "/portal/orders", label: "My orders", icon: ClipboardList },
-        { href: "/portal/files", label: "Deliverables", icon: FileText },
+        { href: "/portal/files", label: "My Business Packets", icon: FileText },
+        { href: "/portal/workspaces", label: "Packet Collective", icon: UsersRound },
       ],
     },
     {
@@ -227,6 +248,7 @@ function PortalRoutes() {
         {/* Backward-compatible alias for links issued before the route was renamed. */}
         <Route path="/portal/orders/:id/nda" component={MndaPage} />
         <Route path="/portal/files" component={FilesPage} />
+        <Route path="/portal/workspaces" component={WorkspacesPage} />
         <Route path="/portal/tickets" component={TicketsListPage} />
         <Route path="/portal/tickets/new" component={NewTicketPage} />
         <Route path="/portal/tickets/:id" component={TicketDetailPage} />
@@ -284,7 +306,12 @@ function AdminRoutes() {
         <Route path="/admin/finance" component={AdminFinancePage} />
         <Route path="/admin/integrations" component={AdminIntegrationsPage} />
         <Route path="/admin/email-settings" component={EmailSettings} />
+        <Route path="/admin/entra-setup" component={AdminEntraSetupPage} />
+        <Route path="/admin/announcements" component={AdminAnnouncementsPage} />
+        <Route path="/admin/navigation" component={AdminNavigationPage} />
         <Route path="/admin/email-automations" component={EmailAutomations} />
+        <Route path="/admin/order-automations" component={AdminOrderAutomations} />
+        <Route path="/admin/question-templates" component={AdminQuestionTemplates} />
         <Route path="/admin/crm" component={AdminCRM} />
         <Route path="/admin/backups" component={AdminBackups} />
         <Route path="/admin/ai-hub" component={AdminAIHub} />

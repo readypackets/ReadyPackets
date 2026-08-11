@@ -899,3 +899,66 @@ Added `docs/CONFIG_MIGRATION.md` with export, inspect, dry-run import, live impo
 ### Validation and deployment
 
 A real production export was created and integrity-inspected with a temporary root-only passphrase. A second production export was verified through the complete `import --dry-run` path. Both temporary bundles and passphrase files were removed after validation. The script was installed at `/opt/readypackets/deploy/config-migration.sh` with mode 750. The portal restarted successfully and returned `{"status":"ready"}`.
+
+
+---
+
+## 10. Continuation session — August 11, 2026
+
+### 10.1 Requests carried forward
+
+The inherited working context carried the following outstanding user requirements from the current feature batch:
+
+> Add the ability to share orders with other accounts and create an RBAC system for customers who share the orders with other customers. (View only, Upload documents, View the final deliverables, Record a Business Pitch Idea, etc). Add a Company or Organizational sharing method to group all customers and members, or founders together under 1 umbrella so everyone can contribute give it a cool name.
+
+> Change Deliverables to My Business Packets.
+
+> Add the ability to Edit and configure the admin panel menu.
+
+The project-level requirements remained unchanged: the application must remain self-hosted, must use no Manus runtime integrations or dependencies, and all prompts, outcomes, and changes must be retained in source control.
+
+### 10.2 Response and implementation
+
+The response was to complete the remaining collaboration, navigation, terminology, retention, and deployment work in the existing self-hosted TypeScript application rather than introducing any hosted dependency.
+
+| Area | Work completed |
+| --- | --- |
+| **Bulk order retention** | Completed the admin order grid’s selection and confirmation workflow for `bulkSoftDeleteOrders`. Selected orders are moved to the existing recoverable trash model and respect the configurable retention period. |
+| **Packet Collective** | Added `customer_workspaces` and `customer_workspace_members` schema structures and the idempotent `0011_customer_workspaces.sql` migration. Workspace owners can create a **Packet Collective**, invite active customer accounts as manager, contributor, or viewer, and share an owned order with every active workspace member. |
+| **Direct order sharing** | Completed the order-detail interface for direct sharing, revocation, and granular scopes: view, upload documents, view final Business Packets, record a Business Pitch Idea, contributor, and manager. The server remains the authority for ownership and access checks. |
+| **Workspace portal** | Added `/portal/workspaces` and the Packet Collective portal navigation item. The page supports workspace creation and member invitation; order owners can select an owned Packet Collective from the order page to perform workspace-wide sharing. |
+| **Customer wording** | Replaced visible portal navigation, dashboard, file library, and order-detail labels with **My Business Packets**. Internal field and permission names were retained where needed for compatibility. |
+| **Configurable admin menu** | Added a secured `adminNavigation` API backed by the existing `site_settings` store, the `/admin/navigation` editor, and runtime sidebar application. Administrators can set labels, visibility, grouping, order, and HTTPS custom links. External links open with `rel="noreferrer"`; authorization remains server-enforced, so hiding navigation cannot grant or remove access. |
+| **Purge automation** | Confirmed `trash_purge` is registered with the production scheduler alongside existing jobs and that soft-deleted customer and order records are purged only after the configured `trash.retention_days` window. |
+
+### 10.3 Verification and deployment record
+
+The release was validated with `pnpm run typecheck` and the full Vitest suite: **142 tests passed with zero TypeScript errors**. A production client build and externalized Node 22 server build completed successfully.
+
+Production migration status showed that migrations `0010_policy_automation_portal.sql` and `0011_customer_workspaces.sql` had not yet been applied. Both were reviewed and applied with MySQL before deployment. This created `portal_announcements`, `customer_workspaces`, and `customer_workspace_members`, added `users.onboarding_forced_at`, and seeded the retention/onboarding site settings idempotently.
+
+The production deployment installed the verified server bundle and client assets under `/opt/readypackets`, retained the prior client build as a timestamped rollback directory, restarted `readypackets.service`, and confirmed the service listens only on `127.0.0.1:3000`. The public readiness endpoint subsequently returned `{"status":"ready"}` through Cloudflare at `https://myportal.readypackets.com/api/health/ready`.
+
+The live verifier initially reported two edge-specific false negatives: Cloudflare legitimately adds `Server: cloudflare`, and its invalid-host rejection is a safe `403`. The verifier was corrected to distinguish a Cloudflare edge marker from an origin technology fingerprint and to accept safe 4xx invalid-host rejection. A re-run encountered expected authentication-rate-limit carryover from the previous intentional rate-limit probe; CSRF assertions were therefore made robust by recognizing either a direct `403` rejection or a `429` rate-limit rejection as a secure blocked mutation. The final live verification result was **46/46 checks passed**.
+
+### 10.4 Files added or materially changed
+
+| File | Purpose |
+| --- | --- |
+| `client/src/pages/portal/Workspaces.tsx` | Packet Collective workspace and invitation page. |
+| `client/src/pages/portal/OrderDetail.tsx` | Direct and workspace-wide order sharing controls; My Business Packets labels. |
+| `client/src/pages/admin/Navigation.tsx` | Admin menu configuration editor. |
+| `client/src/components/layout/AdminLayout.tsx` | Applies saved navigation labels, visibility, groups, ordering, and custom links. |
+| `client/src/pages/admin/Orders.tsx` | Bulk order trash controls. |
+| `client/src/App.tsx` | Workspace and navigation-editor routes; renamed portal navigation. |
+| `server/routers/adminNavigation.ts` | Admin-only persisted navigation configuration API. |
+| `server/routers/orders.ts` | Packet Collective creation, membership, and workspace-sharing procedures. |
+| `server/db/schema.ts` | Workspace and membership schema declarations. |
+| `drizzle/migrations/0011_customer_workspaces.sql` | Idempotent workspace schema migration. |
+| `scripts/verify-security.ts` | Cloudflare-aware security verification expectations. |
+
+### 10.5 Result
+
+The customer collaboration, configurable admin navigation, visible My Business Packets rename, purge-scheduler confirmation, migrations, build, deployment, and live security verification requested in the inherited feature batch are complete. The next action is to commit and push these source changes and this session record to the private `readypackets/ReadyPackets` repository.
+
+---

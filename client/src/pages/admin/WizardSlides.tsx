@@ -20,6 +20,7 @@ export function AdminWizardSlides() {
   const [editSlide, setEditSlide] = useState<typeof emptyForm | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [previewId, setPreviewId] = useState<number | null>(null);
+  const [forceAllOpen, setForceAllOpen] = useState(false);
 
   const slides = trpc.tier3.wizardSlides.listSlides.useQuery();
   const utils = trpc.useUtils();
@@ -27,6 +28,10 @@ export function AdminWizardSlides() {
   const upsert = trpc.tier3.wizardSlides.upsertSlide.useMutation({
     onSuccess: () => { utils.tier3.wizardSlides.listSlides.invalidate(); setEditSlide(null); toast.success(editSlide?.id ? "Slide updated" : "Slide created"); },
     onError: (e) => toast.error("Error", e.message),
+  });
+  const forceAll = trpc.admin.forceAllCustomerOnboarding.useMutation({
+    onSuccess: (result) => { setForceAllOpen(false); toast.success(`Onboarding replay required for ${result.count} customer(s)`); },
+    onError: (e) => toast.error("Could not force onboarding replay", e.message),
   });
   const deleteSlide = trpc.tier3.wizardSlides.deleteSlide.useMutation({
     onSuccess: () => { utils.tier3.wizardSlides.listSlides.invalidate(); setDeleteId(null); toast.success("Slide deleted"); },
@@ -44,7 +49,7 @@ export function AdminWizardSlides() {
       <PageHeader
         title="Portal wizard slides"
         description="Manage the onboarding wizard slides shown to new customers."
-        actions={<Button onClick={() => openEdit()} leadingIcon={<Plus className="size-4" aria-hidden="true" />}>New slide</Button>}
+        actions={<div className="flex gap-2"><Button variant="outline" onClick={() => setForceAllOpen(true)}>Require all customers to replay</Button><Button onClick={() => openEdit()} leadingIcon={<Plus className="size-4" aria-hidden="true" />}>New slide</Button></div>}
       />
 
       {slideList.length === 0 ? (
@@ -128,6 +133,8 @@ export function AdminWizardSlides() {
           </div>
         </Modal>
       )}
+
+      <ConfirmDialog open={forceAllOpen} onClose={() => setForceAllOpen(false)} onConfirm={() => forceAll.mutate()} title="Require onboarding replay for all customers?" message="Every active customer will be shown the onboarding wizard again when they next enter the customer portal." confirmLabel="Require replay" variant="primary" busy={forceAll.isPending} />
 
       <ConfirmDialog
         open={deleteId !== null}

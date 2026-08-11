@@ -177,7 +177,7 @@ export function HomePage() {
                 </p>
                 <p className="mt-1 text-sm text-white/75">
                   A mutual NDA is signed before we see your concept, and your material is never
-                  used to train external AI models.
+                  used to train external systems.
                 </p>
               </div>
             </Card>

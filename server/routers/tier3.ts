@@ -5,7 +5,7 @@
  * subscription plans, and API access logs.
  */
 import { TRPCError } from "@trpc/server";
-import { and, asc, count, desc, eq, gte, isNull, lte } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import {
@@ -26,6 +26,7 @@ import {
   outboundConnections,
   pinnedQuickAdd,
   portalWizardSlides,
+  portalAnnouncements,
   pwaAbEvents,
   pwaAbVariants,
   subscriptionItems,
@@ -499,6 +500,21 @@ const featureScheduleRouter = router({
   }),
 });
 
+// ── Customer portal announcements ────────────────────────────────────────────
+const announcementsRouter = router({
+  list: adminProcedure.query(async () => db.select().from(portalAnnouncements).orderBy(desc(portalAnnouncements.createdAt))),
+  visible: protectedProcedure.query(async () => {
+    const now = new Date();
+    return db.select().from(portalAnnouncements).where(and(eq(portalAnnouncements.isActive, true), sql`(${portalAnnouncements.startsAt} IS NULL OR ${portalAnnouncements.startsAt} <= ${now})`, sql`(${portalAnnouncements.endsAt} IS NULL OR ${portalAnnouncements.endsAt} >= ${now})`)).orderBy(desc(portalAnnouncements.createdAt));
+  }),
+  upsert: adminProcedure.input(z.object({ id: z.number().int().positive().optional(), title: z.string().trim().min(2).max(255), bodyMarkdown: z.string().trim().min(1).max(20_000), audience: z.enum(["all", "customers", "staff"]).default("all"), isActive: z.boolean().default(true), startsAt: z.string().datetime().optional(), endsAt: z.string().datetime().optional() })).mutation(async ({ ctx, input }) => {
+    const values = { title: input.title, bodyMarkdown: input.bodyMarkdown, audience: input.audience, isActive: input.isActive, startsAt: input.startsAt ? new Date(input.startsAt) : null, endsAt: input.endsAt ? new Date(input.endsAt) : null };
+    if (input.id) { await db.update(portalAnnouncements).set(values).where(eq(portalAnnouncements.id, input.id)); return { id: input.id }; }
+    const [r] = await db.insert(portalAnnouncements).values({ ...values, createdByUserId: ctx.session.user.id }); return { id: (r as { insertId: number }).insertId };
+  }),
+  remove: adminProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ input }) => { await db.delete(portalAnnouncements).where(eq(portalAnnouncements.id, input.id)); return { ok: true as const }; }),
+});
+
 // ── System backups ────────────────────────────────────────────────────────────
 const systemBackupsRouter = router({
   list: adminProcedure
@@ -642,4 +658,5 @@ export const tier3Router = router({
   systemBackups: systemBackupsRouter,
   apiAccess: apiAccessRouter,
   adminPrefs: adminPrefsRouter,
+  announcements: announcementsRouter,
 });

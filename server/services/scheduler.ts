@@ -14,6 +14,7 @@ import {
   emailVerificationTokens,
   orders,
   passwordResetTokens,
+  users,
   userSessions,
 } from "../db/schema.js";
 import { logger } from "../observability/logger.js";
@@ -21,7 +22,7 @@ import { raiseAlert } from "../observability/audit.js";
 import { processEmailQueue } from "./email.js";
 
 import { invalidateIpCaches, purgeExpiredBlacklistEntries } from "../security/ipBlacklist.js";
-import { invalidateSettingsCache } from "./settings.js";
+import { getSettingNumber, invalidateSettingsCache } from "./settings.js";
 import { processPhaseJobs, deliverWebhooks } from "./sharepoint.js";
 
 interface Job {
@@ -78,6 +79,16 @@ async function purgeExpiredRecords(): Promise<void> {
 }
 
 /** Fail a queued message that has exhausted its attempts, and alert once. */
+/** Permanently remove records held in the administrator-configured trash window. */
+async function purgeTrash(): Promise<void> {
+  const retentionDays = Math.max(1, Math.min(3650, await getSettingNumber("trash.retention_days", 30)));
+  const cutoff = new Date(Date.now() - retentionDays * 86_400_000);
+  // Orders and accounts are first soft-deleted in the console; this scheduled task
+  // performs the irreversible primary-record purge only after the retention window.
+  await db.delete(orders).where(and(sql`${orders.deletedAt} IS NOT NULL`, lt(orders.deletedAt, cutoff)));
+  await db.delete(users).where(and(sql`${users.deletedAt} IS NOT NULL`, lt(users.deletedAt, cutoff)));
+}
+
 async function reapDeadEmails(): Promise<void> {
   const stuck = await db
     .select({ total: sql<number>`COUNT(*)` })
@@ -109,6 +120,12 @@ const JOBS: Job[] = [
     intervalMs: 15 * 60_000,
     initialDelayMs: 60_000,
     run: purgeExpiredRecords,
+  },
+  {
+    name: "trash_purge",
+    intervalMs: 24 * 60 * 60_000,
+    initialDelayMs: 180_000,
+    run: purgeTrash,
   },
   {
     name: "order_health",

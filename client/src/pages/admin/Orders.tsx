@@ -370,12 +370,16 @@ function InlineOrderCard({
 }
 
 export function AdminOrdersPage() {
+  const toast = useToast();
+  const utils = trpc.useUtils();
   const [params] = useSearchParams();
   const statusParam = params.get("status") ?? "";
   const [status, setStatus] = useState(statusParam);
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [createOpen, setCreateOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [bulkTrashOpen, setBulkTrashOpen] = useState(false);
 
   const orders = trpc.admin.orders.useQuery({
     status: (status || undefined) as never,
@@ -395,6 +399,11 @@ export function AdminOrdersPage() {
     );
   }, [orders.data, search]);
 
+  const bulkTrash = trpc.admin.bulkSoftDeleteOrders.useMutation({
+    async onSuccess(result) { setSelectedIds([]); setBulkTrashOpen(false); await utils.admin.orders.invalidate(); toast.success(`${result.count} order(s) moved to trash`); },
+    onError(error) { toast.error("Could not move orders to trash", errorMessage(error)); },
+  });
+
   const exportCsv = trpc.admin.exportOrdersCsv.useMutation({
     onSuccess(result) {
       const blob = new Blob([result.csv], { type: "text/csv" });
@@ -408,6 +417,7 @@ export function AdminOrdersPage() {
   });
 
   const columns: Column<AdminOrderRow>[] = [
+    { key: "select", header: <Checkbox label="Select all orders" checked={rows.length > 0 && rows.every((row) => selectedIds.includes(row.id))} onChange={(event) => setSelectedIds(event.target.checked ? rows.map((row) => row.id) : [])} />, cell: (order) => <Checkbox label={`Select ${order.orderNumber}`} checked={selectedIds.includes(order.id)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...new Set([...current, order.id])] : current.filter((id) => id !== order.id))} /> },
     {
       key: "order",
       header: "Order",
@@ -489,6 +499,7 @@ export function AdminOrdersPage() {
   return (
     <>
       <CreateOrderModal open={createOpen} onClose={() => setCreateOpen(false)} />
+      <ConfirmDialog open={bulkTrashOpen} onClose={() => setBulkTrashOpen(false)} onConfirm={() => bulkTrash.mutate({ orderIds: selectedIds, confirmation: "MOVE_TO_TRASH" })} title="Move selected orders to trash?" message={`This soft-deletes ${selectedIds.length} order(s). They can be restored until the configured retention period expires.`} confirmLabel="Move to trash" cancelLabel="Cancel" variant="danger" busy={bulkTrash.isPending} />
       <PageHeader
         title="Order queue"
         description="All orders across the platform, newest first."
@@ -511,6 +522,8 @@ export function AdminOrdersPage() {
           </div>
         }
       />
+
+      {selectedIds.length > 0 ? <Card className="mb-5 border-warning/40 bg-warning/5"><div className="flex items-center justify-between gap-3"><p className="text-sm font-medium text-ink">{selectedIds.length} order(s) selected</p><Button variant="danger" leadingIcon={<Trash2 className="size-4" />} onClick={() => setBulkTrashOpen(true)}>Move selected orders to trash</Button></div></Card> : null}
 
       <Card className="mb-5">
         <div className="flex flex-wrap items-end gap-4">
@@ -664,6 +677,18 @@ export function AdminOrderDetailPage() {
     onError(error) {
       toast.error("Could not save the note", errorMessage(error));
     },
+  });
+
+  const questionTemplates = trpc.admin.questionTemplates.useQuery({ phase: "phase_1" });
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [adminAnswerByQuestion, setAdminAnswerByQuestion] = useState<Record<number, string>>({});
+  const applyTemplate = trpc.admin.applyQuestionTemplate.useMutation({
+    async onSuccess() { setSelectedTemplateId(""); await refetchAll(); toast.success("Template question added to this order"); },
+    onError(error) { toast.error("Could not apply template", errorMessage(error)); },
+  });
+  const answerAsAdmin = trpc.admin.answerOrderQuestionAsAdmin.useMutation({
+    async onSuccess(_result, variables) { setAdminAnswerByQuestion((state) => ({ ...state, [variables.questionId]: "" })); await refetchAll(); toast.success("Staff answer saved"); },
+    onError(error) { toast.error("Could not save staff answer", errorMessage(error)); },
   });
 
   const addQuestion = trpc.admin.addOrderQuestion.useMutation({
@@ -1110,6 +1135,10 @@ export function AdminOrderDetailPage() {
                 title="Ask a clarification question"
                 description="The customer sees this in their portal and is notified by email."
               />
+              <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto]">
+                <Select label="Phase 1 template bank" value={selectedTemplateId} onChange={(event) => setSelectedTemplateId(event.target.value)} options={[{ value: "", label: "Choose a reusable question…" }, ...(questionTemplates.data ?? []).map((template) => ({ value: String(template.id), label: template.name }))]} />
+                <div className="flex items-end"><Button variant="outline" busy={applyTemplate.isPending} disabled={!selectedTemplateId} onClick={() => applyTemplate.mutate({ orderId, templateId: Number(selectedTemplateId) })}>Add template</Button></div>
+              </div>
               <Textarea
                 label="Question"
                 className="mt-4"
@@ -1162,6 +1191,10 @@ export function AdminOrderDetailPage() {
                       {entry.required ? (
                         <p className="mt-1.5 text-xs text-muted">Required before delivery</p>
                       ) : null}
+                      <div className="mt-3 rounded border border-line bg-surface-soft p-3">
+                        <Textarea label="Staff answer or amendment" rows={3} value={adminAnswerByQuestion[entry.id] ?? ""} onChange={(event) => setAdminAnswerByQuestion((state) => ({ ...state, [entry.id]: event.target.value }))} />
+                        <div className="mt-2 flex justify-end"><Button size="sm" variant="outline" busy={answerAsAdmin.isPending} disabled={!(adminAnswerByQuestion[entry.id] ?? "").trim()} onClick={() => answerAsAdmin.mutate({ questionId: entry.id, body: adminAnswerByQuestion[entry.id] ?? "" })}>Save staff answer</Button></div>
+                      </div>
                     </li>
                   ))}
                 </ul>

@@ -50,7 +50,6 @@ export function IntakePage() {
 
   // File upload state
   const fileInput = useRef<HTMLInputElement>(null);
-  const audioInput = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   
   // Audio recording state
@@ -119,11 +118,12 @@ export function IntakePage() {
       for (const file of Array.from(selected)) body.append("files", file);
       body.append("orderId", String(orderId));
       body.append("category", "intake_attachment");
+      if (isAudio) body.append("recordedPitch", "true");
 
       const response = await fetch("/api/files/upload", {
         method: "POST",
         credentials: "same-origin",
-        headers: { "x-csrf-token": csrfToken() ?? "" },
+        headers: { "x-csrf-token": csrfToken() ?? "", ...(isAudio ? { "x-rp-recorded-pitch": "true" } : {}) },
         body,
       });
       const payload = (await response.json()) as {
@@ -150,7 +150,6 @@ export function IntakePage() {
     } finally {
       setUploading(false);
       if (fileInput.current) fileInput.current.value = "";
-      if (audioInput.current) audioInput.current.value = "";
     }
   };
 
@@ -442,6 +441,34 @@ export function IntakePage() {
             </div>
           </Card>
         ))}
+
+        <Card id="intake-supporting-materials">
+          <CardHeader
+            title="Supporting documents & Business Pitch Idea"
+            description="Upload reference documents for this order and, if useful, record a short Business Pitch Idea directly in this browser. Audio files cannot be uploaded from your device."
+          />
+          <div className="mt-4 grid gap-5 lg:grid-cols-2">
+            <div>
+              <p className="text-sm font-medium text-ink">Supporting documents</p>
+              <p className="mt-1 text-xs text-muted">Up to {limits?.maxDocuments ?? 5} documents. Allowed types: {limits?.allowedDocumentTypes ?? ".pdf,.doc,.docx,.txt"}.</p>
+              {!readOnly && documents.length < (limits?.maxDocuments ?? 5) ? (
+                <label className="mt-3 inline-flex cursor-pointer items-center rounded-lg border border-line bg-surface px-3 py-2 text-sm font-medium text-ink hover:border-teal">
+                  <input ref={fileInput} className="sr-only" type="file" multiple accept={limits?.allowedDocumentTypes ?? ".pdf,.doc,.docx,.txt"} onChange={(event) => void handleUpload(event.target.files, false)} disabled={uploading} />
+                  {uploading ? "Uploading…" : "Upload documents"}
+                </label>
+              ) : null}
+              <ul className="mt-3 space-y-2 text-sm">{documents.map((file) => <li key={file.id} className="flex items-center justify-between gap-2 rounded border border-line px-3 py-2"><span className="truncate">{file.originalName}</span>{!readOnly && <Button size="sm" variant="ghost" onClick={() => deleteFileMut.mutate({ fileId: file.id })}>Remove</Button>}</li>)}</ul>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-ink">Business Pitch Idea</p>
+              <p className="mt-1 text-xs text-muted">Record directly from your microphone in WebM format. Up to {limits?.maxPitchRecordings ?? 1} recording{(limits?.maxPitchRecordings ?? 1) === 1 ? "" : "s"}, maximum {Math.ceil((limits?.maxPitchLengthSeconds ?? 300) / 60)} minutes each.</p>
+              {!readOnly && pitches.length < (limits?.maxPitchRecordings ?? 1) ? (
+                <div className="mt-3 flex items-center gap-2"><Button variant={recording ? "danger" : "primary"} onClick={() => recording ? stopRecording() : void startRecording()} disabled={uploading}>{recording ? `Stop recording (${recordingTime}s)` : "Record Business Pitch Idea"}</Button></div>
+              ) : null}
+              <ul className="mt-3 space-y-2 text-sm">{pitches.map((file) => <li key={file.id} className="flex items-center justify-between gap-2 rounded border border-line px-3 py-2"><span className="truncate">{file.originalName} <Badge tone="teal">WebM recording</Badge></span>{!readOnly && <Button size="sm" variant="ghost" onClick={() => deleteFileMut.mutate({ fileId: file.id })}>Remove</Button>}</li>)}</ul>
+            </div>
+          </div>
+        </Card>
 
         <Card id="intake-desiredOutcomes">
           <CardHeader

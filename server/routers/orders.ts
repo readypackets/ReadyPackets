@@ -10,14 +10,18 @@ import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import {
+  customerWorkspaceMembers,
+  customerWorkspaces,
   files,
   orderAnswers,
   orderAnswerHistory,
   orderNotes,
   orderQuestions,
+  orderShares,
   orders,
+  users,
 } from "../db/schema.js";
-import { decryptField, encryptField } from "../security/crypto.js";
+import { decryptField, encryptField, emailIndex } from "../security/crypto.js";
 import { recordActivity } from "../observability/audit.js";
 import {
   OrderStateError,
@@ -141,6 +145,68 @@ export const ordersRouter = router({
       } catch (error) {
         toTrpcError(error);
       }
+    }),
+
+  shares: protectedProcedure
+    .input(z.object({ orderId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      const owner = await db.select({ id: orders.id }).from(orders).where(and(eq(orders.id, input.orderId), eq(orders.userId, ctx.session.user.id), isNull(orders.deletedAt))).limit(1);
+      if (!owner[0] && ctx.session.user.role === "customer") throw new TRPCError({ code: "FORBIDDEN", message: "Only the order owner can manage sharing." });
+      const rows = await db.select({ id: orderShares.id, scope: orderShares.scope, createdAt: orderShares.createdAt, revokedAt: orderShares.revokedAt, userId: users.id, firstNameEnc: users.firstNameEnc, lastNameEnc: users.lastNameEnc, emailEnc: users.emailEnc, customerNumber: users.customerNumber }).from(orderShares).innerJoin(users, eq(users.id, orderShares.sharedWithUserId)).where(eq(orderShares.orderId, input.orderId));
+      return rows.map((row) => ({ id: row.id, scope: row.scope, createdAt: row.createdAt, revokedAt: row.revokedAt, userId: row.userId, name: [decryptField(row.firstNameEnc, `user:${row.userId}:first_name`), decryptField(row.lastNameEnc, `user:${row.userId}:last_name`)].filter(Boolean).join(" ") || "Customer", email: decryptField(row.emailEnc, `user:${row.userId}:email`) ?? "", customerNumber: row.customerNumber }));
+    }),
+
+  share: protectedProcedure
+    .input(z.object({ orderId: z.number().int().positive(), email: z.string().trim().email(), scope: z.enum(["view", "upload_documents", "view_deliverables", "record_business_pitch", "contributor", "manager"]) }))
+    .mutation(async ({ ctx, input }) => {
+      const owner = await db.select({ id: orders.id }).from(orders).where(and(eq(orders.id, input.orderId), eq(orders.userId, ctx.session.user.id), isNull(orders.deletedAt))).limit(1);
+      if (!owner[0]) throw new TRPCError({ code: "FORBIDDEN", message: "Only the order owner can share this order." });
+      const recipient = await db.select({ id: users.id, role: users.role, deletedAt: users.deletedAt }).from(users).where(eq(users.emailIndex, emailIndex(input.email))).limit(1);
+      if (!recipient[0] || recipient[0].deletedAt || recipient[0].role !== "customer") throw new TRPCError({ code: "NOT_FOUND", message: "An active customer account with that email was not found." });
+      if (recipient[0].id === ctx.session.user.id) throw new TRPCError({ code: "BAD_REQUEST", message: "You already own this order." });
+      await db.insert(orderShares).values({ orderId: input.orderId, sharedWithUserId: recipient[0].id, scope: input.scope, createdByUserId: ctx.session.user.id }).onDuplicateKeyUpdate({ set: { scope: input.scope, revokedAt: null } });
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "customer", action: "order.share", entityType: "order", entityId: input.orderId, summary: `Order shared with customer ${recipient[0].id} as ${input.scope}`, ipAddress: ctx.clientIp });
+      return { ok: true as const };
+    }),
+
+  workspaces: protectedProcedure.query(async ({ ctx }) => {
+    const rows = await db.select({ id: customerWorkspaces.id, name: customerWorkspaces.name, slug: customerWorkspaces.slug, ownerUserId: customerWorkspaces.ownerUserId, role: customerWorkspaceMembers.role }).from(customerWorkspaceMembers).innerJoin(customerWorkspaces, eq(customerWorkspaces.id, customerWorkspaceMembers.workspaceId)).where(and(eq(customerWorkspaceMembers.userId, ctx.session.user.id), isNull(customerWorkspaceMembers.revokedAt)));
+    return rows;
+  }),
+
+  createWorkspace: protectedProcedure.input(z.object({ name: z.string().trim().min(2).max(190) })).mutation(async ({ ctx, input }) => {
+    const slug = `${input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 72)}-${Math.random().toString(36).slice(2, 8)}`;
+    const [result] = await db.insert(customerWorkspaces).values({ name: input.name, slug, ownerUserId: ctx.session.user.id });
+    const workspaceId = insertedId(result);
+    await db.insert(customerWorkspaceMembers).values({ workspaceId, userId: ctx.session.user.id, role: "owner", invitedByUserId: ctx.session.user.id });
+    return { id: workspaceId, slug };
+  }),
+
+  addWorkspaceMember: protectedProcedure.input(z.object({ workspaceId: z.number().int().positive(), email: z.string().trim().email(), role: z.enum(["manager", "contributor", "viewer"]).default("contributor") })).mutation(async ({ ctx, input }) => {
+    const owner = await db.select({ id: customerWorkspaces.id }).from(customerWorkspaces).where(and(eq(customerWorkspaces.id, input.workspaceId), eq(customerWorkspaces.ownerUserId, ctx.session.user.id))).limit(1);
+    if (!owner[0]) throw new TRPCError({ code: "FORBIDDEN", message: "Only a Packet Collective owner can invite members." });
+    const recipient = await db.select({ id: users.id }).from(users).where(and(eq(users.emailIndex, emailIndex(input.email)), isNull(users.deletedAt))).limit(1);
+    if (!recipient[0]) throw new TRPCError({ code: "NOT_FOUND", message: "An active customer account with that email was not found." });
+    await db.insert(customerWorkspaceMembers).values({ workspaceId: input.workspaceId, userId: recipient[0].id, role: input.role, invitedByUserId: ctx.session.user.id }).onDuplicateKeyUpdate({ set: { role: input.role, revokedAt: null } });
+    return { ok: true as const };
+  }),
+
+  shareOrderWithWorkspace: protectedProcedure.input(z.object({ orderId: z.number().int().positive(), workspaceId: z.number().int().positive(), scope: z.enum(["view", "upload_documents", "view_deliverables", "record_business_pitch", "contributor", "manager"]).default("contributor") })).mutation(async ({ ctx, input }) => {
+    const owner = await db.select({ id: orders.id }).from(orders).where(and(eq(orders.id, input.orderId), eq(orders.userId, ctx.session.user.id))).limit(1);
+    const workspace = await db.select({ id: customerWorkspaces.id }).from(customerWorkspaces).where(and(eq(customerWorkspaces.id, input.workspaceId), eq(customerWorkspaces.ownerUserId, ctx.session.user.id))).limit(1);
+    if (!owner[0] || !workspace[0]) throw new TRPCError({ code: "FORBIDDEN", message: "Only the order owner and Packet Collective owner can share this order." });
+    const members = await db.select({ userId: customerWorkspaceMembers.userId }).from(customerWorkspaceMembers).where(and(eq(customerWorkspaceMembers.workspaceId, input.workspaceId), isNull(customerWorkspaceMembers.revokedAt)));
+    for (const member of members.filter((member) => member.userId !== ctx.session.user.id)) await db.insert(orderShares).values({ orderId: input.orderId, sharedWithUserId: member.userId, scope: input.scope, createdByUserId: ctx.session.user.id }).onDuplicateKeyUpdate({ set: { scope: input.scope, revokedAt: null } });
+    return { ok: true as const, memberCount: members.length };
+  }),
+
+  revokeShare: protectedProcedure
+    .input(z.object({ orderId: z.number().int().positive(), shareId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const owner = await db.select({ id: orders.id }).from(orders).where(and(eq(orders.id, input.orderId), eq(orders.userId, ctx.session.user.id))).limit(1);
+      if (!owner[0]) throw new TRPCError({ code: "FORBIDDEN", message: "Only the order owner can revoke sharing." });
+      await db.update(orderShares).set({ revokedAt: new Date() }).where(and(eq(orderShares.id, input.shareId), eq(orderShares.orderId, input.orderId)));
+      return { ok: true as const };
     }),
 
   create: protectedProcedure

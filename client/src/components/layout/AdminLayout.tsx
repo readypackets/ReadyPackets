@@ -9,7 +9,7 @@
  * scrolls. The nav list itself is `overflow-y-auto` so it scrolls independently
  * when there are more items than screen height allows.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import {
   Bot,
@@ -84,7 +84,9 @@ const NAV: { section: string; items: NavItem[] }[] = [
     section: "Email",
     items: [
       { href: "/admin/email-settings", label: "Email settings", icon: Mail, adminOnly: true },
-      { href: "/admin/email-automations", label: "Automations", icon: Zap, adminOnly: true },
+      { href: "/admin/email-automations", label: "Email automations", icon: Zap, adminOnly: true },
+      { href: "/admin/order-automations", label: "Order automations", icon: Zap, adminOnly: true },
+      { href: "/admin/question-templates", label: "Phase 1 templates", icon: ClipboardList, adminOnly: true },
     ],
   },
   {
@@ -109,12 +111,14 @@ const NAV: { section: string; items: NavItem[] }[] = [
     section: "Platform",
     items: [
       { href: "/admin/integrations", label: "Integrations", icon: Link2, adminOnly: true },
+      { href: "/admin/entra-setup", label: "Microsoft Entra ID", icon: ShieldCheck, adminOnly: true },
       { href: "/admin/api-keys", label: "API keys", icon: Key, adminOnly: true },
       { href: "/admin/inbound-webhooks", label: "Inbound webhooks", icon: Webhook, adminOnly: true },
       { href: "/admin/outbound", label: "Outbound connections", icon: Plug, adminOnly: true },
       { href: "/admin/ai-hub", label: "AI hub", icon: Bot, adminOnly: true },
       { href: "/admin/ab-tests", label: "A/B tests", icon: FlaskConical, adminOnly: true },
       { href: "/admin/wizard-slides", label: "Wizard slides", icon: ScrollText, adminOnly: true },
+      { href: "/admin/announcements", label: "Announcements", icon: Mail, adminOnly: true },
       { href: "/admin/support-permissions", label: "Support permissions", icon: ShieldCheck, adminOnly: true },
       { href: "/admin/backups", label: "Backups", icon: Server, adminOnly: true },
       { href: "/admin/security", label: "Security centre", icon: ShieldAlert, adminOnly: true },
@@ -122,6 +126,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { href: "/admin/activity-replay", label: "Activity replay", icon: History, adminOnly: true },
       { href: "/admin/login-config", label: "Login page", icon: LogIn, adminOnly: true },
       { href: "/admin/preferences", label: "My preferences", icon: Gauge, adminOnly: true },
+      { href: "/admin/navigation", label: "Navigation menu", icon: Menu, adminOnly: true },
       { href: "/admin/system", label: "System", icon: Server, adminOnly: true },
     ],
   },
@@ -132,6 +137,22 @@ export function AdminLayout({ children }: { children: ReactNode }) {
   const session = useSession();
   const toast = useToast();
   const [open, setOpen] = useState(false);
+  const navigationConfig = trpc.adminNavigation.get.useQuery(undefined, { enabled: session.isAdmin });
+  const navigationGroups = useMemo(() => {
+    const overrides = new Map((navigationConfig.data ?? []).filter((item) => !item.custom).map((item) => [item.href, item]));
+    const defaults = NAV.flatMap((group, groupIndex) => group.items.map((item, itemIndex) => {
+      const override = overrides.get(item.href);
+      return { ...item, label: override?.label ?? item.label, section: override?.section ?? group.section, hidden: override?.hidden ?? false, order: override?.order ?? groupIndex * 100 + itemIndex };
+    }));
+    const custom = (navigationConfig.data ?? []).filter((item) => item.custom).map((item) => ({ ...item, icon: Link2, adminOnly: true }));
+    const grouped = new Map<string, Array<(NavItem & { section: string; hidden: boolean; order: number })>>();
+    for (const item of [...defaults, ...custom].filter((item) => !item.hidden)) {
+      const entries = grouped.get(item.section) ?? [];
+      entries.push(item);
+      grouped.set(item.section, entries);
+    }
+    return [...grouped.entries()].map(([section, items]) => ({ section, items: items.sort((a, b) => a.order - b.order) }));
+  }, [navigationConfig.data]);
 
   const logout = trpc.auth.logout.useMutation({
     async onSuccess() {
@@ -152,7 +173,7 @@ export function AdminLayout({ children }: { children: ReactNode }) {
 
   const navigation = (
     <nav aria-label="Administration">
-      {NAV.map((group) => {
+      {navigationGroups.map((group) => {
         const items = group.items.filter((item) => !item.adminOnly || session.isAdmin);
         if (items.length === 0) return null;
         return (
@@ -166,18 +187,7 @@ export function AdminLayout({ children }: { children: ReactNode }) {
                 const active = isActive(item.href);
                 return (
                   <li key={item.href}>
-                    <Link
-                      href={item.href}
-                      aria-current={active ? "page" : undefined}
-                      className={`flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm no-underline transition-colors ${
-                        active
-                          ? "bg-teal/20 font-semibold text-white"
-                          : "text-white/70 hover:bg-white/5 hover:text-white"
-                      }`}
-                    >
-                      <Icon className="size-4 shrink-0" aria-hidden="true" />
-                      {item.label}
-                    </Link>
+                    {item.href.startsWith("http") ? <a href={item.href} target="_blank" rel="noreferrer" className="flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm text-white/70 no-underline transition-colors hover:bg-white/5 hover:text-white"><Icon className="size-4 shrink-0" aria-hidden="true" />{item.label}</a> : <Link href={item.href} aria-current={active ? "page" : undefined} className={`flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm no-underline transition-colors ${active ? "bg-teal/20 font-semibold text-white" : "text-white/70 hover:bg-white/5 hover:text-white"}`}><Icon className="size-4 shrink-0" aria-hidden="true" />{item.label}</Link>}
                   </li>
                 );
               })}

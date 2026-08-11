@@ -115,6 +115,16 @@ export function PolicyCenterPage() {
     },
   });
 
+  const updateRequirement = trpc.admin.updatePolicyRequirement.useMutation({
+    onSuccess(_result, variables) {
+      toast.success(variables.requiresAcceptance ? "Policy is now required" : "Policy is now optional", variables.requiresAcceptance ? "Customers must accept the current version before using the portal." : "Customers may review this policy without a portal access gate.");
+      void utils.admin.policies.invalidate();
+    },
+    onError(err) {
+      toast.error("Could not update policy requirement", errorMessage(err));
+    },
+  });
+
   const publishVersion = trpc.admin.publishPolicyVersion.useMutation({
     onSuccess() {
       toast.success("Version published", "Customers who have not accepted this version will be prompted.");
@@ -189,12 +199,19 @@ export function PolicyCenterPage() {
     {
       key: "requiresAcceptance",
       header: "Acceptance",
-      cell: (doc) =>
-        doc.requiresAcceptance ? (
-          <Badge tone="navy">Required</Badge>
-        ) : (
-          <Badge tone="neutral">Optional</Badge>
-        ),
+      cell: (doc) => (
+        <div className="flex items-center gap-2">
+          {doc.requiresAcceptance ? <Badge tone="navy">Required</Badge> : <Badge tone="neutral">Optional</Badge>}
+          <Button
+            size="sm"
+            variant="ghost"
+            busy={updateRequirement.isPending && updateRequirement.variables?.policyId === doc.id}
+            onClick={() => updateRequirement.mutate({ policyId: doc.id, requiresAcceptance: !doc.requiresAcceptance })}
+          >
+            Make {doc.requiresAcceptance ? "optional" : "required"}
+          </Button>
+        </div>
+      ),
     },
     {
       key: "versions",

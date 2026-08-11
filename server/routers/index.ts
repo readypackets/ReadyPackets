@@ -8,6 +8,7 @@ import { accountRouter } from "./account.js";
 import { adminRouter } from "./admin.js";
 import { adminFilesRouter } from "./adminFiles.js";
 import { adminSecurityRouter } from "./adminSecurity.js";
+import { adminNavigationRouter } from "./adminNavigation.js";
 import { authRouter } from "./auth.js";
 import { communityRouter } from "./community.js";
 import { filesRouter } from "./files.js";
@@ -35,6 +36,7 @@ export const appRouter = router({
   admin: adminRouter,
   adminFiles: adminFilesRouter,
   adminSecurity: adminSecurityRouter,
+  adminNavigation: adminNavigationRouter,
   stripe: stripeRouter,
   integrations: integrationsRouter,
   emailAutomations: emailAutomationsRouter,

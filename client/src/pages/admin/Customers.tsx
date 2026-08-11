@@ -28,12 +28,13 @@ import {
   ShieldCheck,
   UserPlus,
   Users,
+  Trash2,
 } from "lucide-react";
 import { trpc, errorMessage } from "@/lib/trpc";
 import { useSession } from "@/lib/session";
 import { formatDate, formatDateTime, formatMoney } from "@/lib/utils";
 import { Button, LinkButton } from "@/components/ui/Button";
-import { Input, Select, Textarea } from "@/components/ui/Field";
+import { Checkbox, Input, Select, Textarea } from "@/components/ui/Field";
 import {
   Alert,
   Badge,
@@ -310,6 +311,8 @@ export function AdminCustomersPage() {
   const [status, setStatus] = useState("");
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [createOpen, setCreateOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [bulkTrashOpen, setBulkTrashOpen] = useState(false);
 
   // Password reset modal state
   const [resetTarget, setResetTarget] = useState<{ id: number; name: string } | null>(null);
@@ -356,6 +359,11 @@ export function AdminCustomersPage() {
       toast.success("Account validated", "The account is active and its email is verified.");
     },
     onError(err) { toast.error("Could not validate account", errorMessage(err)); },
+  });
+
+  const bulkTrash = trpc.admin.bulkSoftDeleteCustomers.useMutation({
+    async onSuccess(result) { setSelectedIds([]); setBulkTrashOpen(false); await utils.admin.customers.invalidate(); toast.success(`${result.count} account(s) moved to trash`); },
+    onError(err) { toast.error("Could not move accounts to trash", errorMessage(err)); },
   });
 
   const [staffEmail, setStaffEmail] = useState("");
@@ -422,6 +430,11 @@ export function AdminCustomersPage() {
 
   const columns: Column<CustomerRow>[] = useMemo(
     () => [
+      {
+        key: "select",
+        header: <Checkbox label="Select all" checked={rows.length > 0 && rows.every((row) => selectedIds.includes(row.id))} onChange={(event) => setSelectedIds(event.target.checked ? rows.map((row) => row.id) : [])} />,
+        cell: (row) => <Checkbox label={`Select ${row.name}`} checked={selectedIds.includes(row.id)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...new Set([...current, row.id])] : current.filter((id) => id !== row.id))} />,
+      },
       {
         key: "person",
         header: "Customer",
@@ -529,7 +542,7 @@ export function AdminCustomersPage() {
         ),
       },
     ],
-    [session.isAdmin],
+    [session.isAdmin, selectedIds, rows],
   );
 
   return (
@@ -607,6 +620,8 @@ export function AdminCustomersPage() {
         </div>
       </Card>
 
+      {session.isAdmin && selectedIds.length > 0 ? <Card className="mb-5 border-warning/40 bg-warning/5"><div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-medium text-ink">{selectedIds.length} account(s) selected</p><Button variant="danger" leadingIcon={<Trash2 className="size-4" />} onClick={() => setBulkTrashOpen(true)}>Move selected accounts to trash</Button></div></Card> : null}
+
       {customers.isLoading ? (
         <div className="space-y-3">
           {Array.from({ length: 6 }, (_, index) => (
@@ -651,14 +666,11 @@ export function AdminCustomersPage() {
         </div>
       )}
 
+      <ConfirmDialog open={bulkTrashOpen} onClose={() => setBulkTrashOpen(false)} onConfirm={() => bulkTrash.mutate({ userIds: selectedIds, confirmation: "MOVE_TO_TRASH" })} title="Move selected accounts to trash?" message={`This signs out and soft-deletes ${selectedIds.length} selected account(s). They remain restorable until the configured retention period ends.`} confirmLabel="Move to trash" cancelLabel="Cancel" variant="danger" busy={bulkTrash.isPending} />
+
       {/* Password Reset Modal */}
       {resetTarget && (
-        <PasswordResetModal
-          userId={resetTarget.id}
-          userName={resetTarget.name}
-          open={true}
-          onClose={() => setResetTarget(null)}
-        />
+        <PasswordResetModal userId={resetTarget.id} userName={resetTarget.name} open={true} onClose={() => setResetTarget(null)} />
       )}
 
       {/* Confirm Dialog for status changes */}

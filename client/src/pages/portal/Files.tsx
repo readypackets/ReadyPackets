@@ -91,7 +91,7 @@ export function FilesPage() {
   return (
     <>
       <PageHeader
-        title="My deliverables"
+        title="My Business Packets"
         description="Every file published to your orders. Downloads are logged for your protection and ours."
         actions={
           selected.size > 0 ? (
@@ -142,7 +142,7 @@ export function FilesPage() {
       ) : (files.data ?? []).length === 0 ? (
         <EmptyState
           icon={FileText}
-          title="No deliverables yet"
+          title="No Business Packets yet"
           description="Files appear here as your packets are completed and published. You will receive an email when something new is available."
         />
       ) : rows.length === 0 ? (

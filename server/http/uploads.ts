@@ -9,7 +9,7 @@
 import type { Request, Response, Router } from "express";
 import express from "express";
 import multer from "multer";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { env } from "../config/env.js";
 import { db } from "../db/client.js";
 import { fileVersions, files, intakeAnswers, intakeSubmissions, orders } from "../db/schema.js";
@@ -105,6 +105,7 @@ export function createUploadRouter(): Router {
         typeof req.body.replaceFileId === "string" ? Number(req.body.replaceFileId) : null;
       const intakeQuestionKey =
         typeof req.body.intakeQuestionKey === "string" ? req.body.intakeQuestionKey : null;
+      const recordedPitch = req.body.recordedPitch === "true" && req.get("x-rp-recorded-pitch") === "true";
 
       // Customers may only attach to their own orders, and only in safe categories.
       if (orderId !== null) {
@@ -134,9 +135,24 @@ export function createUploadRouter(): Router {
 
       let allowedExtensions: string[] | undefined;
       if (category === "intake_attachment") {
-        const allowedTypesSetting = await getSetting("intake.allowed_document_types");
-        if (allowedTypesSetting) {
-          allowedExtensions = allowedTypesSetting.split(",").map(s => s.trim().toLowerCase());
+        if (recordedPitch) {
+          allowedExtensions = [".webm"];
+          if (!orderId || uploaded.length !== 1) {
+            res.status(400).json({ error: "A Business Pitch Idea must be recorded as one WebM file for a specific order." });
+            return;
+          }
+          const maxPitchRecordings = await getSettingNumber("intake.max_pitch_recordings", 1);
+          const existingPitchRows = await db
+            .select({ total: sql<number>`COUNT(*)` })
+            .from(files)
+            .where(and(eq(files.orderId, orderId), eq(files.category, "intake_attachment"), isNull(files.deletedAt), sql`${files.detectedMime} = 'audio/webm'`));
+          if (Number(existingPitchRows[0]?.total ?? 0) >= maxPitchRecordings) {
+            res.status(400).json({ error: `This intake already has the maximum of ${maxPitchRecordings} Business Pitch recording(s).` });
+            return;
+          }
+        } else {
+          const allowedTypesSetting = await getSetting("intake.allowed_document_types");
+          if (allowedTypesSetting) allowedExtensions = allowedTypesSetting.split(",").map(s => s.trim().toLowerCase());
         }
       }
 
@@ -154,6 +170,17 @@ export function createUploadRouter(): Router {
             metadata: { filename: file.originalname, size: file.size },
           });
           continue;
+        }
+
+        if (category === "intake_attachment" && !isStaff) {
+          if (recordedPitch && validation.mime !== "audio/webm") {
+            rejected.push({ name: file.originalname, reason: "Business Pitch recordings must be recorded in WebM format." });
+            continue;
+          }
+          if (!recordedPitch && validation.mime?.startsWith("audio/")) {
+            rejected.push({ name: file.originalname, reason: "Audio file uploads are not permitted. Use the in-browser Business Pitch recorder." });
+            continue;
+          }
         }
 
         try {

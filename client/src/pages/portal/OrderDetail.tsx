@@ -24,7 +24,7 @@ import { INTEGRITY_CHOICE_LABELS } from "@shared/domain";
 import { trpc, errorMessage } from "@/lib/trpc";
 import { formatBytes, formatDate, formatDateTime, formatMoney } from "@/lib/utils";
 import { Button, LinkButton } from "@/components/ui/Button";
-import { Textarea } from "@/components/ui/Field";
+import { Input, Select, Textarea } from "@/components/ui/Field";
 import {
   Alert,
   Badge,
@@ -59,12 +59,19 @@ export function OrderDetailPage() {
   );
   const mnda = trpc.intake.mndaStatus.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
   const intake = trpc.intake.get.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
+  const shares = trpc.orders.shares.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
+  const workspaces = trpc.orders.workspaces.useQuery();
 
   const [note, setNote] = useState("");
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [downloading, setDownloading] = useState<number | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareEmail, setShareEmail] = useState("");
+  const [shareScope, setShareScope] = useState("contributor");
+  const [workspaceId, setWorkspaceId] = useState("");
+  const [workspaceScope, setWorkspaceScope] = useState("contributor");
 
   const addNote = trpc.orders.addNote.useMutation({
     async onSuccess() {
@@ -100,6 +107,20 @@ export function OrderDetailPage() {
     onError(error) {
       toast.error("Could not submit your request", errorMessage(error));
     },
+  });
+
+  const shareOrder = trpc.orders.share.useMutation({
+    async onSuccess() { setShareEmail(""); setShareOpen(false); await shares.refetch(); toast.success("Order shared"); },
+    onError(error) { toast.error("Could not share order", errorMessage(error)); },
+  });
+  const revokeShare = trpc.orders.revokeShare.useMutation({
+    async onSuccess() { await shares.refetch(); toast.success("Access removed"); },
+    onError(error) { toast.error("Could not remove access", errorMessage(error)); },
+  });
+
+  const shareWithWorkspace = trpc.orders.shareOrderWithWorkspace.useMutation({
+    async onSuccess(result) { setWorkspaceId(""); await shares.refetch(); toast.success("Packet Collective shared", `${result.memberCount} workspace member(s) can now access this order.`); },
+    onError(error) { toast.error("Could not share with Packet Collective", errorMessage(error)); },
   });
 
   const requestDownload = trpc.files.requestDownload.useMutation({
@@ -165,7 +186,7 @@ export function OrderDetailPage() {
                 variant="outline"
                 leadingIcon={<Download className="size-4" aria-hidden="true" />}
               >
-                All deliverables
+                My Business Packets
               </LinkButton>
             ) : null}
             {canCancel ? (
@@ -176,6 +197,10 @@ export function OrderDetailPage() {
           </>
         }
       />
+
+      {shares.data ? <Card className="mb-6"><CardHeader title="Shared access" description="Invite another customer to contribute to this order, or limit them to a specific capability." actions={<Button size="sm" variant="outline" onClick={() => setShareOpen(true)}>Share order</Button>} /><div className="mt-4 space-y-2">{shares.data.filter((share) => !share.revokedAt).length === 0 ? <p className="text-sm text-muted">This order is private to you.</p> : shares.data.filter((share) => !share.revokedAt).map((share) => <div key={share.id} className="flex items-center justify-between gap-3 rounded border border-line p-3"><div><p className="text-sm font-medium text-ink">{share.name}</p><p className="text-xs text-muted">{share.email} · {share.scope.replace(/_/g, " ")}</p></div><Button size="sm" variant="ghost" busy={revokeShare.isPending} onClick={() => revokeShare.mutate({ orderId, shareId: share.id })}>Remove</Button></div>)}</div></Card> : null}
+
+      {shares.data && (workspaces.data ?? []).some((workspace) => workspace.role === "owner") ? <Card className="mb-6"><CardHeader title="Share with a Packet Collective" description="Grant the active members of one of your organization workspaces the same order permission." /><div className="mt-4 grid gap-3 md:grid-cols-3"><Select label="Workspace" value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)} options={[{ value: "", label: "Select Packet Collective" }, ...(workspaces.data ?? []).filter((workspace) => workspace.role === "owner").map((workspace) => ({ value: String(workspace.id), label: workspace.name }))]} /><Select label="Permission" value={workspaceScope} onChange={(event) => setWorkspaceScope(event.target.value)} options={[{ value: "view", label: "View only" }, { value: "upload_documents", label: "Upload documents" }, { value: "view_deliverables", label: "View final deliverables" }, { value: "record_business_pitch", label: "Record a Business Pitch Idea" }, { value: "contributor", label: "Contributor" }, { value: "manager", label: "Manager" }]} /><div className="flex items-end"><Button fullWidth busy={shareWithWorkspace.isPending} disabled={!workspaceId} onClick={() => shareWithWorkspace.mutate({ orderId, workspaceId: Number(workspaceId), scope: workspaceScope as never })}>Share with workspace</Button></div></div></Card> : null}
 
       <div className="mb-6 flex flex-wrap items-center gap-2">
         <Badge tone={STATUS_TONES[order.status] ?? "neutral"}>
@@ -362,7 +387,7 @@ export function OrderDetailPage() {
           {/* Deliverables */}
           <Card>
             <CardHeader
-              title="Deliverables"
+              title="My Business Packets"
               description="Files published to this order. Every download is recorded in the audit trail."
             />
             {deliverables.length === 0 ? (
@@ -550,8 +575,9 @@ export function OrderDetailPage() {
         </div>
       </div>
 
-      <Modal
-        open={cancelOpen}
+            <Modal open={shareOpen} onClose={() => setShareOpen(false)} title="Share this order"><div className="space-y-4"><p className="text-sm text-body">Choose a customer account and the work they may perform. A contributor can view the order, upload supporting documents, and record a Business Pitch Idea.</p><Input label="Customer email" value={shareEmail} onChange={(event) => setShareEmail(event.target.value)} placeholder="collaborator@example.com" /><Select label="Permission" value={shareScope} onChange={(event) => setShareScope(event.target.value)} options={[{ value: "view", label: "View only" }, { value: "upload_documents", label: "Upload documents" }, { value: "view_deliverables", label: "View final deliverables" }, { value: "record_business_pitch", label: "Record a Business Pitch Idea" }, { value: "contributor", label: "Contributor — all Phase 1 contributions" }, { value: "manager", label: "Manager — full collaboration" }]} /><div className="flex justify-end gap-3"><Button variant="outline" onClick={() => setShareOpen(false)}>Cancel</Button><Button busy={shareOrder.isPending} disabled={!shareEmail.trim()} onClick={() => shareOrder.mutate({ orderId, email: shareEmail, scope: shareScope as never })}>Share order</Button></div></div></Modal>
+
+      <Modal open={cancelOpen}
         onClose={() => setCancelOpen(false)}
         title="Request cancellation"
         description="Cancellation is subject to the refund policy. Tell us why so we can process your request correctly."
