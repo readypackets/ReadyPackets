@@ -96,6 +96,19 @@ export function AdminBackups() {
         <p className="mt-3 text-sm text-muted">The backup will be saved to <code className="text-xs bg-ink/5 px-1 rounded">/var/backups/readypackets/</code> and a record will appear in this list automatically on the next page load.</p>
       </div>
 
+      <Card className="mt-6">
+        <CardHeader title="Encrypted configuration migration" description="Export settings, integration configuration, and required secrets for a controlled replacement-server migration." />
+        <div className="mt-4 space-y-4 text-sm text-body">
+          <p>This encrypted bundle includes the protected environment file, application encryption keys, and database-backed configuration. It deliberately excludes customer data, orders, uploaded files, sessions, and logs.</p>
+          <pre className="overflow-x-auto rounded bg-ink/5 px-4 py-3 text-xs font-mono text-ink">sudo bash /opt/readypackets/deploy/config-migration.sh export --output /var/backups/readypackets/readypackets-config.rpconfig</pre>
+          <div className="flex flex-wrap gap-3">
+            <Button size="sm" variant="outline" onClick={() => { void navigator.clipboard.writeText("sudo bash /opt/readypackets/deploy/config-migration.sh export --output /var/backups/readypackets/readypackets-config.rpconfig"); toast.success("Export command copied"); }}>Copy export command</Button>
+            <a className="inline-flex items-center text-sm font-medium text-teal-700 hover:underline" href="https://github.com/readypackets/ReadyPackets/blob/main/docs/CONFIG_MIGRATION.md" target="_blank" rel="noreferrer">Open migration guide</a>
+          </div>
+          <p className="text-xs text-muted">Use a strong passphrase, transfer the encrypted file and passphrase separately, and run the documented <code>inspect</code> then <code>import --replace-config --apply-env</code> workflow only after the new server has completed its initial installation.</p>
+        </div>
+      </Card>
+
       <ConfirmDialog
         open={deleteId !== null}
         onClose={() => setDeleteId(null)}

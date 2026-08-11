@@ -881,3 +881,21 @@ The initial MNDA migration had added version 1.0 while leaving the previous 2026
 ### Validation and deployment
 
 The client was rebuilt and deployed. The migration was re-applied idempotently, production confirmed 2026.03 as historical and 1.0 as current, the service restarted successfully, and the readiness endpoint returned `{"status":"ready"}`.
+
+## 2026-08-11 — Encrypted Configuration Migration Export and Import
+
+### User request
+
+Add a method to export all ReadyPackets settings, configuration, and secrets to an encrypted file and import it into a new installation.
+
+### Implementation
+
+Added `deploy/config-migration.sh`, a root-only encrypted configuration migration tool with `export`, `inspect`, and `import` commands. It packages `/etc/readypackets/portal.env` together with database-backed platform configuration including site settings, feature flags, email templates and automations, webhook endpoints, phase configurations, SAML settings, outbound connections, subscription and product configuration, content blocks, and policy configuration.
+
+The tool intentionally excludes customer records, orders, uploaded files, sessions, logs, and operational history. It encrypts the bundle using AES-256-CBC with PBKDF2-HMAC-SHA512 key derivation (600,000 iterations), applies an independent HMAC-SHA256 integrity tag, and validates internal SHA-256 checksums before any import. Imports require both `--replace-config` and `--apply-env`, an explicit confirmation phrase, and first save the destination environment as a timestamped pre-import file.
+
+Added `docs/CONFIG_MIGRATION.md` with export, inspect, dry-run import, live import, scope, and post-import safety guidance. Added an **Encrypted configuration migration** card to Admin → Backups, including a copyable export command and a link to the guide.
+
+### Validation and deployment
+
+A real production export was created and integrity-inspected with a temporary root-only passphrase. A second production export was verified through the complete `import --dry-run` path. Both temporary bundles and passphrase files were removed after validation. The script was installed at `/opt/readypackets/deploy/config-migration.sh` with mode 750. The portal restarted successfully and returned `{"status":"ready"}`.
