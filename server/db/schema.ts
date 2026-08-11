@@ -67,6 +67,10 @@ export const users = mysqlTable(
     lockedUntil: timestamp("locked_until"),
     passwordChangedAt: timestamp("password_changed_at"),
     notesEnc: text("notes_enc"),
+    /** Storage key for the user's avatar image (served via /api/files/avatar/:userId). */
+    avatarStorageKey: varchar("avatar_storage_key", { length: 128 }),
+    /** Unique referral code generated on first request; used for the referral programme. */
+    referralCode: varchar("referral_code", { length: 48 }),
     marketingOptIn: boolean("marketing_opt_in").notNull().default(false),
     timezone: varchar("timezone", { length: 64 }).notNull().default("America/New_York"),
     createdAt: createdAt(),
@@ -78,6 +82,7 @@ export const users = mysqlTable(
     roleIdx: index("users_role_idx").on(table.role),
     statusIdx: index("users_status_idx").on(table.status),
     deletedIdx: index("users_deleted_idx").on(table.deletedAt),
+    referralCodeUnique: uniqueIndex("users_referral_code_unique").on(table.referralCode),
   }),
 );
 
@@ -956,6 +961,8 @@ export const forumTopics = mysqlTable(
     locked: boolean("locked").notNull().default(false),
     replyCount: int("reply_count").notNull().default(0),
     viewCount: int("view_count").notNull().default(0),
+    /** Incremented each time a topic card is clicked on the public community teaser page. */
+    teaserClickCount: int("teaser_click_count").notNull().default(0),
     lastPostAt: timestamp("last_post_at"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -1819,4 +1826,41 @@ export const emailAutomationRateLimits = mysqlTable("email_automation_rate_limit
   userId: int("user_id").notNull(),
   sentCount: int("sent_count").notNull().default(0),
   windowStart: timestamp("window_start").notNull().defaultNow(),
+});
+
+// ── Tier 4: Forum teaser click tracking ──────────────────────────────────────
+
+export const forumTeaserClicks = mysqlTable(
+  "forum_teaser_clicks",
+  {
+    id: bigint("id", { mode: "number", unsigned: true }).autoincrement().primaryKey(),
+    topicId: int("topic_id").notNull(),
+    /** Anonymous session identifier (from cookie or generated). */
+    sessionId: varchar("session_id", { length: 128 }),
+    /** SHA-256 of the client IP, for deduplication without storing PII. */
+    ipHash: varchar("ip_hash", { length: 64 }),
+    referrer: varchar("referrer", { length: 512 }),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    topicIdx: index("forum_teaser_clicks_topic_idx").on(table.topicId),
+    createdIdx: index("forum_teaser_clicks_created_idx").on(table.createdAt),
+  }),
+);
+
+// ── Tier 4: Login page configurator ──────────────────────────────────────────
+
+export const loginPageConfig = mysqlTable("login_page_config", {
+  id: int("id").autoincrement().primaryKey(),
+  heroHeadline: varchar("hero_headline", { length: 255 }),
+  heroSubheadline: varchar("hero_subheadline", { length: 512 }),
+  showTestimonial: boolean("show_testimonial").notNull().default(false),
+  testimonialText: text("testimonial_text"),
+  testimonialAuthor: varchar("testimonial_author", { length: 128 }),
+  showFeatureList: boolean("show_feature_list").notNull().default(true),
+  featureList: json("feature_list"),
+  backgroundStyle: varchar("background_style", { length: 32 }).notNull().default("default"),
+  accentColor: varchar("accent_color", { length: 32 }),
+  updatedByUserId: int("updated_by_user_id"),
+  updatedAt: updatedAt(),
 });

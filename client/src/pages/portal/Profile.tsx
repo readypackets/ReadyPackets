@@ -7,8 +7,8 @@
  * immediate purge, because retention obligations attached to signed agreements
  * and delivered work have to be reviewed first.
  */
-import { useEffect, useState } from "react";
-import { Download, Save, Trash2, UserCog } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Camera, Copy, Download, Gift, Save, Trash2, UserCog } from "lucide-react";
 import { BRAND } from "@shared/brand";
 import { trpc, errorMessage } from "@/lib/trpc";
 import { useSession } from "@/lib/session";
@@ -18,6 +18,159 @@ import { Alert, Card, CardHeader, Skeleton } from "@/components/ui/Surface";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { PageHeader } from "@/components/layout/PortalLayout";
+
+function AvatarSection() {
+  const session = useSession();
+  const toast = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [avatarKey, setAvatarKey] = useState<string | null>(null);
+  const utils = trpc.useUtils();
+
+  const avatarQuery = trpc.tier4.avatar.getMyAvatar.useQuery();
+  const deleteAvatar = trpc.tier4.avatar.deleteMyAvatar.useMutation({
+    onSuccess: () => {
+      setAvatarKey(null);
+      utils.tier4.avatar.getMyAvatar.invalidate();
+      toast.success("Avatar removed");
+    },
+    onError: (e) => toast.error("Error", e.message),
+  });
+
+  useEffect(() => {
+    if (avatarQuery.data?.storageKey) setAvatarKey(avatarQuery.data.storageKey);
+  }, [avatarQuery.data]);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error("File too large", "Avatar must be 2 MB or smaller.");
+      return;
+    }
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("avatar", file);
+      // Get CSRF token from cookie
+      const csrfToken = document.cookie.split(";").find((c) => c.trim().startsWith("csrf_token="))?.split("=")[1] ?? "";
+      const res = await fetch("/api/avatar", {
+        method: "POST",
+        headers: { "x-csrf-token": csrfToken },
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Upload failed" }));
+        toast.error("Upload failed", (err as { error: string }).error);
+        return;
+      }
+      const data = await res.json() as { storageKey: string };
+      setAvatarKey(data.storageKey);
+      utils.tier4.avatar.getMyAvatar.invalidate();
+      toast.success("Avatar updated");
+    } catch {
+      toast.error("Upload failed", "Could not upload avatar.");
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const userId = session.user?.id;
+  const avatarUrl = avatarKey && userId ? `/api/avatar/${userId}` : null;
+
+  return (
+    <Card>
+      <CardHeader title="Profile photo" description="JPEG, PNG, WebP or GIF. Max 2 MB." />
+      <div className="mt-4 flex items-center gap-4">
+        <div className="relative size-16 shrink-0 overflow-hidden rounded-full bg-surface-sunken">
+          {avatarUrl ? (
+            <img src={avatarUrl} alt="Your avatar" className="size-full object-cover" />
+          ) : (
+            <span className="flex size-full items-center justify-center text-2xl font-semibold text-muted">
+              {session.user?.firstName?.[0]?.toUpperCase() ?? session.user?.email?.[0]?.toUpperCase() ?? "?"}
+            </span>
+          )}
+        </div>
+        <div className="flex flex-col gap-2">
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            className="sr-only"
+            onChange={handleFileChange}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            busy={uploading}
+            onClick={() => fileRef.current?.click()}
+            leadingIcon={<Camera className="size-3.5" aria-hidden="true" />}
+          >
+            {avatarUrl ? "Change photo" : "Upload photo"}
+          </Button>
+          {avatarUrl && (
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={() => deleteAvatar.mutate()}
+              busy={deleteAvatar.isPending}
+              leadingIcon={<Trash2 className="size-3.5" aria-hidden="true" />}
+            >
+              Remove
+            </Button>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function ReferralCodeSection() {
+  const toast = useToast();
+  const myCode = trpc.tier4.referral.myCode.useQuery();
+
+  const handleCopy = () => {
+    if (!myCode.data?.code) return;
+    navigator.clipboard.writeText(myCode.data.code).then(() => {
+      toast.success("Copied", "Referral code copied to clipboard.");
+    }).catch(() => {
+      toast.error("Copy failed", "Could not copy to clipboard.");
+    });
+  };
+
+  return (
+    <Card>
+      <CardHeader
+        title={<span className="flex items-center gap-2"><Gift className="size-4 text-gold" aria-hidden="true" />Referral code</span>}
+        description="Share this code to earn 5% commission on referred orders."
+      />
+      <div className="mt-4">
+        {myCode.isLoading ? (
+          <Skeleton className="h-10 w-full" />
+        ) : (
+          <div className="flex items-center gap-2">
+            <code className="flex-1 rounded-lg border border-line bg-surface-sunken px-3 py-2 font-mono text-sm font-semibold text-ink">
+              {myCode.data?.code ?? "—"}
+            </code>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleCopy}
+              leadingIcon={<Copy className="size-3.5" aria-hidden="true" />}
+            >
+              Copy
+            </Button>
+          </div>
+        )}
+        <p className="mt-2 text-xs text-muted">
+          When someone uses your code at checkout, you earn 5% of their order value as a referral
+          commission. Commissions are reviewed and paid manually.
+        </p>
+      </div>
+    </Card>
+  );
+}
 
 const CHANNEL_LABELS: Record<string, { title: string; detail: string }> = {
   order_status: {
@@ -311,6 +464,8 @@ export function ProfilePage() {
         </div>
 
         <div className="space-y-6">
+          <AvatarSection />
+          <ReferralCodeSection />
           <Card>
             <CardHeader
               title="Notifications"

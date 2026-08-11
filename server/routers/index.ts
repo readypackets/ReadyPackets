@@ -21,6 +21,7 @@ import { emailAutomationsRouter } from "./emailAutomations.js";
 import { siemExportRouter } from "./siemExport.js";
 import { crmRouter } from "./crm.js";
 import { tier3Router } from "./tier3.js";
+import { tier4Router } from "./tier4.js";
 
 export const appRouter = router({
   auth: authRouter,
@@ -40,6 +41,7 @@ export const appRouter = router({
   siemExport: siemExportRouter,
   crm: crmRouter,
   tier3: tier3Router,
+  tier4: tier4Router,
 });
 
 export type AppRouter = typeof appRouter;

@@ -37,6 +37,8 @@ export interface DecryptedUser {
   lastLoginAt: Date | null;
   createdAt: Date;
   passwordHash: string | null;
+  avatarStorageKey: string | null;
+  referralCode: string | null;
 }
 
 type UserRow = typeof users.$inferSelect;
@@ -80,6 +82,8 @@ export function decryptUser(row: UserRow): DecryptedUser {
     lastLoginAt: row.lastLoginAt,
     createdAt: row.createdAt,
     passwordHash: row.passwordHash,
+    avatarStorageKey: row.avatarStorageKey ?? null,
+    referralCode: row.referralCode ?? null,
   };
 }
 

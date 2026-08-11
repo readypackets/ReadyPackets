@@ -83,6 +83,12 @@ import { AdminInboundWebhooks } from "@/pages/admin/InboundWebhooks";
 import { AdminSupportPermissions } from "@/pages/admin/SupportPermissions";
 import { AdminABTests } from "@/pages/admin/ABTests";
 import { AdminSubscriptions } from "@/pages/admin/Subscriptions";
+import { AdminNewsletter } from "@/pages/admin/Newsletter";
+import { AdminReferrals } from "@/pages/admin/Referrals";
+import { AdminLoginConfig } from "@/pages/admin/LoginConfig";
+import { AdminSIEMExport } from "@/pages/admin/SIEMExport";
+import { AdminActivityReplay } from "@/pages/admin/ActivityReplay";
+import { AdminPreferences } from "@/pages/admin/AdminPreferences";
 
 /** Full-page loader shown while the session is being resolved. */
 function BootScreen() {
@@ -278,6 +284,12 @@ function AdminRoutes() {
         <Route path="/admin/support-permissions" component={AdminSupportPermissions} />
         <Route path="/admin/ab-tests" component={AdminABTests} />
         <Route path="/admin/subscriptions" component={AdminSubscriptions} />
+        <Route path="/admin/newsletter" component={AdminNewsletter} />
+        <Route path="/admin/referrals" component={AdminReferrals} />
+        <Route path="/admin/login-config" component={AdminLoginConfig} />
+        <Route path="/admin/siem-export" component={AdminSIEMExport} />
+        <Route path="/admin/activity-replay" component={AdminActivityReplay} />
+        <Route path="/admin/preferences" component={AdminPreferences} />
         <Route component={NotFoundPage} />
       </Switch>
     </AdminLayout>

@@ -318,6 +318,13 @@ export function ReviewsPage() {
 
 export function CommunityTeaserPage() {
   const teaser = trpc.public.forumTeaser.useQuery({ limit: 8 });
+  const recordClick = trpc.tier4.forumClick.recordClick.useMutation();
+  const handleTopicClick = (topicId: number) => {
+    recordClick.mutate({
+      topicId,
+      referrer: typeof document !== "undefined" ? document.referrer?.slice(0, 512) || undefined : undefined,
+    });
+  };
 
   return (
     <>
@@ -348,7 +355,8 @@ export function CommunityTeaserPage() {
                       <Skeleton key={index} className="h-20 w-full rounded-lg" />
                     ))
                   : teaser.data.topics.map((topic) => (
-                      <Card key={topic.id} padded={false} className="p-4">
+                      <div key={topic.id} onClick={() => handleTopicClick(topic.id)} role="button" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && handleTopicClick(topic.id)}>
+                      <Card padded={false} className="p-4 cursor-pointer hover:shadow-md transition-shadow">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <h3 className="truncate text-sm font-semibold text-ink">
@@ -370,6 +378,7 @@ export function CommunityTeaserPage() {
                           </span>
                         </p>
                       </Card>
+                      </div>
                     ))}
               </div>
 

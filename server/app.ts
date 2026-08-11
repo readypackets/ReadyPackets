@@ -34,6 +34,7 @@ import { ipBlacklistMiddleware } from "./security/ipBlacklist.js";
 import { resolveClientIp } from "./security/ipAddress.js";
 import { createDownloadRouter } from "./http/downloads.js";
 import { createUploadRouter } from "./http/uploads.js";
+import { createAvatarRouter } from "./http/avatar.js";
 import { logger } from "./observability/logger.js";
 import { getMaintenanceState } from "./services/settings.js";
 import { handleStripeWebhook } from "./services/stripe.js";
@@ -231,6 +232,7 @@ export function createApp(): Express {
 
   app.use("/api/files", createDownloadRouter());
   app.use("/api/files", createUploadRouter());
+  app.use("/api/avatar", createAvatarRouter());
 
   app.use(
     "/api/trpc",
