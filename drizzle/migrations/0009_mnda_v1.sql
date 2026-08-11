@@ -64,3 +64,14 @@ WHERE d.slug = 'mnda'
     SELECT 1 FROM policy_versions existing
     WHERE existing.policy_id = d.id AND existing.version = '1.0'
   );
+
+-- Version 1.0 is the active MNDA; earlier versions remain available in version history.
+UPDATE policy_versions
+SET published = FALSE
+WHERE policy_id = (SELECT id FROM policy_documents WHERE slug = 'mnda')
+  AND version <> '1.0';
+
+UPDATE policy_versions
+SET published = TRUE
+WHERE policy_id = (SELECT id FROM policy_documents WHERE slug = 'mnda')
+  AND version = '1.0';

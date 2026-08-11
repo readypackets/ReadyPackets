@@ -865,3 +865,19 @@ The dedicated endpoint records remain configurable at **Admin → Integrations �
 ### Validation and deployment
 
 TypeScript typecheck completed with zero errors. The corrected server bundle was deployed, the service restarted successfully, and the readiness endpoint returned `{"status":"ready"}`.
+
+## 2026-08-11 — MNDA Compatibility Route and Policy Center Version Correction
+
+### User report
+
+The customer continued to receive a 404 at `/portal/orders/2/nda`, and the MNDA version 1.0 was not visible as the current policy in the Policy Center.
+
+### Corrections
+
+A backward-compatible route alias now maps `/portal/orders/:id/nda` to the same MNDA acceptance component as `/portal/orders/:id/mnda`. This supports old browser bundles, cached links, and previously issued portal URLs while all current source links use the canonical `/mnda` route.
+
+The initial MNDA migration had added version 1.0 while leaving the previous 2026.03 version marked published. The correction marks the earlier version as historical (`published = false`) and version 1.0 as the sole current version (`published = true`). Both remain available from the version history and existing acceptance records remain untouched.
+
+### Validation and deployment
+
+The client was rebuilt and deployed. The migration was re-applied idempotently, production confirmed 2026.03 as historical and 1.0 as current, the service restarted successfully, and the readiness endpoint returned `{"status":"ready"}`.

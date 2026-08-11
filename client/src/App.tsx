@@ -224,6 +224,8 @@ function PortalRoutes() {
         <Route path="/portal/orders/:id" component={OrderDetailPage} />
         <Route path="/portal/orders/:id/intake" component={IntakePage} />
         <Route path="/portal/orders/:id/mnda" component={MndaPage} />
+        {/* Backward-compatible alias for links issued before the route was renamed. */}
+        <Route path="/portal/orders/:id/nda" component={MndaPage} />
         <Route path="/portal/files" component={FilesPage} />
         <Route path="/portal/tickets" component={TicketsListPage} />
         <Route path="/portal/tickets/new" component={NewTicketPage} />
