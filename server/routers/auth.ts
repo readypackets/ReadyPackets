@@ -74,6 +74,7 @@ import {
 } from "../services/settings.js";
 import { isIpAllowlisted } from "../security/ipBlacklist.js";
 import { button, queueTemplatedEmail, wrapHtmlBody } from "../services/email.js";
+import { fireAutomations } from "../services/emailAutomations.js";
 import { publicProcedure, protectedProcedure, router, sessionProcedure } from "../trpc/trpc.js";
 
 /** The single message returned for every credential failure. */
@@ -290,6 +291,8 @@ export const authRouter = router({
         ipAddress: ctx.clientIp,
       });
 
+      // Fire user.registered automation (non-fatal).
+      void fireAutomations("user.registered", { userId: user.id });
       return { ok: true as const, requiresVerification: true };
     }),
 
@@ -638,16 +641,16 @@ export const authRouter = router({
         .set({ usedAt: new Date() })
         .where(eq(emailVerificationTokens.id, record.id));
 
-      void recordSecurityEvent({
+            void recordSecurityEvent({
         eventType: "email.verified",
         message: "Email address verified",
         userId: record.userId,
         ipAddress: ctx.clientIp,
       });
-
+      // Fire user.email_verified automation (non-fatal).
+      void fireAutomations("user.email_verified", { userId: record.userId });
       return { ok: true as const };
     }),
-
   resendVerification: sessionProcedure.mutation(async ({ ctx }) => {
     const session = ctx.session;
     if (!session) throw new TRPCError({ code: "UNAUTHORIZED" });

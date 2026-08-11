@@ -475,4 +475,39 @@ All changes committed and deployed to `myportal.readypackets.com`.
 
 ---
 
+## Session 5 — Tier 1 Feature Implementation (2026-08-10)
+
+### Prompt
+
+> Add the Tier 1 items high business value items
+
+The seven Tier 1 features identified in the gap analysis as having the most direct business impact.
+
+### Features Built
+
+**Microsoft Graph email transport.** Added `server/services/emailGraph.ts` implementing the Microsoft 365 / Exchange Online transport using client-credentials OAuth2 with in-memory token caching. The `deliver()` function in `email.ts` now tries Graph first and falls back to SMTP automatically. The admin health endpoint reports which transport is active.
+
+**Email automations engine.** Added `server/services/emailAutomations.ts` with a `fireAutomations(event, context)` function that queries the `email_automations` table and dispatches templated emails for matching rules. Added migration `003_email_automations.sql`. Wired `user.registered` and `user.email_verified` events into the auth router. Added a full tRPC router with list/create/update/delete procedures.
+
+**Email Settings admin page.** New page at `/admin/email-settings` with three tabs: SMTP configuration, Microsoft Graph configuration, and a test-send tab. Settings are saved to the `site_settings` table encrypted and override environment variables at runtime.
+
+**Email Automations admin page.** New page at `/admin/email-automations` for managing event-triggered email rules. Supports all platform events (registration, order lifecycle, payment, tickets, reviews). Shows run count per automation.
+
+**Stripe checkout page.** New customer-facing page at `/portal/checkout?order={id}` with order summary, coupon code entry, and a Stripe-hosted checkout redirect.
+
+**Portal onboarding wizard.** New page at `/portal/wizard` guiding new customers through email verification, profile completion, browsing the catalog, and placing their first order. Progress is tracked in real time and persisted to `users.onboarding_completed_at`.
+
+**Dark mode.** Added `client/src/lib/theme.tsx` with a `ThemeProvider` that persists the user's preference to `localStorage`, respects the system preference on first visit, and listens for system preference changes. Added a `ThemeToggle` button to the public header.
+
+### Defects Fixed During Implementation
+
+Several new pages used incorrect component APIs: `loading` instead of `busy` on `Button`, `toast({ type, message })` instead of `success(title)` / `error(title)` from `useToast`, `Field` which is not exported (use `FieldShell`), `onCancel` instead of `onClose` on `ConfirmDialog`, and `trpc.admin.updateSetting` which lives on `adminSecurity`. All fixed by a targeted Python script.
+
+The `validateCoupon` procedure is a query, not a mutation. The checkout page was rewritten to handle this correctly.
+
+### Test Results
+112 unit tests pass, type check clean, build succeeds.
+
+---
+
 *Session log updated as required by project instructions.*

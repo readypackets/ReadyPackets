@@ -12,6 +12,7 @@ import { LayoutDashboard, LogIn, Menu, X } from "lucide-react";
 import { BRAND, BRAND_ASSETS } from "@shared/brand";
 import { useSession } from "@/lib/session";
 import { Button, LinkButton } from "@/components/ui/Button";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { cn } from "@/lib/utils";
 
 const NAV_LINKS = [
@@ -95,6 +96,7 @@ export function PublicHeader() {
         </nav>
 
         <div className="hidden items-center gap-2 lg:flex">
+          <ThemeToggle />
           {authenticated ? (
             <LinkButton
               href={user?.role === "admin" || user?.role === "staff" ? "/admin" : "/portal"}

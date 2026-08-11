@@ -231,6 +231,10 @@ export const env = {
     siteId: optional("GRAPH_SHAREPOINT_SITE_ID"),
     driveId: optional("GRAPH_SHAREPOINT_DRIVE_ID"),
     rootFolderPath: str("GRAPH_ROOT_FOLDER_PATH", "ReadyPackets/Orders"),
+    /** Mailbox address used as sender when Graph API email transport is active. */
+    emailSender: optional("GRAPH_EMAIL_SENDER"),
+    /** When GRAPH_EMAIL_SENDER is set, Graph API is used for email delivery. */
+    emailEnabled: Boolean(optional("GRAPH_EMAIL_SENDER")),
   },
 } as const;
 

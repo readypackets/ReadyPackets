@@ -17,6 +17,7 @@ import { publicRouter } from "./public.js";
 import { ticketsRouter } from "./tickets.js";
 import { stripeRouter } from "./stripe.js";
 import { integrationsRouter } from "./integrations.js";
+import { emailAutomationsRouter } from "./emailAutomations.js";
 
 export const appRouter = router({
   auth: authRouter,
@@ -32,6 +33,7 @@ export const appRouter = router({
   adminSecurity: adminSecurityRouter,
   stripe: stripeRouter,
   integrations: integrationsRouter,
+  emailAutomations: emailAutomationsRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -16,6 +16,7 @@ import { logger } from "../observability/logger.js";
 import { raiseAlert } from "../observability/audit.js";
 import { getSetting } from "./settings.js";
 import { BRAND, BRAND_COLORS } from "../../shared/brand.js";
+import { isGraphEmailEnabled, sendViaGraph } from "./emailGraph.js";
 
 let transporter: Transporter | null = null;
 
@@ -159,11 +160,22 @@ async function deliver(
   html: string,
   text: string | null,
 ): Promise<void> {
+  const fromName = (await getSetting("email.from_name")) ?? BRAND.companyShortName;
+
+  // Try Microsoft Graph first if configured; fall back to SMTP.
+  if (isGraphEmailEnabled()) {
+    const sent = await sendViaGraph({ to, subject, html, text, fromName });
+    if (sent) {
+      logger.debug("Email delivered via Microsoft Graph", { subject });
+      return;
+    }
+    logger.warn("Graph email delivery failed; falling back to SMTP", { subject });
+  }
+
   const smtp = getTransporter();
   if (!smtp) {
-    throw new Error("SMTP is not configured");
+    throw new Error("No email transport configured (set SMTP_HOST or GRAPH_EMAIL_SENDER)");
   }
-  const fromName = (await getSetting("email.from_name")) ?? BRAND.companyShortName;
   const fromAddress = env.smtp.enabled ? env.smtp.from : BRAND.emails.general;
   await smtp.sendMail({
     from: `"${fromName}" <${fromAddress}>`,
@@ -175,9 +187,14 @@ async function deliver(
   });
 }
 
+/** True when at least one email transport is configured. */
+export function isEmailEnabled(): boolean {
+  return env.smtp.enabled || isGraphEmailEnabled();
+}
+
 /** Drain a batch of queued messages. Invoked by the scheduler. */
 export async function processEmailQueue(batchSize = 20): Promise<{ sent: number; failed: number }> {
-  if (!env.smtp.enabled) return { sent: 0, failed: 0 };
+  if (!isEmailEnabled()) return { sent: 0, failed: 0 };
 
   const pending = await db
     .select()

@@ -687,6 +687,8 @@ export const adminSecurityRouter = router({
     return {
       database: databaseOk,
       smtpConfigured: env.smtp.enabled,
+      graphEmailConfigured: env.graph.emailEnabled,
+      emailTransport: env.graph.emailEnabled ? "graph" : env.smtp.enabled ? "smtp" : "none",
       stripeConfigured: env.stripe.enabled,
       storageDriver: env.storage.driver,
       emailQueue: queue,
@@ -706,10 +708,11 @@ export const adminSecurityRouter = router({
   sendTestEmail: adminProcedure
     .input(z.object({ to: z.string().trim().toLowerCase().email().max(254) }))
     .mutation(async ({ ctx, input }) => {
-      if (!env.smtp.enabled) {
+      const { isEmailEnabled } = await import("../services/email.js");
+      if (!isEmailEnabled()) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
-          message: "SMTP is not configured. Set the SMTP_* environment variables first.",
+          message: "No email transport configured. Set SMTP_HOST or GRAPH_EMAIL_SENDER.",
         });
       }
       try {

@@ -10,6 +10,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { trpc, createTrpcClient } from "@/lib/trpc";
 import { SessionProvider } from "@/lib/session";
+import { ThemeProvider } from "@/lib/theme";
 import { ToastProvider } from "@/components/ui/Toast";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { App } from "@/App";
@@ -46,15 +47,17 @@ if (!container) {
 createRoot(container).render(
   <StrictMode>
     <ErrorBoundary>
-      <trpc.Provider client={trpcClient} queryClient={queryClient}>
-        <QueryClientProvider client={queryClient}>
-          <ToastProvider>
-            <SessionProvider>
-              <App />
-            </SessionProvider>
-          </ToastProvider>
-        </QueryClientProvider>
-      </trpc.Provider>
+      <ThemeProvider>
+        <trpc.Provider client={trpcClient} queryClient={queryClient}>
+          <QueryClientProvider client={queryClient}>
+            <ToastProvider>
+              <SessionProvider>
+                <App />
+              </SessionProvider>
+            </ToastProvider>
+          </QueryClientProvider>
+        </trpc.Provider>
+      </ThemeProvider>
     </ErrorBoundary>
   </StrictMode>,
 );

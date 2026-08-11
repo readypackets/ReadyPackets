@@ -16,6 +16,7 @@ import {
   LifeBuoy,
   Link2,
   LogOut,
+  Mail,
   Menu,
   Package,
   ScrollText,
@@ -24,6 +25,7 @@ import {
   Star,
   Users,
   X,
+  Zap,
 } from "lucide-react";
 import { BRAND, BRAND_ASSETS } from "@shared/brand";
 import { trpc, errorMessage } from "@/lib/trpc";
@@ -56,6 +58,13 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { href: "/admin/catalog", label: "Catalogue", icon: Package, adminOnly: true },
       { href: "/admin/moderation", label: "Moderation", icon: Star },
       { href: "/admin/content", label: "Site content", icon: ScrollText, adminOnly: true },
+    ],
+  },
+  {
+    section: "Email",
+    items: [
+      { href: "/admin/email-settings", label: "Email settings", icon: Mail, adminOnly: true },
+      { href: "/admin/email-automations", label: "Automations", icon: Zap, adminOnly: true },
     ],
   },
   {

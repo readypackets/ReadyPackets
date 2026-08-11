@@ -1426,3 +1426,34 @@ export const rateLimitPenalties = mysqlTable(
     ipIdx: index("rlp_ip_idx").on(table.ipAddress),
   }),
 );
+
+// ---------------------------------------------------------------------------
+// Email automations (event-triggered email sequences)
+// ---------------------------------------------------------------------------
+export const emailAutomations = mysqlTable(
+  "email_automations",
+  {
+    id: id(),
+    name: varchar("name", { length: 190 }).notNull(),
+    description: varchar("description", { length: 500 }),
+    /** The platform event that triggers this automation. */
+    triggerEvent: varchar("trigger_event", { length: 64 }).notNull(),
+    /** Optional filter: only trigger when this condition is met (JSON). */
+    triggerCondition: json("trigger_condition"),
+    /** Template key to send. */
+    templateKey: varchar("template_key", { length: 64 }).notNull(),
+    /** Delay in minutes before sending (0 = immediate). */
+    delayMinutes: int("delay_minutes").notNull().default(0),
+    /** Whether this automation is active. */
+    enabled: boolean("enabled").notNull().default(true),
+    /** Number of times this automation has fired. */
+    runCount: int("run_count").notNull().default(0),
+    lastRunAt: timestamp("last_run_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow().onUpdateNow(),
+  },
+  (table) => ({
+    triggerIdx: index("email_automations_trigger_idx").on(table.triggerEvent),
+    enabledIdx: index("email_automations_enabled_idx").on(table.enabled),
+  }),
+);

@@ -69,6 +69,10 @@ import { AdminSystemPage } from "@/pages/admin/System";
 import { AdminFilesPage } from "@/pages/admin/Files";
 import { AdminFinancePage } from "@/pages/admin/Finance";
 import { AdminIntegrationsPage } from "@/pages/admin/Integrations";
+import EmailSettings from "@/pages/admin/EmailSettings";
+import EmailAutomations from "@/pages/admin/EmailAutomations";
+import Checkout from "@/pages/portal/Checkout";
+import Wizard from "@/pages/portal/Wizard";
 
 /** Full-page loader shown while the session is being resolved. */
 function BootScreen() {
@@ -206,6 +210,8 @@ function PortalRoutes() {
         <Route path="/portal/profile" component={ProfilePage} />
         <Route path="/portal/security" component={SecurityPage} />
         <Route path="/portal/mfa-setup" component={MfaSetupPage} />
+        <Route path="/portal/checkout" component={Checkout} />
+        <Route path="/portal/wizard" component={Wizard} />
         <Route component={NotFoundPage} />
       </Switch>
     </PortalLayout>
@@ -250,6 +256,8 @@ function AdminRoutes() {
         <Route path="/admin/system" component={AdminSystemPage} />
         <Route path="/admin/finance" component={AdminFinancePage} />
         <Route path="/admin/integrations" component={AdminIntegrationsPage} />
+        <Route path="/admin/email-settings" component={EmailSettings} />
+        <Route path="/admin/email-automations" component={EmailAutomations} />
         <Route component={NotFoundPage} />
       </Switch>
     </AdminLayout>

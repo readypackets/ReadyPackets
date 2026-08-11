@@ -277,4 +277,13 @@ export const accountRouter = router({
             : "Your account has been deactivated and your deletion request has been logged.",
       };
     }),
+
+  /** Mark the onboarding wizard as completed for this user. */
+  completeOnboarding: protectedProcedure.mutation(async ({ ctx }) => {
+    await db
+      .update(users)
+      .set({ onboardingCompletedAt: new Date() })
+      .where(eq(users.id, ctx.session.user.id));
+    return { ok: true as const };
+  }),
 });
