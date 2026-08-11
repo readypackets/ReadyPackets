@@ -6,7 +6,6 @@
  */
 import { useState } from "react";
 import { trpc } from "../../lib/trpc";
-import { AdminLayout } from "../../components/layout/AdminLayout";
 import { Card } from "../../components/ui/Surface";
 import { Button } from "../../components/ui/Button";
 import { FieldShell as Field, Input, Select } from "../../components/ui/Field";
@@ -16,55 +15,135 @@ import { useToast } from "../../components/ui/Toast";
 import { formatCents } from "@shared/domain";
 
 // ---------------------------------------------------------------------------
-// Stripe config status
+// Stripe settings tab
 // ---------------------------------------------------------------------------
 
-function StripeStatus() {
-  const { data } = trpc.stripe.config.useQuery();
-  if (!data) return null;
+function StripeSettingsTab() {
+  const { data, refetch } = trpc.stripe.config.useQuery();
+  const save = trpc.stripe.saveStripeConfig.useMutation({ onSuccess: () => { refetch(); toast.success("Stripe settings saved."); } });
+  const toast = useToast();
+  const [form, setForm] = useState({ secretKey: "", publishableKey: "", webhookSecret: "" });
+  const [showSecret, setShowSecret] = useState(false);
 
   return (
-    <Card className="mb-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold text-brand-navy">Stripe Integration</h3>
-          <p className="text-sm text-gray-500 mt-1">
-            {data.enabled
-              ? "Connected — online payments are enabled."
-              : "Not configured — set STRIPE_SECRET_KEY to enable online payments."}
-          </p>
-        </div>
-        <span
-          className={`px-3 py-1 rounded-full text-sm font-medium ${
-            data.enabled
-              ? "bg-green-100 text-green-800"
-              : "bg-yellow-100 text-yellow-800"
-          }`}
-        >
-          {data.enabled ? "Active" : "Not configured"}
-        </span>
-      </div>
-      {data.enabled && (
-        <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
+    <div className="space-y-6">
+      {/* Status card */}
+      <Card>
+        <div className="flex items-center justify-between">
           <div>
-            <span className="text-gray-500">Publishable key</span>
-            <p className="font-mono text-xs mt-1 truncate">
-              {data.publishableKey ?? "—"}
+            <h3 className="font-semibold text-brand-navy">Stripe Integration</h3>
+            <p className="text-sm text-gray-500 mt-1">
+              {data?.enabled
+                ? "Connected — online payments are enabled."
+                : "Not configured — enter your Stripe keys below to enable online payments."}
             </p>
           </div>
-          <div>
-            <span className="text-gray-500">Webhook</span>
-            <p className="mt-1">
-              {data.webhookConfigured ? (
-                <span className="text-green-700">Configured</span>
-              ) : (
-                <span className="text-yellow-700">Not configured</span>
-              )}
+          <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+            data?.enabled ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"
+          }`}>
+            {data?.enabled ? "Active" : "Not configured"}
+          </span>
+        </div>
+        {data?.enabled && (
+          <div className="mt-4 grid grid-cols-3 gap-4 text-sm">
+            <div>
+              <span className="text-gray-500">Secret key</span>
+              <p className="mt-1 text-xs">
+                <span className={data.secretKeySource === "database" ? "text-green-700" : "text-blue-700"}>
+                  {data.secretKeySource === "database" ? "Stored in database" : data.secretKeySource === "environment" ? "From environment" : "Not set"}
+                </span>
+              </p>
+            </div>
+            <div>
+              <span className="text-gray-500">Publishable key</span>
+              <p className="font-mono text-xs mt-1 truncate">{data.publishableKey ?? "—"}</p>
+              <p className="text-xs mt-0.5">
+                <span className={data.publishableKeySource === "database" ? "text-green-700" : "text-blue-700"}>
+                  {data.publishableKeySource === "database" ? "Stored in database" : data.publishableKeySource === "environment" ? "From environment" : ""}
+                </span>
+              </p>
+            </div>
+            <div>
+              <span className="text-gray-500">Webhook secret</span>
+              <p className="mt-1">
+                {data.webhookConfigured ? (
+                  <span className="text-green-700 text-xs">Configured ({data.webhookSecretSource})</span>
+                ) : (
+                  <span className="text-yellow-700 text-xs">Not configured</span>
+                )}
+              </p>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {/* Configuration form */}
+      <Card>
+        <h3 className="font-semibold text-brand-navy mb-1">Configure Stripe Keys</h3>
+        <p className="text-sm text-gray-500 mb-4">
+          Keys saved here are stored encrypted in the database and take priority over environment variables.
+          Leave a field blank to keep the existing value. To remove a key, enter a single space.
+        </p>
+        <div className="space-y-4">
+          <Field label="Secret key (sk_live_... or sk_test_...)">
+            <div className="relative">
+              <Input
+                type={showSecret ? "text" : "password"}
+                value={form.secretKey}
+                onChange={e => setForm(f => ({ ...f, secretKey: e.target.value }))}
+                placeholder="Leave blank to keep existing"
+                className="pr-16"
+              />
+              <button
+                type="button"
+                onClick={() => setShowSecret(s => !s)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500 hover:text-gray-700"
+              >
+                {showSecret ? "Hide" : "Show"}
+              </button>
+            </div>
+          </Field>
+          <Field label="Publishable key (pk_live_... or pk_test_...)">
+            <Input
+              value={form.publishableKey}
+              onChange={e => setForm(f => ({ ...f, publishableKey: e.target.value }))}
+              placeholder="Leave blank to keep existing"
+            />
+          </Field>
+          <Field label="Webhook signing secret (whsec_...)">
+            <Input
+              type="password"
+              value={form.webhookSecret}
+              onChange={e => setForm(f => ({ ...f, webhookSecret: e.target.value }))}
+              placeholder="Leave blank to keep existing"
+            />
+          </Field>
+          <div className="pt-2">
+            <p className="text-xs text-gray-400 mb-3">
+              Webhook endpoint URL to register in your Stripe dashboard:{" "}
+              <code className="bg-gray-100 px-1 rounded">{window.location.origin}/api/stripe/webhook</code>
             </p>
+            <Button
+              onClick={() => {
+                const payload: Record<string, string> = {};
+                if (form.secretKey.trim()) payload.secretKey = form.secretKey.trim();
+                if (form.publishableKey.trim()) payload.publishableKey = form.publishableKey.trim();
+                if (form.webhookSecret.trim()) payload.webhookSecret = form.webhookSecret.trim();
+                if (Object.keys(payload).length === 0) {
+                  toast.error("No changes to save.");
+                  return;
+                }
+                save.mutate(payload);
+                setForm({ secretKey: "", publishableKey: "", webhookSecret: "" });
+              }}
+              busy={save.isPending}
+            >
+              Save Stripe configuration
+            </Button>
           </div>
         </div>
-      )}
-    </Card>
+      </Card>
+    </div>
   );
 }
 
@@ -379,28 +458,27 @@ function RefundsTab() {
 // ---------------------------------------------------------------------------
 
 export function AdminFinancePage() {
-  const [tab, setTab] = useState("payments");
+  const [tab, setTab] = useState("settings");
 
   return (
-    <AdminLayout>
-      <div className="max-w-6xl mx-auto px-4 py-8">
-        <h1 className="text-2xl font-bold text-brand-navy mb-6">Finance</h1>
-        <StripeStatus />
-        <Tabs
-          items={[
-            { id: "payments", label: "Payments" },
-            { id: "coupons", label: "Coupons" },
-            { id: "refunds", label: "Refunds" },
-          ]}
-          initialId={tab}
-          onChange={setTab}
-        />
-        <div className="mt-6">
-          {tab === "payments" && <PaymentsTab />}
-          {tab === "coupons" && <CouponsTab />}
-          {tab === "refunds" && <RefundsTab />}
-        </div>
+    <div className="max-w-6xl mx-auto px-4 py-8">
+      <h1 className="text-2xl font-bold text-brand-navy mb-6">Finance</h1>
+      <Tabs
+        items={[
+          { id: "settings", label: "Stripe Settings" },
+          { id: "payments", label: "Payments" },
+          { id: "coupons", label: "Coupons" },
+          { id: "refunds", label: "Refunds" },
+        ]}
+        initialId={tab}
+        onChange={setTab}
+      />
+      <div className="mt-6">
+        {tab === "settings" && <StripeSettingsTab />}
+        {tab === "payments" && <PaymentsTab />}
+        {tab === "coupons" && <CouponsTab />}
+        {tab === "refunds" && <RefundsTab />}
       </div>
-    </AdminLayout>
+    </div>
   );
 }

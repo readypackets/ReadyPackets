@@ -6,7 +6,6 @@
  */
 import { useState } from "react";
 import { trpc } from "../../lib/trpc";
-import { AdminLayout } from "../../components/layout/AdminLayout";
 import { Card } from "../../components/ui/Surface";
 import { Button } from "../../components/ui/Button";
 import { FieldShell as Field, Input, Select } from "../../components/ui/Field";
@@ -379,8 +378,7 @@ export function AdminIntegrationsPage() {
   const [tab, setTab] = useState("webhooks");
 
   return (
-    <AdminLayout>
-      <div className="max-w-6xl mx-auto px-4 py-8">
+          <div className="max-w-6xl mx-auto px-4 py-8">
         <h1 className="text-2xl font-bold text-brand-navy mb-6">Integrations</h1>
         <Tabs
           items={[
@@ -399,6 +397,5 @@ export function AdminIntegrationsPage() {
           {tab === "sharepoint" && <SharePointTab />}
         </div>
       </div>
-    </AdminLayout>
-  );
+      );
 }

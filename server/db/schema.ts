@@ -1404,3 +1404,25 @@ export const schemaMigrations = mysqlTable("schema_migrations", {
   checksum: varchar("checksum", { length: 64 }).notNull(),
   appliedAt: timestamp("applied_at").notNull().defaultNow(),
 });
+
+// ---------------------------------------------------------------------------
+// Rate limit penalties (persisted so they survive service restarts)
+// ---------------------------------------------------------------------------
+export const rateLimitPenalties = mysqlTable(
+  "rate_limit_penalties",
+  {
+    id: id(),
+    penaltyKey: varchar("penalty_key", { length: 128 }).notNull(), // "category:ip"
+    ipAddress: varchar("ip_address", { length: 45 }).notNull(),
+    category: varchar("category", { length: 32 }).notNull(),
+    level: int("level").notNull().default(1),
+    until: timestamp("until").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow().onUpdateNow(),
+  },
+  (table) => ({
+    keyUnique: uniqueIndex("rlp_key_unique").on(table.penaltyKey),
+    untilIdx: index("rlp_until_idx").on(table.until),
+    ipIdx: index("rlp_ip_idx").on(table.ipAddress),
+  }),
+);

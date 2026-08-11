@@ -27,12 +27,65 @@ import {
   payments,
   referrals,
   refunds,
+  siteSettings,
 } from "../db/schema.js";
 import { env } from "../config/env.js";
 import { logger } from "../observability/logger.js";
 import { recordActivity, recordSecurityEvent } from "../observability/audit.js";
 
 let _stripe: Stripe | null = null;
+let _stripeKeyFromDb: string | null | undefined = undefined; // undefined = not yet loaded
+
+/** Load Stripe keys from the database settings table (runtime override). */
+async function loadStripeKeysFromDb(): Promise<{
+  secretKey: string | null;
+  publishableKey: string | null;
+  webhookSecret: string | null;
+}> {
+  const rows = await db
+    .select({ key: siteSettings.settingKey, value: siteSettings.settingValue })
+    .from(siteSettings)
+    .where(
+      sql`${siteSettings.settingKey} IN ('stripe.secret_key','stripe.publishable_key','stripe.webhook_secret')`,
+    );
+  const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  return {
+    secretKey: map["stripe.secret_key"] ?? null,
+    publishableKey: map["stripe.publishable_key"] ?? null,
+    webhookSecret: map["stripe.webhook_secret"] ?? null,
+  };
+}
+
+/** Get effective Stripe secret key: DB setting takes priority over env var. */
+export async function getEffectiveStripeKey(): Promise<string | null> {
+  const dbKeys = await loadStripeKeysFromDb();
+  return dbKeys.secretKey || env.stripe.secretKey || null;
+}
+
+/** Get effective Stripe publishable key. */
+export async function getEffectivePublishableKey(): Promise<string | null> {
+  const dbKeys = await loadStripeKeysFromDb();
+  return dbKeys.publishableKey || env.stripe.publishableKey || null;
+}
+
+/** Get effective Stripe webhook secret. */
+export async function getEffectiveWebhookSecret(): Promise<string | null> {
+  const dbKeys = await loadStripeKeysFromDb();
+  return dbKeys.webhookSecret || env.stripe.webhookSecret || null;
+}
+
+export async function getStripeAsync(): Promise<Stripe> {
+  const secretKey = await getEffectiveStripeKey();
+  if (!secretKey) {
+    throw new Error("Stripe is not configured. Set STRIPE_SECRET_KEY in the admin panel or environment.");
+  }
+  // Re-create the client if the key changed.
+  if (_stripeKeyFromDb !== secretKey) {
+    _stripe = new Stripe(secretKey, { apiVersion: "2026-07-29.dahlia", typescript: true });
+    _stripeKeyFromDb = secretKey;
+  }
+  return _stripe!;
+}
 
 export function getStripe(): Stripe {
   if (!env.stripe.enabled || !env.stripe.secretKey) {

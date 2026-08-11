@@ -9,6 +9,9 @@
  */
 import { cpus, loadavg } from "node:os";
 import type { NextFunction, Request, Response } from "express";
+import { gt, lt } from "drizzle-orm";
+import { db } from "../db/client.js";
+import { rateLimitPenalties } from "../db/schema.js";
 import { recordSecurityEvent } from "../observability/audit.js";
 import { getRateLimitSettings, getSettingBool, getSettingNumber } from "../services/settings.js";
 import { blacklistIp } from "./ipBlacklist.js";
@@ -27,10 +30,44 @@ interface Penalty {
 
 const MAX_TRACKED_KEYS = 50_000;
 const counters = new Map<string, Counter>();
+// In-memory penalty cache: loaded from DB on first use, kept in sync on writes.
 const penalties = new Map<string, Penalty>();
+let penaltiesLoadedFromDb = false;
+
+/** Load active penalties from the database into memory on startup. */
+async function loadPenaltiesFromDb(): Promise<void> {
+  if (penaltiesLoadedFromDb) return;
+  penaltiesLoadedFromDb = true;
+  try {
+    const now = new Date();
+    const rows = await db
+      .select()
+      .from(rateLimitPenalties)
+      .where(gt(rateLimitPenalties.until, now));
+    for (const row of rows) {
+      penalties.set(row.penaltyKey, { level: row.level, until: row.until.getTime() });
+    }
+    // Purge expired rows while we're here.
+    await db.delete(rateLimitPenalties).where(lt(rateLimitPenalties.until, now));
+  } catch {
+    // DB unavailable at startup — fall back to in-memory only.
+  }
+}
+
+/** Persist a penalty to the database. */
+async function persistPenalty(penaltyKey: string, ipAddress: string, category: string, level: number, until: Date): Promise<void> {
+  try {
+    await db
+      .insert(rateLimitPenalties)
+      .values({ penaltyKey, ipAddress, category, level, until })
+      .onDuplicateKeyUpdate({ set: { level, until } });
+  } catch {
+    // Non-fatal — the in-memory entry is still active.
+  }
+}
 
 /** Periodically discard stale entries so memory cannot grow without bound. */
-const sweeper = setInterval(() => {
+const sweeper = setInterval(async () => {
   const now = Date.now();
   for (const [key, counter] of counters) {
     if (now - counter.windowStart > 3_600_000) counters.delete(key);
@@ -38,6 +75,10 @@ const sweeper = setInterval(() => {
   for (const [key, penalty] of penalties) {
     if (penalty.until < now - 3_600_000) penalties.delete(key);
   }
+  // Purge expired DB rows every hour.
+  try {
+    await db.delete(rateLimitPenalties).where(lt(rateLimitPenalties.until, new Date(now - 3_600_000)));
+  } catch { /* non-fatal */ }
 }, 60_000);
 sweeper.unref();
 
@@ -139,6 +180,9 @@ export function rateLimitMiddleware() {
     // behind it offline. Repeated violations still escalate to a full blacklist
     // entry, which is enforced ahead of this middleware and is not category
     // scoped.
+    // Load persisted penalties from DB on the first request after startup.
+    if (!penaltiesLoadedFromDb) await loadPenaltiesFromDb();
+
     const penaltyKey = `${category}:${address}`;
     const activePenalty = penalties.get(penaltyKey);
     if (activePenalty && activePenalty.until > now) {
@@ -221,7 +265,9 @@ export function rateLimitMiddleware() {
           });
         }
       } else {
+        const penaltyUntil = new Date(now + duration);
         penalties.set(penaltyKey, { level, until: now + duration });
+        void persistPenalty(penaltyKey, address, category, level, penaltyUntil);
         void recordSecurityEvent({
           eventType: "ratelimit.penalty",
           outcome: "blocked",

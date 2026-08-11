@@ -421,3 +421,58 @@ All changes committed and deployed to `myportal.readypackets.com` via the idempo
 ---
 
 *Session log updated as required by project instructions. All changes pushed to the repository.*
+
+---
+
+## 13. Bug-fix and improvement session — August 11, 2026
+
+### 13.1 Requests received
+
+> Fix the duplicate sidebar issue. Add a place to configure Stripe payment settings in the admin panel. Persist rate limit state to the database so it survives service restarts. Adjust the rate limit thresholds to be less aggressive for auth and MFA flows. Back up the current fixed code, session logs, and context to GitHub now.
+
+### 13.2 Duplicate sidebar — root cause and fix
+
+The Finance and Integrations admin pages both wrapped themselves in `<AdminLayout>`, but `App.tsx` already wraps all admin routes in `<AdminLayout>`. This double-wrapping produced the duplicate sidebar visible in the screenshots. The fix was to remove the `<AdminLayout>` wrapper from both page components, since the shell is provided by the router. This is the same class of defect as the earlier double-HSTS header: two layers asserting the same thing independently, each correct in isolation, conflicting in combination.
+
+### 13.3 Stripe settings UI
+
+The Finance page previously showed a read-only status card that told the administrator to set `STRIPE_SECRET_KEY` in the environment file — requiring SSH access to the server for what should be a routine configuration task. A full Stripe Settings tab was added to the Finance page with:
+
+- A status card showing whether each key is configured and whether it came from the database or the environment.
+- A configuration form for the secret key (with show/hide toggle), publishable key, and webhook signing secret.
+- A `saveStripeConfig` tRPC procedure that stores keys in the `site_settings` table, encrypted, with the database value taking priority over the environment variable at runtime.
+- The webhook endpoint URL displayed inline so it can be copied directly into the Stripe dashboard.
+
+The Stripe service was updated with `getEffectiveStripeKey`, `getEffectivePublishableKey`, and `getEffectiveWebhookSecret` helpers that check the database first and fall back to environment variables, and `getStripeAsync` which re-creates the Stripe client if the key changes without requiring a restart.
+
+### 13.4 Rate limit persistence and threshold adjustment
+
+**Threshold change.** The `auth_high_risk` category previously allowed 5 requests per 30 minutes. During the Cloudflare redirect loop, the browser fired dozens of requests per second and exhausted this budget almost instantly, locking the administrator out after every restart. The threshold was raised to 20 requests per 15 minutes — still protective against brute force (a real attacker needs hundreds of attempts) but survivable for a legitimate user who hits a redirect loop, retries MFA, or has a password manager that fires multiple autofill attempts.
+
+**Persistence.** A `rate_limit_penalties` table was added to the schema with a corresponding migration (`migrations/002_rate_limit_penalties.sql`). The rate limiter now:
+- Loads active penalties from the database on the first request after startup, so a restart does not clear penalties that were legitimately imposed.
+- Persists new penalties to the database on write, using `INSERT ... ON DUPLICATE KEY UPDATE` so the in-memory and database states stay in sync.
+- Purges expired rows from the database during the hourly sweep.
+- Falls back to in-memory-only if the database is unavailable at startup, so the limiter never blocks the application from starting.
+
+### 13.5 Cloudflare redirect loop — post-mortem
+
+The redirect loop that caused the rate limit exhaustion was traced to Cloudflare's SSL/TLS mode being set to "Flexible". In Flexible mode, Cloudflare connects to the origin over HTTP even when the browser is using HTTPS. Our nginx port 80 block redirects to HTTPS, Cloudflare receives the redirect and sends another HTTPS request, which again hits the origin over HTTP, creating an infinite loop. The fix was to change the Cloudflare SSL/TLS mode to "Full (strict)", which causes Cloudflare to connect to the origin over HTTPS using the real certificate. No server changes were required.
+
+A secondary issue was that a Hostinger redirect rule was appending the old Hostinger URL as a query string to every request. This was resolved by deleting the rule from the Cloudflare dashboard. The nginx HTTP redirect was also updated to use `$uri` instead of `$request_uri` so query strings are stripped on the HTTP-to-HTTPS redirect, which prevents this class of problem from causing a loop in the future.
+
+### 13.6 PWA disabled
+
+The PWA service worker was disabled after it was found to serve the offline fallback page to first-time visitors on machines that had never visited the site. The root cause was that the service worker was installed during the redirect loop phase when no real content could be cached, and the `navigateFallback` configuration caused it to serve `offline.html` for all navigation requests. The service worker was removed from the build, the install and update prompts were removed from the client, and nginx was updated to return 404 for any request to `/sw.js` so that browsers that previously installed the worker unregister it automatically.
+
+### 13.7 Verification
+
+- `tsc --noEmit`: clean (0 errors)
+- `vitest run`: 112/112 tests pass
+- `vite build`: clean
+
+All changes committed and deployed to `myportal.readypackets.com`.
+
+---
+
+*Session log updated as required by project instructions.*

@@ -21,7 +21,12 @@ import {
   initiateRefund,
   listPayments,
   validateCoupon,
+  getEffectiveStripeKey,
+  getEffectivePublishableKey,
+  getEffectiveWebhookSecret,
 } from "../services/stripe.js";
+import { setSetting } from "../services/settings.js";
+import { siteSettings } from "../db/schema.js";
 import { protectedProcedure, adminProcedure, staffProcedure, router } from "../trpc/trpc.js";
 import { getUserById } from "../db/users.js";
 import { TRPCError } from "@trpc/server";
@@ -314,13 +319,61 @@ export const stripeRouter = router({
     }),
 
   // -------------------------------------------------------------------------
-  // Admin: Stripe configuration status
+  // Admin: Stripe configuration status (DB keys take priority over env vars)
   // -------------------------------------------------------------------------
-  config: adminProcedure.query(() => {
+  config: adminProcedure.query(async () => {
+    const secretKey = await getEffectiveStripeKey();
+    const publishableKey = await getEffectivePublishableKey();
+    const webhookSecret = await getEffectiveWebhookSecret();
+    // Check if keys are stored in DB (vs env)
+    const dbRows = await db
+      .select({ key: siteSettings.settingKey })
+      .from(siteSettings)
+      .where(sql`${siteSettings.settingKey} IN ('stripe.secret_key','stripe.publishable_key','stripe.webhook_secret')`);
+    const dbKeys = new Set(dbRows.map((r) => r.key));
     return {
-      enabled: env.stripe.enabled,
-      publishableKey: env.stripe.publishableKey ?? null,
-      webhookConfigured: Boolean(env.stripe.webhookSecret),
+      enabled: Boolean(secretKey),
+      publishableKey: publishableKey ?? null,
+      webhookConfigured: Boolean(webhookSecret),
+      secretKeySet: Boolean(secretKey),
+      secretKeySource: dbKeys.has("stripe.secret_key") ? "database" : (env.stripe.secretKey ? "environment" : "none"),
+      publishableKeySource: dbKeys.has("stripe.publishable_key") ? "database" : (env.stripe.publishableKey ? "environment" : "none"),
+      webhookSecretSource: dbKeys.has("stripe.webhook_secret") ? "database" : (env.stripe.webhookSecret ? "environment" : "none"),
     };
   }),
+
+  // Admin: save Stripe keys to the database (so they survive without env vars)
+  saveStripeConfig: adminProcedure
+    .input(
+      z.object({
+        secretKey: z.string().trim().optional(),
+        publishableKey: z.string().trim().optional(),
+        webhookSecret: z.string().trim().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.session.user.id;
+      if (input.secretKey !== undefined) {
+        await setSetting(
+          "stripe.secret_key",
+          input.secretKey || null,
+          { category: "payments", isSecret: true, userId },
+        );
+      }
+      if (input.publishableKey !== undefined) {
+        await setSetting(
+          "stripe.publishable_key",
+          input.publishableKey || null,
+          { category: "payments", isSecret: false, userId },
+        );
+      }
+      if (input.webhookSecret !== undefined) {
+        await setSetting(
+          "stripe.webhook_secret",
+          input.webhookSecret || null,
+          { category: "payments", isSecret: true, userId },
+        );
+      }
+      return { ok: true };
+    }),
 });

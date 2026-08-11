@@ -39,8 +39,10 @@ export const DEFAULT_RATE_LIMITS: Record<RateLimitCategory, RateLimitSetting> = 
   auth_high_risk: {
     category: "auth_high_risk",
     label: RATE_LIMIT_CATEGORY_LABELS.auth_high_risk,
-    windowSeconds: 1800,
-    maxRequests: 5,
+    // 20 attempts per 15 minutes: still blocks brute force but survives
+    // redirect loops, MFA retries, and password manager autofill bursts.
+    windowSeconds: 900,
+    maxRequests: 20,
     enabled: true,
     penaltyEnabled: true,
   },
@@ -48,7 +50,7 @@ export const DEFAULT_RATE_LIMITS: Record<RateLimitCategory, RateLimitSetting> = 
     category: "user_login",
     label: RATE_LIMIT_CATEGORY_LABELS.user_login,
     windowSeconds: 900,
-    maxRequests: 10,
+    maxRequests: 20,
     enabled: true,
     penaltyEnabled: true,
   },
