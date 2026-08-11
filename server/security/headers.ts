@@ -37,7 +37,11 @@ const PERMISSIONS_POLICY = [
 
 /** Stripe requires script and frame access; everything else stays self-only. */
 function buildCsp(nonce: string, allowStripe: boolean): string {
-  const scriptSrc = ["'self'", `'nonce-${nonce}'`];
+  // 'strict-dynamic' propagates trust from the nonce to scripts loaded by
+  // trusted scripts (i.e. React's dynamically-imported chunks). Without it,
+  // only the initial script tag is trusted and React's event delegation breaks.
+  // 'self' is kept for browsers that do not support strict-dynamic.
+  const scriptSrc = ["'strict-dynamic'", `'nonce-${nonce}'`, "'self'"];
   const frameSrc = ["'none'"];
   const connectSrc = ["'self'"];
   if (allowStripe) {
