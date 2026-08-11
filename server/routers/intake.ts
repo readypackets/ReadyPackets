@@ -7,12 +7,13 @@
  * together with the address and agent, which is what makes the record evidentiary.
  */
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import {
   intakeAnswers,
   intakeSubmissions,
+  files,
   mndaAcceptances,
   policyAcceptances,
   policyDocuments,
@@ -20,6 +21,7 @@ import {
 } from "../db/schema.js";
 import { decryptField, encryptField } from "../security/crypto.js";
 import { recordActivity } from "../observability/audit.js";
+import { getSetting, getSettingNumber } from "../services/settings.js";
 import { OrderStateError, assertOrderAccess, transitionOrder } from "../services/orders.js";
 import { protectedProcedure, router } from "../trpc/trpc.js";
 import { INTAKE_OUTCOMES, INTEGRITY_CHOICES } from "../../shared/domain.js";
@@ -220,6 +222,12 @@ export const intakeRouter = router({
           desiredOutcomes: [] as string[],
           integrityChoice: null as string | null,
           answers: {} as Record<string, string>,
+          limits: {
+            maxDocuments: await getSettingNumber("intake.max_documents", 5),
+            allowedDocumentTypes: await getSetting("intake.allowed_document_types") ?? ".pdf,.doc,.docx,.txt",
+            maxPitchRecordings: await getSettingNumber("intake.max_pitch_recordings", 1),
+            maxPitchLengthSeconds: await getSettingNumber("intake.max_pitch_length_seconds", 300),
+          },
         };
       }
 
@@ -241,6 +249,12 @@ export const intakeRouter = router({
         desiredOutcomes: (submission.desiredOutcomes as string[] | null) ?? [],
         integrityChoice: submission.integrityChoice,
         answers,
+        limits: {
+          maxDocuments: await getSettingNumber("intake.max_documents", 5),
+          allowedDocumentTypes: await getSetting("intake.allowed_document_types") ?? ".pdf,.doc,.docx,.txt",
+          maxPitchRecordings: await getSettingNumber("intake.max_pitch_recordings", 1),
+          maxPitchLengthSeconds: await getSettingNumber("intake.max_pitch_length_seconds", 300),
+        },
       };
     }),
 
@@ -389,6 +403,25 @@ export const intakeRouter = router({
       }
       if (!submission.integrityChoice) {
         problems.push("Choose how you would like us to proceed under the Integrity Clause.");
+      }
+
+      // Enforce file limits on submission
+      const orderFiles = await db
+        .select({ category: files.category, detectedMime: files.detectedMime })
+        .from(files)
+        .where(and(eq(files.orderId, input.orderId), isNull(files.deletedAt)));
+      
+      const documents = orderFiles.filter(f => f.category === "intake_attachment" && !f.detectedMime.startsWith("audio/"));
+      const pitchRecordings = orderFiles.filter(f => f.category === "intake_attachment" && f.detectedMime.startsWith("audio/"));
+      
+      const maxDocs = await getSettingNumber("intake.max_documents", 5);
+      const maxPitches = await getSettingNumber("intake.max_pitch_recordings", 1);
+      
+      if (documents.length > maxDocs) {
+        problems.push(`You have attached ${documents.length} documents, but the limit is ${maxDocs}. Please remove some before submitting.`);
+      }
+      if (pitchRecordings.length > maxPitches) {
+        problems.push(`You have attached ${pitchRecordings.length} pitch recordings, but the limit is ${maxPitches}. Please remove some before submitting.`);
       }
 
       if (problems.length > 0) {

@@ -55,6 +55,11 @@ function CreateOrderModal({ open, onClose }: { open: boolean; onClose: () => voi
   const [userId, setUserId] = useState("");
   const [customerSearch, setCustomerSearch] = useState("");
   const [projectName, setProjectName] = useState("");
+  const [canonVersion, setCanonVersion] = useState("");
+  const [runMode, setRunMode] = useState("production");
+  const [releaseStatus, setReleaseStatus] = useState("");
+  const [orderScopeMode, setOrderScopeMode] = useState("");
+  const [bundleScopeManifest, setBundleScopeManifest] = useState("");
   const [selectedProducts, setSelectedProducts] = useState<number[]>([]);
 
   const customers = trpc.admin.customers.useQuery(
@@ -92,6 +97,11 @@ function CreateOrderModal({ open, onClose }: { open: boolean; onClose: () => voi
       userId: Number(userId),
       selections: selectedProducts.map((productId) => ({ productId, quantity: 1 })),
       projectName: projectName.trim() || undefined,
+      canonVersion: canonVersion.trim() || undefined,
+      runMode: runMode.trim() || undefined,
+      releaseStatus: releaseStatus.trim() || undefined,
+      orderScopeMode: orderScopeMode.trim() || undefined,
+      bundleScopeManifest: bundleScopeManifest.trim() || undefined,
     });
   }
 
@@ -129,6 +139,45 @@ function CreateOrderModal({ open, onClose }: { open: boolean; onClose: () => voi
           value={projectName}
           onChange={(e) => setProjectName(e.target.value)}
         />
+        <div className="border-t border-line pt-4 mt-2">
+          <p className="mb-3 text-sm font-semibold text-ink">Webhook payload fields</p>
+          <div className="grid grid-cols-2 gap-4">
+            <Input
+              label="Canon version"
+              placeholder="e.g. ReadyPackets_Production_v2.0"
+              value={canonVersion}
+              onChange={(e) => setCanonVersion(e.target.value)}
+            />
+            <Input
+              label="Run mode"
+              placeholder="e.g. production"
+              value={runMode}
+              onChange={(e) => setRunMode(e.target.value)}
+            />
+            <Input
+              label="Order scope mode"
+              placeholder="e.g. multi_packet_partial"
+              value={orderScopeMode}
+              onChange={(e) => setOrderScopeMode(e.target.value)}
+            />
+            <Input
+              label="Release status"
+              placeholder="Optional tracking label"
+              value={releaseStatus}
+              onChange={(e) => setReleaseStatus(e.target.value)}
+            />
+          </div>
+          <div className="mt-4 mb-4">
+            <Textarea
+              label="Bundle scope manifest (JSON string)"
+              rows={2}
+              placeholder='e.g. {"packet_1":"Standard","packet_2":"Basic"}'
+              value={bundleScopeManifest}
+              onChange={(e) => setBundleScopeManifest(e.target.value)}
+              help="Must be a valid JSON string (it will be escaped in the webhook payload)."
+            />
+          </div>
+        </div>
         <FieldShell label="Packets" required>
           <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-line p-2">
             {allProducts.length === 0 ? (
@@ -711,14 +760,17 @@ export function AdminOrderDetailPage() {
           { id: "overview", label: "Overview" },
           { id: "intake", label: "Intake" },
           { id: "notes", label: `Notes (${notes.length})` },
-          { id: "questions", label: `Questions (${questions.length})` },
+                    { id: "questions", label: `Questions (${questions.length})` },
           { id: "files", label: `Files (${attachments.length})` },
+          { id: "automation", label: "Automation" },
         ]}
         active={tab}
         onChange={setTab}
       />
-
       <div className="mt-6">
+        {tab === "automation" ? (
+          <OrderAutomationTab order={order} customer={customer} />
+        ) : null}
         {tab === "overview" ? (
           <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr] lg:items-start">
             <div className="space-y-6">
@@ -1201,5 +1253,153 @@ export function AdminOrderDetailPage() {
         busy={softDelete.isPending}
       />
     </>
+  );
+}
+
+function OrderAutomationTab({ order, customer }: { order: any; customer: any }) {
+  const toast = useToast();
+  const utils = trpc.useUtils();
+  const graphConfig = trpc.integrations.graphConfig.useQuery();
+
+  const p101Payload = {
+    customer_id: customer?.customerNumber ?? `RP-CUST-${String(order.userId).padStart(6, '0')}`,
+    order_id: order.orderNumber,
+    packet: "7", // Hardcoded for this example per PDF, normally derived from items
+    tier: "Mixed",
+    canon_version: order.canonVersion ?? "ReadyPackets_Production_v2.0",
+    run_mode: order.runMode ?? "production",
+    client_name: customer?.name ?? "",
+    client_email: customer?.email ?? "",
+    release_status: order.releaseStatus ?? "",
+    order_scope_mode: order.orderScopeMode ?? "multi_packet_partial",
+    bundle_scope_manifest: order.bundleScopeManifest ?? "{}",
+  };
+
+  const p201Payload = {
+    customer_id: p101Payload.customer_id,
+    order_id: p101Payload.order_id,
+    run_mode: p101Payload.run_mode,
+  };
+
+  const manualKickoff = trpc.integrations.manualPhaseKickoff.useMutation({
+    onSuccess(_result, variables) {
+      toast.success(
+        "Phase kickoff queued",
+        `${variables.phase === "phase_1_intake" ? "P101" : variables.phase === "phase_2_synthesis" ? "P201" : variables.phase} is now queued with the configured SharePoint, notification, and webhook actions.`,
+      );
+      void utils.integrations.phaseJobs.invalidate({ orderId: order.id });
+    },
+    onError(error) {
+      toast.error("Could not queue phase kickoff", errorMessage(error));
+    },
+  });
+
+  const handleKickoff = (phase: "phase_1_intake" | "phase_2_synthesis" | "in_production" | "delivered") => {
+    manualKickoff.mutate({ orderId: order.id, phase });
+  };
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr] lg:items-start">
+      <div className="space-y-6">
+        <Card>
+          <CardHeader
+            title="Phase I Start Webhook (P101)"
+            description="Payload generated for this specific order."
+          />
+          <div className="mt-4">
+            <pre className="overflow-x-auto rounded-lg bg-navy p-4 text-xs text-white/90">
+              {JSON.stringify(p101Payload, null, 2)}
+            </pre>
+          </div>
+          <div className="mt-4 flex items-center gap-3 border-t border-line pt-4">
+            <Button
+              variant="primary"
+              busy={manualKickoff.isPending}
+              onClick={() => handleKickoff("phase_1_intake")}
+            >
+              Start Phase I / queue P101
+            </Button>
+            <p className="text-xs text-muted">Uses configured endpoint secrets and records delivery results in the webhook delivery log.</p>
+          </div>
+        </Card>
+
+        <Card>
+          <CardHeader
+            title="Phase II Start Webhook (P201)"
+            description="Trigger only after Phase I final artifacts exist."
+          />
+          <div className="mt-4">
+            <pre className="overflow-x-auto rounded-lg bg-navy p-4 text-xs text-white/90">
+              {JSON.stringify(p201Payload, null, 2)}
+            </pre>
+          </div>
+          <div className="mt-4 flex items-center gap-3 border-t border-line pt-4">
+            <Button
+              variant="outline"
+              busy={manualKickoff.isPending}
+              onClick={() => handleKickoff("phase_2_synthesis")}
+            >
+              Start Phase II / queue P201
+            </Button>
+            <p className="text-xs text-muted">Use only after the Phase I final artifacts are present in SharePoint.</p>
+          </div>
+        </Card>
+      </div>
+
+      <div className="space-y-6">
+        <Alert tone="info" title="Webhook Rules">
+          <ul className="mt-2 list-disc pl-5 space-y-1 text-sm text-body">
+            <li><strong>P201 must match P101:</strong> customer_id, order_id, and run_mode must be identical.</li>
+            <li><strong>Bundle scope manifest:</strong> Must be passed as a JSON string inside the outer JSON, not as a nested object.</li>
+            <li><strong>Phase I Artifacts:</strong> Do not trigger P201 until Phase I final artifacts exist in the SharePoint folder.</li>
+          </ul>
+        </Alert>
+
+        <Card>
+          <CardHeader title="Manual phase actions" description="Queue configured actions for the later lifecycle phases." />
+          <div className="mt-4 grid gap-2">
+            <Button variant="outline" busy={manualKickoff.isPending} onClick={() => handleKickoff("in_production")}>Kick off Phase III</Button>
+            <Button variant="outline" busy={manualKickoff.isPending} onClick={() => handleKickoff("delivered")}>Kick off Phase IV</Button>
+          </div>
+        </Card>
+
+        <Card>
+          <CardHeader title="SharePoint Sync Configuration" />
+          <div className="mt-4 space-y-3 text-sm">
+            <div className="flex justify-between border-b border-line pb-2">
+              <span className="text-muted">Customer Folder</span>
+              <span className="font-mono text-ink">{p101Payload.customer_id}</span>
+            </div>
+            <div className="flex justify-between border-b border-line pb-2">
+              <span className="text-muted">Order Folder</span>
+              <span className="font-mono text-ink">{order.orderNumber}</span>
+            </div>
+            <div className="flex justify-between pb-2">
+              <span className="text-muted">Status</span>
+              <Badge tone="success">Sync enabled</Badge>
+            </div>
+            <div className="pt-2 grid gap-2">
+              {graphConfig.data?.siteUrl ? (
+                <a
+                  href={graphConfig.data.siteUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex w-full items-center justify-center rounded-lg border border-line px-3 py-2 text-sm font-semibold text-teal-dark no-underline hover:border-teal hover:text-teal"
+                >
+                  Open SharePoint site for this order
+                </a>
+              ) : null}
+              <LinkButton
+                href="/admin/integrations"
+                variant="outline"
+                className="w-full justify-center"
+              >
+                Edit SharePoint settings
+              </LinkButton>
+            </div>
+          </div>
+        </Card>
+      </div>
+    </div>
   );
 }

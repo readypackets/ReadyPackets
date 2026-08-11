@@ -4,7 +4,7 @@
  * Covers: webhook endpoints, webhook delivery log, phase kickoff configuration,
  * phase job monitoring, SharePoint/Graph configuration status, and SAML SSO.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { trpc } from "../../lib/trpc";
 import { Card } from "../../components/ui/Surface";
 import { Button } from "../../components/ui/Button";
@@ -319,51 +319,70 @@ function PhaseKickoffTab() {
 // ---------------------------------------------------------------------------
 
 function SharePointTab() {
-  const { data } = trpc.integrations.graphConfig.useQuery();
+  const { data, refetch } = trpc.integrations.graphConfig.useQuery();
   const samlConfig = trpc.adminSecurity.samlConfig.useQuery();
+  const toast = useToast();
+  const [form, setForm] = useState({
+    tenantId: "",
+    clientId: "",
+    clientSecret: "",
+    siteId: "",
+    driveId: "",
+    siteUrl: "",
+    rootFolderPath: "ReadyPackets/Orders",
+  });
+
+  useEffect(() => {
+    if (!data) return;
+    setForm((current) => ({
+      ...current,
+      tenantId: data.tenantId ?? "",
+      clientId: data.clientId ?? "",
+      siteId: data.siteId ?? "",
+      driveId: data.driveId ?? "",
+      siteUrl: data.siteUrl ?? "",
+      rootFolderPath: data.rootFolderPath ?? "ReadyPackets/Orders",
+    }));
+  }, [data]);
+
+  const save = trpc.integrations.saveGraphConfig.useMutation({
+    async onSuccess() {
+      await refetch();
+      setForm((current) => ({ ...current, clientSecret: "" }));
+      toast.success("SharePoint settings saved", "The encrypted configuration is active immediately for new sync jobs.");
+    },
+    onError(error) {
+      toast.error("Could not save SharePoint settings", error.message);
+    },
+  });
 
   return (
     <div className="space-y-6">
       <Card>
-        <h3 className="font-semibold text-brand-navy mb-3">Microsoft Graph / SharePoint</h3>
-        {data?.enabled ? (
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <span className="text-gray-500">Status</span>
-              <span className="text-green-700 font-medium">Connected</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Tenant ID</span>
-              <span className="font-mono">{data.tenantId ?? "—"}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Client ID</span>
-              <span className="font-mono">{data.clientId ?? "—"}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Site ID</span>
-              <span className="font-mono text-xs">{data.siteId ?? "—"}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Root folder</span>
-              <span className="font-mono text-xs">{data.rootFolderPath}</span>
-            </div>
-          </div>
-        ) : (
+        <div className="mb-5 flex items-center justify-between gap-4">
           <div>
-            <p className="text-sm text-gray-600 mb-3">
-              SharePoint integration is not configured. Set the following environment variables to enable automatic folder creation and placeholder file attachment on phase transitions.
-            </p>
-            <div className="bg-gray-50 rounded p-3 font-mono text-xs space-y-1">
-              <p>GRAPH_TENANT_ID=your-azure-tenant-id</p>
-              <p>GRAPH_CLIENT_ID=your-app-client-id</p>
-              <p>GRAPH_CLIENT_SECRET=your-app-client-secret</p>
-              <p>GRAPH_SHAREPOINT_SITE_ID=your-site-id</p>
-              <p>GRAPH_SHAREPOINT_DRIVE_ID=your-drive-id</p>
-              <p>GRAPH_ROOT_FOLDER_PATH=ReadyPackets/Orders</p>
-            </div>
+            <h3 className="font-semibold text-brand-navy">Microsoft Graph / SharePoint</h3>
+            <p className="mt-1 text-sm text-gray-600">Store the Graph credentials and destination used for per-order file sync. The client secret is encrypted at rest and never shown again.</p>
           </div>
-        )}
+          <span className={data?.enabled ? "rounded-full bg-green-50 px-3 py-1 text-sm font-medium text-green-700" : "rounded-full bg-amber-50 px-3 py-1 text-sm font-medium text-amber-700"}>
+            {data?.enabled ? "Configured" : "Not configured"}
+          </span>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Input label="Tenant ID" value={form.tenantId} onChange={(e) => setForm({ ...form, tenantId: e.target.value })} placeholder="Azure AD tenant ID" />
+          <Input label="Client ID" value={form.clientId} onChange={(e) => setForm({ ...form, clientId: e.target.value })} placeholder="App registration client ID" />
+          <Input label={data?.hasSecret ? "Client secret (leave blank to keep existing)" : "Client secret"} type="password" value={form.clientSecret} onChange={(e) => setForm({ ...form, clientSecret: e.target.value })} placeholder={data?.hasSecret ? "Saved securely" : "Azure app client secret"} />
+          <Input label="SharePoint site ID" value={form.siteId} onChange={(e) => setForm({ ...form, siteId: e.target.value })} placeholder="Microsoft Graph site ID" />
+          <Input label="Drive ID" value={form.driveId} onChange={(e) => setForm({ ...form, driveId: e.target.value })} placeholder="Document library drive ID" />
+          <Input label="SharePoint site URL" type="url" value={form.siteUrl} onChange={(e) => setForm({ ...form, siteUrl: e.target.value })} placeholder="https://contoso.sharepoint.com/sites/ReadyPackets" />
+          <div className="md:col-span-2">
+            <Input label="Root folder path" value={form.rootFolderPath} onChange={(e) => setForm({ ...form, rootFolderPath: e.target.value })} placeholder="ReadyPackets/Orders" help="Orders are created beneath customers/{customerId}/orders/{orderId}." />
+          </div>
+        </div>
+        <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-gray-100 pt-4">
+          <Button busy={save.isPending} onClick={() => save.mutate(form)}>Save SharePoint settings</Button>
+          {data?.siteUrl ? <a className="text-sm font-medium text-teal-700 hover:underline" href={data.siteUrl} target="_blank" rel="noreferrer">Open SharePoint site</a> : null}
+        </div>
       </Card>
 
       <Card>

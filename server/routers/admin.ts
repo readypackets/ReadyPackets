@@ -21,6 +21,7 @@ import {
   intakeSubmissions,
   orderNotes,
   orderQuestions,
+  orderItems,
   orders,
   packetGroups,
   policyAcceptances,
@@ -201,6 +202,11 @@ export const adminRouter = router({
           .min(1),
         projectName: z.string().trim().max(200).optional(),
         integrityChoice: z.string().trim().max(60).optional(),
+        canonVersion: z.string().trim().max(128).optional(),
+        runMode: z.string().trim().max(32).optional(),
+        releaseStatus: z.string().trim().max(128).optional(),
+        orderScopeMode: z.string().trim().max(64).optional(),
+        bundleScopeManifest: z.string().max(10000).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -210,6 +216,11 @@ export const adminRouter = router({
           selections: input.selections,
           projectName: input.projectName ?? null,
           integrityChoice: input.integrityChoice ?? null,
+          canonVersion: input.canonVersion ?? null,
+          runMode: input.runMode ?? null,
+          releaseStatus: input.releaseStatus ?? null,
+          orderScopeMode: input.orderScopeMode ?? null,
+          bundleScopeManifest: input.bundleScopeManifest ?? null,
           actorUserId: ctx.session.user.id,
           actorRole: ctx.session.user.role,
           ipAddress: ctx.clientIp,
@@ -262,6 +273,12 @@ export const adminRouter = router({
         .where(and(eq(files.orderId, input.orderId), isNull(files.deletedAt)))
         .orderBy(desc(files.createdAt));
 
+      const lineItems = await db
+        .select({ productId: orderItems.productId, quantity: orderItems.quantity, productName: products.name })
+        .from(orderItems)
+        .leftJoin(products, eq(orderItems.productId, products.id))
+        .where(eq(orderItems.orderId, input.orderId));
+
       const submission = await db
         .select()
         .from(intakeSubmissions)
@@ -294,6 +311,7 @@ export const adminRouter = router({
               email: customer.email,
               company: customer.company,
               phone: customer.phone,
+              customerNumber: customer.customerNumber,
             }
           : null,
         notes: notes.map((note) => ({
@@ -309,6 +327,7 @@ export const adminRouter = router({
           status: question.status,
         })),
         attachments,
+        lineItems,
         intakeSubmission: submission[0]
           ? {
               status: submission[0].status,

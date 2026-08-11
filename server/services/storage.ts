@@ -124,7 +124,7 @@ function looksLikeText(buffer: Buffer): boolean {
 export async function validateUpload(
   originalName: string,
   buffer: Buffer,
-  options: { maxBytes?: number } = {},
+  options: { maxBytes?: number; allowedExtensions?: string[] } = {},
 ): Promise<ValidationResult> {
   const maxBytes = options.maxBytes ?? env.storage.maxUploadBytes;
   if (buffer.length === 0) return { ok: false, reason: "The file is empty." };
@@ -145,8 +145,16 @@ export async function validateUpload(
 
   const extension = extensionOf(originalName);
   if (!extension) return { ok: false, reason: "The file must have an extension." };
+  
+  if (options.allowedExtensions && options.allowedExtensions.length > 0) {
+    const extWithDot = `.${extension}`;
+    if (!options.allowedExtensions.includes(extWithDot)) {
+      return { ok: false, reason: `Files of type .${extension} are not permitted for this upload.` };
+    }
+  }
+
   const rule = ALLOWED_TYPES[extension];
-  if (!rule) return { ok: false, reason: `Files of type .${extension} are not permitted.` };
+  if (!rule) return { ok: false, reason: `Files of type .${extension} are not permitted by the system.` };
 
   const detected = await fileTypeFromBuffer(buffer);
 

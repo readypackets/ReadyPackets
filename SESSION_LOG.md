@@ -744,3 +744,42 @@ The site was showing a blank white page due to a circular JavaScript chunk depen
 
 ### Commit
 `643c51c` — pushed to readypackets/ReadyPackets main
+
+## 2026-08-11 — Webhook, Intake Media, and SharePoint Order Sync
+
+### User request
+
+The user asked for order-level webhook payload support based on the supplied P101/P201 trigger reference, configurable intake supporting-document and business-pitch recording limits, administrator payload preview and phase kickoff controls, editable Microsoft Graph/SharePoint sync configuration, and automatic SharePoint folder provisioning for every order following the supplied structure reference.
+
+### Delivered implementation
+
+The Order Automation tab now previews the reference-compliant P101 and P201 payloads for the selected order. Phase actions are queued server-side, using configured webhook endpoints and encrypted endpoint secrets rather than sending arbitrary browser-originated requests. Deliveries include `Content-Type`, `X-ReadyPackets-Phase`, `X-ReadyPackets-Event`, `X-ReadyPackets-Order`, `X-ReadyPackets-Timestamp`, and HMAC `X-ReadyPackets-Signature` headers where an endpoint secret is configured. P101 is emitted for Phase I Intake and P201 for Phase II Synthesis.
+
+The intake page now supports configurable supporting-document uploads and browser-recorded business pitch audio. Server-side enforcement uses configurable maximum document count, allowed file extensions, maximum pitch recording count, and maximum pitch length. Administrators can configure these controls in **System → Intake controls**. Customer-owned intake attachments can be removed before submission; deletion is denied after submission.
+
+The admin Order Automation tab now provides payload previews, server-side manual phase-start buttons for all four phases, a direct SharePoint site link when configured, and an integration settings link. The integration page now includes a database-backed Microsoft Graph/SharePoint configuration form for tenant ID, client ID, encrypted client secret, site ID, drive ID, site URL, and root path. Saved credentials are used immediately for new background sync operations, with environment variables retained only as an installation fallback.
+
+Every new order queues full SharePoint folder provisioning. The hierarchy follows the supplied reference: `customers/{customerId}/orders/{orderId}/Phase I` through `Phase IV`, with the required `audio`, `Docs`, `Final_Merge`, `Results`, `Branches`, `Context`, `Final_Internal`, `Run_Logs`, `Client_Facing`, `Final_Delivery`, and `Internal_Audit` folders. Folder operations are logged in `sharepoint_sync_log`; Graph failures are queued/retried by the existing phase job scheduler without blocking order creation.
+
+### Validation and deployment
+
+TypeScript typecheck completed with zero errors. The full test suite completed successfully: 8 test files and 142 tests passed. The client and server production bundles were built, migration 0007 was applied, the service restarted successfully, and the live readiness endpoint returned `{"status":"ready"}`.
+
+### Files added or materially changed
+
+- `drizzle/migrations/0007_webhook_sharepoint_sync.sql`
+- `server/services/sharepoint.ts`
+- `server/services/orders.ts`
+- `server/routers/integrations.ts`
+- `server/routers/admin.ts`
+- `server/routers/intake.ts`
+- `server/routers/files.ts`
+- `server/services/storage.ts`
+- `client/src/pages/admin/Orders.tsx`
+- `client/src/pages/admin/Integrations.tsx`
+- `client/src/pages/admin/System.tsx`
+- `client/src/pages/portal/Intake.tsx`
+
+### Deployment status
+
+Deployed to `https://myportal.readypackets.com` on the Cloud Computer. Production service healthy after restart.

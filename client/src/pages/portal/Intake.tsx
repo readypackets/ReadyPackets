@@ -37,8 +37,8 @@ export function IntakePage() {
   const questions = trpc.intake.questions.useQuery();
   const outcomes = trpc.intake.outcomes.useQuery();
   const existing = trpc.intake.get.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
-  const mnda = trpc.intake.mndaStatus.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
-
+    const mnda = trpc.intake.mndaStatus.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
+  const orderFiles = trpc.files.listForUser.useQuery(undefined, { enabled: Number.isFinite(orderId) });
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [projectName, setProjectName] = useState("");
   const [desiredOutcomes, setDesiredOutcomes] = useState<string[]>([]);
@@ -47,6 +47,18 @@ export function IntakePage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
   const hydrated = useRef(false);
+
+  // File upload state
+  const fileInput = useRef<HTMLInputElement>(null);
+  const audioInput = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  
+  // Audio recording state
+  const [recording, setRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const mediaRecorder = useRef<MediaRecorder | null>(null);
+  const audioChunks = useRef<Blob[]>([]);
+  const recordingInterval = useRef<NodeJS.Timeout | null>(null);
 
   // Hydrate the form once from the saved draft.
   useEffect(() => {
@@ -93,6 +105,124 @@ export function IntakePage() {
 
   const submitted = existing.data?.status === "submitted";
   const readOnly = submitted;
+
+  const csrfToken = () => {
+    const match = document.cookie.match(/(?:^|;\s*)rp_csrf=([^;]+)/);
+    return match && match[1] ? decodeURIComponent(match[1]) : null;
+  };
+
+  const handleUpload = async (selected: FileList | File[] | null, isAudio = false) => {
+    if (!selected || selected.length === 0) return;
+    setUploading(true);
+    try {
+      const body = new FormData();
+      for (const file of Array.from(selected)) body.append("files", file);
+      body.append("orderId", String(orderId));
+      body.append("category", "intake_attachment");
+
+      const response = await fetch("/api/files/upload", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "x-csrf-token": csrfToken() ?? "" },
+        body,
+      });
+      const payload = (await response.json()) as {
+        error?: string;
+        files?: { originalName: string }[];
+        rejected?: { name: string; reason: string }[];
+      };
+
+      if (!response.ok) {
+        toast.error("Upload rejected", payload.error ?? "The upload could not be processed.");
+      } else {
+        const accepted = payload.files?.length ?? 0;
+        toast.success(`${accepted} file${accepted === 1 ? "" : "s"} uploaded`);
+        if (payload.rejected && payload.rejected.length > 0) {
+          toast.error(
+            "Some files were rejected",
+            payload.rejected.map((r) => `${r.name}: ${r.reason}`).join("\n"),
+          );
+        }
+        await orderFiles.refetch();
+      }
+    } catch (err) {
+      toast.error("Upload failed", "A network error occurred.");
+    } finally {
+      setUploading(false);
+      if (fileInput.current) fileInput.current.value = "";
+      if (audioInput.current) audioInput.current.value = "";
+    }
+  };
+
+  const deleteFileMut = trpc.files.delete.useMutation({
+    onSuccess() {
+      toast.success("File deleted");
+      void orderFiles.refetch();
+    },
+    onError(err: any) {
+      toast.error("Could not delete file", errorMessage(err));
+    },
+  });
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      mediaRecorder.current = recorder;
+      audioChunks.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunks.current.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        const audioBlob = new Blob(audioChunks.current, { type: "audio/webm" });
+        const file = new File([audioBlob], `pitch-recording-${formatDateTime(new Date()).replace(/[^a-zA-Z0-9]/g, "-")}.webm`, { type: "audio/webm" });
+        void handleUpload([file], true);
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      recorder.start();
+      setRecording(true);
+      setRecordingTime(0);
+      
+      recordingInterval.current = setInterval(() => {
+        setRecordingTime(prev => {
+          const limits = existing.data?.limits;
+          const maxTime = limits?.maxPitchLengthSeconds ?? 300;
+          if (prev >= maxTime - 1) {
+            stopRecording();
+            return prev;
+          }
+          return prev + 1;
+        });
+      }, 1000);
+    } catch (err) {
+      toast.error("Microphone access denied", "Please allow microphone access to record a pitch.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorder.current && mediaRecorder.current.state !== "inactive") {
+      mediaRecorder.current.stop();
+    }
+    setRecording(false);
+    if (recordingInterval.current) clearInterval(recordingInterval.current);
+  };
+
+  const files = orderFiles.data?.filter(f => f.orderId === orderId && f.category === "intake_attachment") ?? [];
+  // listForUser doesn't return detectedMime, so we infer from extension
+  const isAudio = (f: any) => f.extension && ["mp3", "wav", "webm", "ogg", "m4a", "aac", "flac"].includes(f.extension.toLowerCase());
+  const documents = files.filter(f => !isAudio(f));
+  const pitches = files.filter(f => isAudio(f));
+  const limits = existing.data?.limits;
+
+  const requiresMnda = useMemo(() => {
+    if (existing.data?.status === "submitted") return false;
+    if (mnda.isLoading) return true;
+    if (mnda.data?.acceptedAt) return false;
+    return true;
+  }, [existing.data?.status, mnda.isLoading, mnda.data?.acceptedAt]);
 
   const totalRequired = (questions.data ?? []).filter((question) => question.required).length;
   const completedRequired = (questions.data ?? []).filter(

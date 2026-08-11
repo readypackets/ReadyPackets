@@ -13,6 +13,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { env } from "../config/env.js";
 import { db } from "../db/client.js";
 import { fileVersions, files, intakeAnswers, intakeSubmissions, orders } from "../db/schema.js";
+import { getSetting, getSettingNumber } from "../services/settings.js";
 import { resolveSession } from "../auth/session.js";
 import { CSRF_COOKIE, CSRF_HEADER } from "../security/csrf.js";
 import { constantTimeEqual } from "../security/crypto.js";
@@ -131,8 +132,16 @@ export function createUploadRouter(): Router {
       }[] = [];
       const rejected: { name: string; reason: string }[] = [];
 
+      let allowedExtensions: string[] | undefined;
+      if (category === "intake_attachment") {
+        const allowedTypesSetting = await getSetting("intake.allowed_document_types");
+        if (allowedTypesSetting) {
+          allowedExtensions = allowedTypesSetting.split(",").map(s => s.trim().toLowerCase());
+        }
+      }
+
       for (const file of uploaded) {
-        const validation = await validateUpload(file.originalname, file.buffer);
+        const validation = await validateUpload(file.originalname, file.buffer, { allowedExtensions });
         if (!validation.ok) {
           rejected.push({ name: file.originalname, reason: validation.reason ?? "Rejected." });
           void recordSecurityEvent({

@@ -16,6 +16,10 @@ import { adminProcedure, staffProcedure, router } from "../trpc/trpc.js";
 import { TRPCError } from "@trpc/server";
 import { encryptField, decryptField } from "../security/crypto.js";
 import { env } from "../config/env.js";
+import { runPhaseKickoff, resetGraphTokenCache } from "../services/sharepoint.js";
+import { getSetting, setSetting } from "../services/settings.js";
+import { recordActivity } from "../observability/audit.js";
+import { orders } from "../db/schema.js";
 
 export const integrationsRouter = router({
   // =========================================================================
@@ -198,6 +202,31 @@ export const integrationsRouter = router({
       }
     }),
 
+  manualPhaseKickoff: staffProcedure
+    .input(
+      z.object({
+        orderId: z.number().int().positive(),
+        phase: z.enum(["phase_1_intake", "phase_2_synthesis", "in_production", "delivered"]),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const orderRows = await db
+        .select({ id: orders.id, orderNumber: orders.orderNumber })
+        .from(orders)
+        .where(eq(orders.id, input.orderId))
+        .limit(1);
+      if (!orderRows[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Order not found." });
+
+      await runPhaseKickoff(input.orderId, input.phase as any);
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: ctx.session.user.role,
+        action: "order.phase_kickoff_manual",
+        summary: `Manually kicked off ${input.phase} for order ${orderRows[0].orderNumber}`,
+      });
+      return { ok: true };
+    }),
+
   // =========================================================================
   // Phase jobs (monitoring)
   // =========================================================================
@@ -245,16 +274,53 @@ export const integrationsRouter = router({
   // SharePoint / Graph configuration status
   // =========================================================================
 
-  graphConfig: adminProcedure.query(() => {
+  graphConfig: adminProcedure.query(async () => {
+    const tenantId = (await getSetting("sharepoint.tenant_id")) || env.graph.tenantId || null;
+    const clientId = (await getSetting("sharepoint.client_id")) || env.graph.clientId || null;
+    const siteId = (await getSetting("sharepoint.site_id")) || env.graph.siteId || null;
+    const driveId = (await getSetting("sharepoint.drive_id")) || env.graph.driveId || null;
+    const siteUrl = await getSetting("sharepoint.site_url");
+    const rootFolderPath = (await getSetting("sharepoint.root_folder_path")) || env.graph.rootFolderPath;
+    const hasSecret = Boolean((await getSetting("sharepoint.client_secret_enc")) || env.graph.clientSecret);
     return {
-      enabled: env.graph.enabled,
-      tenantId: env.graph.tenantId ? `...${env.graph.tenantId.slice(-8)}` : null,
-      clientId: env.graph.clientId ? `...${env.graph.clientId.slice(-8)}` : null,
-      siteId: env.graph.siteId ?? null,
-      driveId: env.graph.driveId ?? null,
-      rootFolderPath: env.graph.rootFolderPath,
+      enabled: Boolean(tenantId && clientId && hasSecret && siteId && driveId),
+      tenantId: tenantId ? `...${tenantId.slice(-8)}` : null,
+      clientId: clientId ? `...${clientId.slice(-8)}` : null,
+      siteId,
+      driveId,
+      siteUrl,
+      rootFolderPath,
+      hasSecret,
     };
   }),
+
+  saveGraphConfig: adminProcedure
+    .input(z.object({
+      tenantId: z.string().trim().min(1).max(128),
+      clientId: z.string().trim().min(1).max(128),
+      clientSecret: z.string().max(512).optional(),
+      siteId: z.string().trim().min(1).max(512),
+      driveId: z.string().trim().min(1).max(512),
+      siteUrl: z.string().trim().url().max(1024).optional().or(z.literal("")),
+      rootFolderPath: z.string().trim().min(1).max(512),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await setSetting("sharepoint.tenant_id", input.tenantId, { category: "sharepoint", userId: ctx.session.user.id });
+      await setSetting("sharepoint.client_id", input.clientId, { category: "sharepoint", userId: ctx.session.user.id });
+      await setSetting("sharepoint.site_id", input.siteId, { category: "sharepoint", userId: ctx.session.user.id });
+      await setSetting("sharepoint.drive_id", input.driveId, { category: "sharepoint", userId: ctx.session.user.id });
+      await setSetting("sharepoint.site_url", input.siteUrl || null, { category: "sharepoint", userId: ctx.session.user.id });
+      await setSetting("sharepoint.root_folder_path", input.rootFolderPath, { category: "sharepoint", userId: ctx.session.user.id });
+      if (input.clientSecret) {
+        await setSetting(
+          "sharepoint.client_secret_enc",
+          encryptField(input.clientSecret, "sharepoint.client_secret"),
+          { category: "sharepoint", isSecret: true, userId: ctx.session.user.id },
+        );
+      }
+      resetGraphTokenCache();
+      return { ok: true };
+    }),
 
   // =========================================================================
   // Test webhook delivery (sends a test ping to an endpoint)

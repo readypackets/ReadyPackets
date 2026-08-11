@@ -11,8 +11,8 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
-import { fileAccessLog, files, orders } from "../db/schema.js";
-import { recordSecurityEvent } from "../observability/audit.js";
+import { fileAccessLog, files, orders, intakeSubmissions } from "../db/schema.js";
+import { recordSecurityEvent, recordActivity } from "../observability/audit.js";
 import { OrderStateError, assertOrderAccess } from "../services/orders.js";
 import { allowedExtensions } from "../services/storage.js";
 import { protectedProcedure, router } from "../trpc/trpc.js";
@@ -213,6 +213,61 @@ export const filesRouter = router({
         .from(files)
         .where(and(...conditions))
         .orderBy(desc(files.createdAt));
+    }),
+
+  delete: protectedProcedure
+    .input(z.object({ fileId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const rows = await db
+        .select()
+        .from(files)
+        .where(and(eq(files.id, input.fileId), isNull(files.deletedAt)))
+        .limit(1);
+      const file = rows[0];
+      if (!file) throw new TRPCError({ code: "NOT_FOUND", message: "File not found." });
+
+      const isStaff = ctx.session.user.role === "admin" || ctx.session.user.role === "staff";
+      
+      // Customers can only delete their own intake attachments before submission
+      if (!isStaff) {
+        if (file.category !== "intake_attachment") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "You cannot delete this file." });
+        }
+        if (file.orderId) {
+          const orderRows = await db
+            .select({ userId: orders.userId })
+            .from(orders)
+            .where(eq(orders.id, file.orderId))
+            .limit(1);
+          if (!orderRows[0] || orderRows[0].userId !== ctx.session.user.id) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "You do not own this file." });
+          }
+          
+          // Check if intake is already submitted
+          const intakeRows = await db
+            .select({ status: intakeSubmissions.status })
+            .from(intakeSubmissions)
+            .where(eq(intakeSubmissions.orderId, file.orderId))
+            .limit(1);
+          if (intakeRows[0]?.status === "submitted") {
+            throw new TRPCError({ code: "FORBIDDEN", message: "Cannot delete files after intake is submitted." });
+          }
+        }
+      }
+
+      await db
+        .update(files)
+        .set({ deletedAt: new Date() })
+        .where(eq(files.id, input.fileId));
+
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: ctx.session.user.role,
+        action: "file.deleted",
+        summary: `Deleted file "${file.originalName}" (${file.category})`,
+      });
+
+      return { ok: true };
     }),
 
   /** Exchange an authorisation check for a short-lived download ticket. */

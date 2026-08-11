@@ -373,6 +373,11 @@ export const orders = mysqlTable(
     completionPercent: int("completion_percent").notNull().default(0),
     internalNotesEnc: text("internal_notes_enc"),
     assignedToUserId: int("assigned_to_user_id"),
+    canonVersion: varchar("canon_version", { length: 128 }),
+    runMode: varchar("run_mode", { length: 32 }),
+    releaseStatus: varchar("release_status", { length: 128 }),
+    orderScopeMode: varchar("order_scope_mode", { length: 64 }),
+    bundleScopeManifest: text("bundle_scope_manifest"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: timestamp("deleted_at"),
@@ -539,6 +544,27 @@ export const intakeAnswers = mysqlTable(
   },
   (table) => ({
     submissionIdx: index("intake_answers_submission_idx").on(table.submissionId),
+  }),
+);
+
+export const sharepointSyncLog = mysqlTable(
+  "sharepoint_sync_log",
+  {
+    id: id(),
+    orderId: int("order_id").notNull(),
+    operationType: varchar("operation_type", { length: 32 }).notNull(),
+    status: varchar("status", { length: 32 }).notNull().default("pending"),
+    sharepointPath: varchar("sharepoint_path", { length: 1024 }).notNull(),
+    fileId: int("file_id"),
+    errorMessage: text("error_message"),
+    attempts: int("attempts").notNull().default(0),
+    fileExpiryDate: timestamp("file_expiry_date"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    orderIdx: index("sharepoint_sync_log_order_idx").on(table.orderId),
+    statusIdx: index("sharepoint_sync_log_status_idx").on(table.status),
   }),
 );
 

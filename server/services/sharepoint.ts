@@ -24,12 +24,15 @@ import {
   phaseKickoffConfigs,
   webhookDeliveries,
   webhookEndpoints,
+  sharepointSyncLog,
 } from "../db/schema.js";
 import { env } from "../config/env.js";
 import { logger } from "../observability/logger.js";
 import { recordActivity } from "../observability/audit.js";
 import { insertedId } from "../db/result.js";
 import { decryptField } from "../security/crypto.js";
+import { getSetting } from "./settings.js";
+import { getUserById, displayNameOf } from "../db/users.js";
 import type { OrderStatus } from "../../shared/domain.js";
 
 // ---------------------------------------------------------------------------
@@ -43,12 +46,50 @@ interface GraphTokenCache {
 
 let _tokenCache: GraphTokenCache | null = null;
 
+interface GraphRuntimeConfig {
+  tenantId: string | null;
+  clientId: string | null;
+  clientSecret: string | null;
+  siteId: string | null;
+  driveId: string | null;
+  siteUrl: string | null;
+  rootFolderPath: string;
+  enabled: boolean;
+}
+
+async function getGraphRuntimeConfig(): Promise<GraphRuntimeConfig> {
+  const tenantId = (await getSetting("sharepoint.tenant_id")) || env.graph.tenantId || null;
+  const clientId = (await getSetting("sharepoint.client_id")) || env.graph.clientId || null;
+  const secretStored = await getSetting("sharepoint.client_secret_enc");
+  const clientSecret = secretStored
+    ? decryptField(secretStored, "sharepoint.client_secret")
+    : env.graph.clientSecret || null;
+  const siteId = (await getSetting("sharepoint.site_id")) || env.graph.siteId || null;
+  const driveId = (await getSetting("sharepoint.drive_id")) || env.graph.driveId || null;
+  const siteUrl = (await getSetting("sharepoint.site_url")) || null;
+  const rootFolderPath = (await getSetting("sharepoint.root_folder_path")) || env.graph.rootFolderPath;
+  return {
+    tenantId,
+    clientId,
+    clientSecret,
+    siteId,
+    driveId,
+    siteUrl,
+    rootFolderPath,
+    enabled: Boolean(tenantId && clientId && clientSecret && siteId && driveId),
+  };
+}
+
+export function resetGraphTokenCache(): void {
+  _tokenCache = null;
+}
+
 async function getGraphToken(): Promise<string> {
   if (_tokenCache && Date.now() < _tokenCache.expiresAt - 60_000) {
     return _tokenCache.token;
   }
 
-  const { tenantId, clientId, clientSecret } = env.graph;
+  const { tenantId, clientId, clientSecret } = await getGraphRuntimeConfig();
   if (!tenantId || !clientId || !clientSecret) {
     throw new Error("Microsoft Graph credentials are not fully configured.");
   }
@@ -124,7 +165,7 @@ async function graphRequest(
  * Returns the folder's item ID.
  */
 async function ensureFolder(folderPath: string): Promise<string> {
-  const { siteId, driveId } = env.graph;
+  const { siteId, driveId } = await getGraphRuntimeConfig();
   if (!siteId || !driveId) {
     throw new Error("GRAPH_SHAREPOINT_SITE_ID and GRAPH_SHAREPOINT_DRIVE_ID must be set.");
   }
@@ -167,7 +208,7 @@ async function uploadPlaceholder(
   fileName: string,
   content: string
 ): Promise<string> {
-  const { driveId } = env.graph;
+  const { driveId } = await getGraphRuntimeConfig();
   if (!driveId) throw new Error("GRAPH_SHAREPOINT_DRIVE_ID must be set.");
 
   const token = await getGraphToken();
@@ -200,10 +241,10 @@ async function uploadPlaceholder(
  * Operators can override these via the admin panel (phaseKickoffConfigs.folderTemplate).
  */
 const DEFAULT_FOLDER_TEMPLATES: Record<string, string[]> = {
-  phase_1_intake: ["01-Intake", "02-Documents", "03-Correspondence"],
-  phase_2_synthesis: ["01-Research", "02-Analysis", "03-Drafts"],
-  in_production: ["01-Production", "02-Review", "03-Final"],
-  delivered: ["01-Deliverables", "02-Archive"],
+  phase_1_intake: ["Phase I/audio", "Phase I/Docs", "Phase I/Final_Merge", "Phase I/Results"],
+  phase_2_synthesis: ["Phase II/Audio", "Phase II/Docs", "Phase II/Final_Merge", "Phase II/Results"],
+  in_production: ["Phase III/Branches", "Phase III/Context", "Phase III/Final_Internal", "Phase III/Run_Logs"],
+  delivered: ["Phase IV/Client_Facing", "Phase IV/Final_Delivery", "Phase IV/Internal_Audit", "Phase IV/Results"],
 };
 
 const DEFAULT_PLACEHOLDERS: Record<string, string[]> = {
@@ -212,6 +253,22 @@ const DEFAULT_PLACEHOLDERS: Record<string, string[]> = {
   in_production: ["PRODUCTION_BRIEF.txt"],
   delivered: ["DELIVERY_RECEIPT.txt"],
 };
+
+export async function queueFullOrderFolderProvisioning(orderId: number): Promise<void> {
+  // Every order receives the full Phase I-IV hierarchy. The jobs are idempotent:
+  // Graph folder creation first checks for an existing segment before creating it.
+  const phases: OrderStatus[] = ["phase_1_intake", "phase_2_synthesis", "in_production", "delivered"];
+  for (const phase of phases) {
+    await db.insert(phaseJobs).values({
+      orderId,
+      phase,
+      jobType: "create_folders",
+      status: "pending",
+      attempts: 0,
+    });
+  }
+  logger.info("sharepoint.full_order_provisioning.queued", { orderId, phases: phases.length });
+}
 
 export async function runPhaseKickoff(
   orderId: number,
@@ -351,19 +408,29 @@ async function processJob(job: {
 }
 
 async function jobCreateFolders(orderId: number, phase: string): Promise<void> {
-  if (!env.graph.enabled) {
+  const graphConfig = await getGraphRuntimeConfig();
+  if (!graphConfig.enabled) {
     logger.debug("sharepoint.create_folders.skipped", { reason: "Graph not configured" });
     return;
   }
 
   const orderRows = await db
-    .select({ orderNumber: orders.orderNumber })
+    .select({ orderNumber: orders.orderNumber, userId: orders.userId })
     .from(orders)
     .where(eq(orders.id, orderId))
     .limit(1);
 
   if (orderRows.length === 0) return;
   const orderNumber = orderRows[0]!.orderNumber;
+  const userId = orderRows[0]!.userId;
+  
+  const customer = await getUserById(userId);
+  
+  let customerFolder = customer?.customerNumber;
+  if (!customerFolder) {
+    const rawName = customer ? displayNameOf(customer) : `user_${userId}`;
+    customerFolder = rawName.replace(/["*:<>?/\\|#]/g, "_").substring(0, 128);
+  }
 
   // Load the folder template from the config or fall back to defaults.
   const configRows = await db
@@ -377,11 +444,19 @@ async function jobCreateFolders(orderId: number, phase: string): Promise<void> {
     DEFAULT_FOLDER_TEMPLATES[phase] ??
     [];
 
-  const orderRoot = `${env.graph.rootFolderPath}/${orderNumber}/${phase}`;
+  const orderRoot = `${graphConfig.rootFolderPath}/customers/${customerFolder}/orders/${orderNumber}`;
 
   for (const subFolder of folderTemplate) {
     const folderPath = `${orderRoot}/${subFolder}`;
     await ensureFolder(folderPath);
+    
+    // Log to the sharepoint_sync_log table
+    await db.insert(sharepointSyncLog).values({
+      orderId,
+      operationType: "create_folder",
+      status: "success",
+      sharepointPath: folderPath,
+    });
     logger.debug("sharepoint.folder_created", { orderId, folderPath });
   }
 
@@ -395,29 +470,33 @@ async function jobCreateFolders(orderId: number, phase: string): Promise<void> {
 }
 
 async function jobAttachPlaceholders(orderId: number, phase: string): Promise<void> {
-  if (!env.graph.enabled) {
+  const graphConfig = await getGraphRuntimeConfig();
+  if (!graphConfig.enabled) {
     logger.debug("sharepoint.attach_placeholders.skipped", { reason: "Graph not configured" });
     return;
   }
 
   const orderRows = await db
-    .select({ orderNumber: orders.orderNumber })
+    .select({ orderNumber: orders.orderNumber, userId: orders.userId })
     .from(orders)
     .where(eq(orders.id, orderId))
     .limit(1);
 
   if (orderRows.length === 0) return;
   const orderNumber = orderRows[0]!.orderNumber;
+  const customer = await getUserById(orderRows[0]!.userId);
+  const customerFolder = customer?.customerNumber ?? `RP-CUST-${String(orderRows[0]!.userId).padStart(6, "0")}`;
 
   const placeholders = DEFAULT_PLACEHOLDERS[phase] ?? [];
-  const folderPath = `${env.graph.rootFolderPath}/${orderNumber}/${phase}/01-${phase === "phase_1_intake" ? "Intake" : phase === "phase_2_synthesis" ? "Research" : "Production"}`;
+  const phaseFolder = phase === "phase_1_intake" ? "Phase I/Docs" : phase === "phase_2_synthesis" ? "Phase II/Docs" : phase === "in_production" ? "Phase III/Context" : "Phase IV/Internal_Audit";
+  const folderPath = `${graphConfig.rootFolderPath}/customers/${customerFolder}/orders/${orderNumber}/${phaseFolder}`;
 
   let folderId: string;
   try {
     folderId = await ensureFolder(folderPath);
   } catch {
     // Folder may not exist yet if create_folders job hasn't run.
-    folderId = await ensureFolder(`${env.graph.rootFolderPath}/${orderNumber}/${phase}`);
+    folderId = await ensureFolder(`${graphConfig.rootFolderPath}/customers/${customerFolder}/orders/${orderNumber}`);
   }
 
   for (const fileName of placeholders) {
@@ -464,28 +543,50 @@ export async function jobNotifyWebhooks(orderId: number, phase: string): Promise
   if (orderRows.length === 0) return;
   const order = orderRows[0]!;
 
+  const customer = await getUserById(order.userId);
+  const customerId = customer?.customerNumber ?? `RP-CUST-${String(order.userId).padStart(6, "0")}`;
+
+  const isP101 = phase === "phase_1_intake";
+  const isP201 = phase === "phase_2_synthesis";
+  if (!isP101 && !isP201) return;
+
+  const phaseCode = isP101 ? "P101" : "P201";
+  const p101Payload = {
+    customer_id: customerId,
+    order_id: order.orderNumber,
+    packet: "7",
+    tier: "Mixed",
+    canon_version: order.canonVersion ?? "ReadyPackets_Production_v2.0",
+    run_mode: order.runMode ?? "production",
+    client_name: customer ? displayNameOf(customer) : "",
+    client_email: customer?.email ?? "",
+    release_status: order.releaseStatus ?? "",
+    order_scope_mode: order.orderScopeMode ?? "multi_packet_partial",
+    // Intentionally remains an escaped JSON string, per the receiving scenario contract.
+    bundle_scope_manifest: order.bundleScopeManifest ?? "{}",
+  };
+  const payload = isP101
+    ? p101Payload
+    : {
+        customer_id: p101Payload.customer_id,
+        order_id: p101Payload.order_id,
+        run_mode: p101Payload.run_mode,
+      };
+
   const endpoints = await db
     .select()
     .from(webhookEndpoints)
     .where(eq(webhookEndpoints.enabled, true));
 
-  const payload = {
-    event: "order.phase_changed",
-    orderId,
-    orderNumber: order.orderNumber,
-    phase,
-    timestamp: new Date().toISOString(),
-  };
-
   for (const endpoint of endpoints) {
     const events = endpoint.events as string[] | null;
-    if (events && !events.includes("order.phase_changed") && !events.includes("*")) {
+    if (events && !events.includes("phase.start") && !events.includes(phaseCode) && !events.includes("*")) {
       continue;
     }
 
     await db.insert(webhookDeliveries).values({
       endpointId: endpoint.id,
-      eventType: "order.phase_changed",
+      eventType: phaseCode,
       payload,
       status: "pending",
       attempts: 0,
@@ -542,11 +643,19 @@ async function deliverWebhook(delivery: {
     : null;
 
   const body = JSON.stringify(delivery.payload);
+  const isPhaseStart = delivery.eventType === "P101" || delivery.eventType === "P201";
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "X-ReadyPackets-Event": delivery.eventType,
+    "X-ReadyPackets-Event": isPhaseStart ? "phase.start" : delivery.eventType,
     "X-ReadyPackets-Delivery": String(delivery.id),
   };
+  if (isPhaseStart) {
+    headers["X-ReadyPackets-Phase"] = delivery.eventType;
+    headers["X-ReadyPackets-Order"] = typeof delivery.payload === "object" && delivery.payload !== null && "order_id" in delivery.payload
+      ? String((delivery.payload as { order_id?: unknown }).order_id ?? "")
+      : "";
+    headers["X-ReadyPackets-Timestamp"] = new Date().toISOString();
+  }
 
   if (secret) {
     // HMAC-SHA256 signature for the receiver to verify.

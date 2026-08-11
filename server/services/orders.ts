@@ -24,6 +24,7 @@ import { logger } from "../observability/logger.js";
 import { recordActivity } from "../observability/audit.js";
 import { priceSelection } from "./catalog.js";
 import { fireAutomations } from "./emailAutomations.js";
+import { queueFullOrderFolderProvisioning } from "./sharepoint.js";
 import { ORDER_TRANSITIONS, type OrderStatus } from "../../shared/domain.js";
 import { insertedId } from "../db/result.js";
 
@@ -34,6 +35,11 @@ export interface CreateOrderInput {
   selections: { productId: number; quantity?: number }[];
   projectName?: string | null;
   integrityChoice?: string | null;
+  canonVersion?: string | null;
+  runMode?: string | null;
+  releaseStatus?: string | null;
+  orderScopeMode?: string | null;
+  bundleScopeManifest?: string | null;
   actorUserId: number;
   actorRole: string;
   ipAddress?: string | null;
@@ -68,6 +74,11 @@ export async function createOrder(input: CreateOrderInput) {
     totalCents: quote.totalCents,
     bundleApplied: quote.bundleApplied,
     integrityChoice: input.integrityChoice ?? null,
+    canonVersion: input.canonVersion ?? null,
+    runMode: input.runMode ?? null,
+    releaseStatus: input.releaseStatus ?? null,
+    orderScopeMode: input.orderScopeMode ?? null,
+    bundleScopeManifest: input.bundleScopeManifest ?? null,
   });
 
   const orderId = insertedId(inserted);
@@ -117,6 +128,12 @@ export async function createOrder(input: CreateOrderInput) {
     },
     ipAddress: input.ipAddress ?? null,
   });
+
+  // Create the full SharePoint hierarchy asynchronously. This is non-blocking,
+  // so an order remains valid even when Graph is not configured yet.
+  void queueFullOrderFolderProvisioning(orderId).catch((error) =>
+    logger.warn("sharepoint.full_order_provisioning.queue_failed", { orderId, error: String(error) }),
+  );
 
   // Fire order.created automation triggers (non-fatal).
   void fireAutomations("order.created", { userId: input.userId });

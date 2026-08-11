@@ -55,6 +55,7 @@ export function AdminSystemPage() {
           { id: "saml", label: "SAML" },
           { id: "maintenance", label: "Housekeeping" },
           { id: "launch", label: "Launch countdown" },
+          { id: "intake", label: "Intake controls" },
         ]}
         active={tab}
         onChange={setTab}
@@ -67,6 +68,7 @@ export function AdminSystemPage() {
         {tab === "saml" ? <SamlPanel /> : null}
         {tab === "maintenance" ? <MaintenancePanel /> : null}
         {tab === "launch" ? <LaunchCountdownPanel /> : null}
+        {tab === "intake" ? <IntakeControlsPanel /> : null}
       </div>
     </>
   );
@@ -964,6 +966,112 @@ function LaunchCountdownPanel() {
           </div>
         </div>
       </Card>
+    </div>
+  );
+}
+
+function IntakeControlsPanel() {
+  const toast = useToast();
+  const settings = trpc.adminSecurity.getSettings.useQuery({ category: "intake" });
+  const [maxDocuments, setMaxDocuments] = useState("5");
+  const [allowedTypes, setAllowedTypes] = useState(".pdf,.doc,.docx,.txt");
+  const [maxPitchRecordings, setMaxPitchRecordings] = useState("1");
+  const [maxPitchLengthSeconds, setMaxPitchLengthSeconds] = useState("300");
+
+  useEffect(() => {
+    if (!settings.data) return;
+    const values = new Map(settings.data.map((entry) => [entry.key, entry.value]));
+    setMaxDocuments(values.get("intake.max_documents") || "5");
+    setAllowedTypes(values.get("intake.allowed_document_types") || ".pdf,.doc,.docx,.txt");
+    setMaxPitchRecordings(values.get("intake.max_pitch_recordings") || "1");
+    setMaxPitchLengthSeconds(values.get("intake.max_pitch_length_seconds") || "300");
+  }, [settings.data]);
+
+  const update = trpc.adminSecurity.updateSetting.useMutation();
+  const save = async () => {
+    const docCount = Number(maxDocuments);
+    const pitchCount = Number(maxPitchRecordings);
+    const pitchSeconds = Number(maxPitchLengthSeconds);
+    if (!Number.isInteger(docCount) || docCount < 0 || docCount > 25) {
+      toast.error("Invalid document limit", "Enter a whole number from 0 to 25.");
+      return;
+    }
+    if (!Number.isInteger(pitchCount) || pitchCount < 0 || pitchCount > 10) {
+      toast.error("Invalid recording limit", "Enter a whole number from 0 to 10.");
+      return;
+    }
+    if (!Number.isInteger(pitchSeconds) || pitchSeconds < 15 || pitchSeconds > 3600) {
+      toast.error("Invalid pitch length", "Enter a duration from 15 to 3,600 seconds.");
+      return;
+    }
+    try {
+      await Promise.all([
+        update.mutateAsync({ key: "intake.max_documents", value: String(docCount) }),
+        update.mutateAsync({ key: "intake.allowed_document_types", value: allowedTypes.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean).join(",") }),
+        update.mutateAsync({ key: "intake.max_pitch_recordings", value: String(pitchCount) }),
+        update.mutateAsync({ key: "intake.max_pitch_length_seconds", value: String(pitchSeconds) }),
+      ]);
+      await settings.refetch();
+      toast.success("Intake controls saved", "The new limits apply to future intake uploads and submissions.");
+    } catch (error) {
+      toast.error("Could not save intake controls", errorMessage(error));
+    }
+  };
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+      <Card>
+        <CardHeader
+          title="Supporting documents"
+          description="Limit the supporting documents each customer may attach to an order intake."
+        />
+        <div className="mt-4 space-y-4">
+          <Input
+            label="Maximum documents per intake"
+            type="number"
+            min={0}
+            max={25}
+            value={maxDocuments}
+            onChange={(event) => setMaxDocuments(event.target.value)}
+          />
+          <Input
+            label="Allowed file extensions"
+            value={allowedTypes}
+            onChange={(event) => setAllowedTypes(event.target.value)}
+            help="Comma-separated. Files are also checked against the platform's server-side content validation."
+          />
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Business pitch recordings"
+          description="Control browser-recorded or uploaded audio pitch submissions for each intake."
+        />
+        <div className="mt-4 space-y-4">
+          <Input
+            label="Maximum pitch recordings per intake"
+            type="number"
+            min={0}
+            max={10}
+            value={maxPitchRecordings}
+            onChange={(event) => setMaxPitchRecordings(event.target.value)}
+          />
+          <Input
+            label="Maximum recording length (seconds)"
+            type="number"
+            min={15}
+            max={3600}
+            value={maxPitchLengthSeconds}
+            onChange={(event) => setMaxPitchLengthSeconds(event.target.value)}
+            help="The browser stops in-app recordings at this duration."
+          />
+        </div>
+      </Card>
+
+      <div className="lg:col-span-2 flex justify-end">
+        <Button busy={update.isPending} onClick={() => void save()} leadingIcon={<Save className="size-4" />}>Save intake controls</Button>
+      </div>
     </div>
   );
 }
