@@ -12,6 +12,7 @@ import { BRAND, BRAND_ASSETS } from "@shared/brand";
 import { trpc, errorMessage } from "@/lib/trpc";
 import { useSession, type UserRole } from "@/lib/session";
 import { Button } from "@/components/ui/Button";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { Alert, Skeleton } from "@/components/ui/Surface";
 import { useToast } from "@/components/ui/Toast";
 import { cn, initialsOf } from "@/lib/utils";
@@ -262,6 +263,8 @@ export function PortalLayout({
           </Link>
 
           <div className="flex-1" />
+
+          <ThemeToggle />
 
           {variant === "portal" && session.user?.role === "admin" ? (
             <Link href="/admin" className="hidden items-center gap-2 rounded-lg bg-teal px-3 py-2 text-sm font-semibold text-white no-underline hover:bg-teal-dark sm:flex">

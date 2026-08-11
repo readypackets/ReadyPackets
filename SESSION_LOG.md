@@ -1030,3 +1030,22 @@ The deployed `https://myportal.readypackets.com/refunds` route was verified in a
 Stripe remains intentionally inactive until production Stripe keys and a signed webhook endpoint are configured. The implementation can be tested immediately using Stripe test keys; a complete test-mode lifecycle should be run before accepting real payment. The recoverable order-trash view requires an authenticated administrator to exercise the restore workflow, and no order was modified solely for verification.
 
 ---
+
+
+---
+
+## 13. Three-mode appearance setting — August 11, 2026
+
+### 13.1 Request received
+
+> add a light and dark mode and system mode with system mode being the default
+
+### 13.2 Implementation and deployment
+
+The portal already had a theme provider with a persisted `system | light | dark` preference and system-aware initialization, but exposed only a binary icon toggle in the public header. The control was replaced with an accessible three-mode appearance picker that explicitly presents **System**, **Light**, and **Dark** options. System is the default for visitors who have no stored preference; it follows `prefers-color-scheme` and automatically reacts to operating-system appearance changes. Chosen modes persist using the existing `rp-theme` browser preference.
+
+The shared selector is now available in the public header and in the authenticated portal/admin top bar. It identifies the current choice, includes accessible radio-menu semantics, and may be dismissed with Escape.
+
+Validation completed with zero TypeScript errors and 142 passing tests. The client and server release artifacts were built and deployed to the VPS. `readypackets.service` restarted successfully and `https://myportal.readypackets.com/api/health/ready` returned `{"status":"ready"}`. The previous client bundle remains preserved on the host as a timestamped rollback artifact.
+
+---
