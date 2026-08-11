@@ -18,6 +18,9 @@ import { ticketsRouter } from "./tickets.js";
 import { stripeRouter } from "./stripe.js";
 import { integrationsRouter } from "./integrations.js";
 import { emailAutomationsRouter } from "./emailAutomations.js";
+import { siemExportRouter } from "./siemExport.js";
+import { crmRouter } from "./crm.js";
+import { tier3Router } from "./tier3.js";
 
 export const appRouter = router({
   auth: authRouter,
@@ -34,6 +37,9 @@ export const appRouter = router({
   stripe: stripeRouter,
   integrations: integrationsRouter,
   emailAutomations: emailAutomationsRouter,
+  siemExport: siemExportRouter,
+  crm: crmRouter,
+  tier3: tier3Router,
 });
 
 export type AppRouter = typeof appRouter;

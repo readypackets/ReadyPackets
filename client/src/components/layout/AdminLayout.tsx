@@ -8,9 +8,12 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import {
+  Bot,
+  Calendar,
   ClipboardList,
   CreditCard,
   FileText,
+  FlaskConical,
   Gauge,
   LayoutDashboard,
   LifeBuoy,
@@ -19,11 +22,15 @@ import {
   Mail,
   Menu,
   Package,
+  Plug,
   ScrollText,
   Server,
   ShieldAlert,
+  ShieldCheck,
   Star,
+  Subscript,
   Users,
+  Webhook,
   X,
   Zap,
 } from "lucide-react";
@@ -71,12 +78,27 @@ const NAV: { section: string; items: NavItem[] }[] = [
     section: "Finance",
     items: [
       { href: "/admin/finance", label: "Finance", icon: CreditCard, adminOnly: true },
+      { href: "/admin/subscriptions", label: "Subscriptions", icon: Subscript, adminOnly: true },
+    ],
+  },
+  {
+    section: "CRM",
+    items: [
+      { href: "/admin/crm", label: "CRM", icon: Users, adminOnly: true },
+      { href: "/admin/scheduling", label: "Scheduling", icon: Calendar, adminOnly: true },
     ],
   },
   {
     section: "Platform",
     items: [
       { href: "/admin/integrations", label: "Integrations", icon: Link2, adminOnly: true },
+      { href: "/admin/inbound-webhooks", label: "Inbound webhooks", icon: Webhook, adminOnly: true },
+      { href: "/admin/outbound", label: "Outbound connections", icon: Plug, adminOnly: true },
+      { href: "/admin/ai-hub", label: "AI hub", icon: Bot, adminOnly: true },
+      { href: "/admin/ab-tests", label: "A/B tests", icon: FlaskConical, adminOnly: true },
+      { href: "/admin/wizard-slides", label: "Wizard slides", icon: ScrollText, adminOnly: true },
+      { href: "/admin/support-permissions", label: "Support permissions", icon: ShieldCheck, adminOnly: true },
+      { href: "/admin/backups", label: "Backups", icon: Server, adminOnly: true },
       { href: "/admin/security", label: "Security centre", icon: ShieldAlert, adminOnly: true },
       { href: "/admin/system", label: "System", icon: Server, adminOnly: true },
     ],

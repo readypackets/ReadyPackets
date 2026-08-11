@@ -6,7 +6,7 @@
  * are soft deletes wherever a record has legal or financial significance.
  */
 import { TRPCError } from "@trpc/server";
-import { and, asc, count, desc, eq, gte, isNull, like, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, like, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import {
@@ -89,15 +89,33 @@ export const adminRouter = router({
       ]);
 
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const signupTrend = await db
-      .select({
-        day: sql<string>`DATE(${users.createdAt})`,
-        total: count(),
-      })
-      .from(users)
-      .where(and(gte(users.createdAt, since), isNull(users.deletedAt)))
-      .groupBy(sql`DATE(${users.createdAt})`)
-      .orderBy(sql`DATE(${users.createdAt})`);
+    const [signupTrend, orderTrend, revenueTrend] = await Promise.all([
+      db
+        .select({ day: sql<string>`DATE(${users.createdAt})`, total: count() })
+        .from(users)
+        .where(and(gte(users.createdAt, since), isNull(users.deletedAt)))
+        .groupBy(sql`DATE(${users.createdAt})`)
+        .orderBy(sql`DATE(${users.createdAt})`),
+      db
+        .select({ day: sql<string>`DATE(${orders.createdAt})`, total: count() })
+        .from(orders)
+        .where(and(gte(orders.createdAt, since), isNull(orders.deletedAt)))
+        .groupBy(sql`DATE(${orders.createdAt})`)
+        .orderBy(sql`DATE(${orders.createdAt})`),
+      db
+        .select({
+          day: sql<string>`DATE(${orders.createdAt})`,
+          revenue: sql<number>`COALESCE(SUM(${orders.totalCents}), 0)`,
+        })
+        .from(orders)
+        .where(and(
+          gte(orders.createdAt, since),
+          isNull(orders.deletedAt),
+          inArray(orders.paymentStatus, ["paid", "partially_refunded"]),
+        ))
+        .groupBy(sql`DATE(${orders.createdAt})`)
+        .orderBy(sql`DATE(${orders.createdAt})`),
+    ]);
 
     return {
       orders: orderStats,
@@ -106,6 +124,8 @@ export const adminRouter = router({
       pendingReviews: Number(pendingReviews[0]?.total ?? 0),
       newMessages: Number(newMessages[0]?.total ?? 0),
       signupTrend: signupTrend.map((row) => ({ day: row.day, total: Number(row.total) })),
+      orderTrend: orderTrend.map((row) => ({ day: row.day, total: Number(row.total) })),
+      revenueTrend: revenueTrend.map((row) => ({ day: row.day, revenueCents: Number(row.revenue) })),
     };
   }),
 

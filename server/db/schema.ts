@@ -9,12 +9,17 @@
  *  - Soft deletion uses `deletedAt`; a retention sweeper purges expired rows.
  */
 import {
+  bigint,
   boolean,
+  char,
   index,
   int,
   json,
+  mediumtext,
+  mysqlEnum,
   mysqlTable,
   primaryKey,
+  smallint,
   text,
   timestamp,
   tinyint,
@@ -1457,3 +1462,361 @@ export const emailAutomations = mysqlTable(
     enabledIdx: index("email_automations_enabled_idx").on(table.enabled),
   }),
 );
+
+// ── Tier 3: Finance / billing ─────────────────────────────────────────────────
+
+export const subscriptionPlans = mysqlTable("subscription_plans", {
+  id: id(),
+  name: varchar("name", { length: 128 }).notNull(),
+  slug: varchar("slug", { length: 64 }).notNull(),
+  description: text("description"),
+  priceCents: int("price_cents").notNull().default(0),
+  intervalDays: int("interval_days").notNull().default(30),
+  features: json("features"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const subscriptionItems = mysqlTable("subscription_items", {
+  id: id(),
+  userId: int("user_id").notNull(),
+  planId: int("plan_id").notNull(),
+  status: mysqlEnum("status", ["active", "paused", "cancelled", "expired"]).notNull().default("active"),
+  currentPeriodStart: timestamp("current_period_start").notNull().defaultNow(),
+  currentPeriodEnd: timestamp("current_period_end").notNull().defaultNow(),
+  cancelledAt: timestamp("cancelled_at"),
+  metadata: json("metadata"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const billingEvents = mysqlTable("billing_events", {
+  id: id(),
+  userId: int("user_id"),
+  orderId: int("order_id"),
+  eventType: varchar("event_type", { length: 64 }).notNull(),
+  amountCents: int("amount_cents").notNull().default(0),
+  currency: char("currency", { length: 3 }).notNull().default("USD"),
+  provider: varchar("provider", { length: 32 }).notNull().default("stripe"),
+  providerEventId: varchar("provider_event_id", { length: 255 }),
+  metadata: json("metadata"),
+  createdAt: createdAt(),
+});
+
+// ── Tier 3: CRM ───────────────────────────────────────────────────────────────
+
+export const crmContacts = mysqlTable("crm_contacts", {
+  id: id(),
+  userId: int("user_id"),
+  firstName: varchar("first_name", { length: 100 }),
+  lastName: varchar("last_name", { length: 100 }),
+  company: varchar("company", { length: 200 }),
+  emailEnc: text("email_enc"),
+  emailIndex: varchar("email_index", { length: 64 }),
+  phoneEnc: text("phone_enc"),
+  source: varchar("source", { length: 64 }),
+  status: mysqlEnum("status", ["lead", "prospect", "customer", "churned", "blocked"]).notNull().default("lead"),
+  ownerUserId: int("owner_user_id"),
+  tags: json("tags"),
+  metadata: json("metadata"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+export const crmNotes = mysqlTable("crm_notes", {
+  id: id(),
+  contactId: int("contact_id").notNull(),
+  authorUserId: int("author_user_id").notNull(),
+  body: text("body").notNull(),
+  noteType: mysqlEnum("note_type", ["call", "email", "meeting", "note", "task"]).notNull().default("note"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const crmTags = mysqlTable("crm_tags", {
+  id: id(),
+  name: varchar("name", { length: 64 }).notNull(),
+  color: varchar("color", { length: 16 }).notNull().default("#6b7280"),
+  createdAt: createdAt(),
+});
+
+// ── Tier 3: AI hub ────────────────────────────────────────────────────────────
+
+export const aiSessions = mysqlTable("ai_sessions", {
+  id: id(),
+  userId: int("user_id"),
+  sessionType: varchar("session_type", { length: 64 }).notNull().default("chat"),
+  model: varchar("model", { length: 128 }).notNull(),
+  title: varchar("title", { length: 255 }),
+  status: mysqlEnum("status", ["active", "completed", "archived"]).notNull().default("active"),
+  tokenCount: int("token_count").notNull().default(0),
+  costMicroUsd: int("cost_micro_usd").notNull().default(0),
+  metadata: json("metadata"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const aiMessages = mysqlTable("ai_messages", {
+  id: id(),
+  sessionId: int("session_id").notNull(),
+  role: mysqlEnum("role", ["system", "user", "assistant", "tool"]).notNull(),
+  content: mediumtext("content").notNull(),
+  tokenCount: int("token_count").notNull().default(0),
+  finishReason: varchar("finish_reason", { length: 32 }),
+  metadata: json("metadata"),
+  createdAt: createdAt(),
+});
+
+export const aiResponseLogs = mysqlTable("ai_response_logs", {
+  id: id(),
+  sessionId: int("session_id"),
+  messageId: int("message_id"),
+  model: varchar("model", { length: 128 }).notNull(),
+  promptTokens: int("prompt_tokens").notNull().default(0),
+  completionTokens: int("completion_tokens").notNull().default(0),
+  latencyMs: int("latency_ms").notNull().default(0),
+  finishReason: varchar("finish_reason", { length: 32 }),
+  error: text("error"),
+  createdAt: createdAt(),
+});
+
+// ── Tier 3: Inbound webhooks ──────────────────────────────────────────────────
+
+export const inboundWebhookListeners = mysqlTable("inbound_webhook_listeners", {
+  id: id(),
+  name: varchar("name", { length: 128 }).notNull(),
+  slug: varchar("slug", { length: 64 }).notNull(),
+  secretHash: varchar("secret_hash", { length: 128 }),
+  eventType: varchar("event_type", { length: 128 }),
+  handler: varchar("handler", { length: 128 }).notNull().default("log"),
+  enabled: boolean("enabled").notNull().default(true),
+  createdByUserId: int("created_by_user_id"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const inboundWebhookEvents = mysqlTable("inbound_webhook_events", {
+  id: id(),
+  listenerId: int("listener_id").notNull(),
+  sourceIp: varchar("source_ip", { length: 64 }),
+  headers: json("headers"),
+  payload: mediumtext("payload"),
+  signatureValid: boolean("signature_valid"),
+  processed: boolean("processed").notNull().default(false),
+  error: text("error"),
+  createdAt: createdAt(),
+});
+
+// ── Tier 3: API access ────────────────────────────────────────────────────────
+
+export const apiKeyRateLimits = mysqlTable("api_key_rate_limits", {
+  id: id(),
+  apiKeyId: int("api_key_id").notNull(),
+  windowSeconds: int("window_seconds").notNull().default(60),
+  maxRequests: int("max_requests").notNull().default(100),
+  updatedAt: updatedAt(),
+});
+
+export const apiRequestLogs = mysqlTable("api_request_logs", {
+  id: bigint("id", { mode: "number", unsigned: true }).autoincrement().primaryKey(),
+  apiKeyId: int("api_key_id"),
+  method: varchar("method", { length: 8 }).notNull(),
+  path: varchar("path", { length: 512 }).notNull(),
+  statusCode: smallint("status_code").notNull(),
+  latencyMs: int("latency_ms").notNull().default(0),
+  ipAddress: varchar("ip_address", { length: 64 }),
+  userAgent: varchar("user_agent", { length: 512 }),
+  createdAt: createdAt(),
+});
+
+export const apiActionLogs = mysqlTable("api_action_logs", {
+  id: bigint("id", { mode: "number", unsigned: true }).autoincrement().primaryKey(),
+  apiKeyId: int("api_key_id"),
+  action: varchar("action", { length: 128 }).notNull(),
+  entityType: varchar("entity_type", { length: 64 }),
+  entityId: int("entity_id"),
+  result: varchar("result", { length: 32 }).notNull().default("success"),
+  detail: text("detail"),
+  createdAt: createdAt(),
+});
+
+// ── Tier 3: Outbound connections ──────────────────────────────────────────────
+
+export const outboundConnections = mysqlTable("outbound_connections", {
+  id: id(),
+  name: varchar("name", { length: 128 }).notNull(),
+  connectionType: varchar("connection_type", { length: 64 }).notNull().default("http"),
+  baseUrl: varchar("base_url", { length: 512 }),
+  authType: mysqlEnum("auth_type", ["none", "api_key", "bearer", "basic", "oauth2"]).notNull().default("none"),
+  credentialsEnc: text("credentials_enc"),
+  headers: json("headers"),
+  timeoutMs: int("timeout_ms").notNull().default(10000),
+  enabled: boolean("enabled").notNull().default(true),
+  lastTestedAt: timestamp("last_tested_at"),
+  lastTestOk: boolean("last_test_ok"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const outboundCallLogs = mysqlTable("outbound_call_logs", {
+  id: bigint("id", { mode: "number", unsigned: true }).autoincrement().primaryKey(),
+  connectionId: int("connection_id").notNull(),
+  method: varchar("method", { length: 8 }).notNull(),
+  url: varchar("url", { length: 1024 }).notNull(),
+  statusCode: smallint("status_code"),
+  latencyMs: int("latency_ms").notNull().default(0),
+  error: text("error"),
+  triggeredBy: varchar("triggered_by", { length: 128 }),
+  createdAt: createdAt(),
+});
+
+// ── Tier 3: Scheduling / availability ────────────────────────────────────────
+
+export const availabilitySlots = mysqlTable("availability_slots", {
+  id: id(),
+  ownerUserId: int("owner_user_id").notNull(),
+  slotType: varchar("slot_type", { length: 64 }).notNull().default("consultation"),
+  startsAt: timestamp("starts_at").notNull(),
+  endsAt: timestamp("ends_at").notNull(),
+  durationMinutes: int("duration_minutes").notNull().default(30),
+  maxBookings: int("max_bookings").notNull().default(1),
+  currentBookings: int("current_bookings").notNull().default(0),
+  isAvailable: boolean("is_available").notNull().default(true),
+  notes: text("notes"),
+  createdAt: createdAt(),
+});
+
+export const meetingBookings = mysqlTable("meeting_bookings", {
+  id: id(),
+  slotId: int("slot_id").notNull(),
+  customerUserId: int("customer_user_id").notNull(),
+  orderId: int("order_id"),
+  status: mysqlEnum("status", ["pending", "confirmed", "cancelled", "completed", "no_show"]).notNull().default("pending"),
+  notes: text("notes"),
+  confirmationToken: varchar("confirmation_token", { length: 128 }),
+  confirmedAt: timestamp("confirmed_at"),
+  cancelledAt: timestamp("cancelled_at"),
+  cancelReason: text("cancel_reason"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+// ── Tier 3: Portal wizard slides ──────────────────────────────────────────────
+
+export const portalWizardSlides = mysqlTable("portal_wizard_slides", {
+  id: id(),
+  title: varchar("title", { length: 255 }).notNull(),
+  subtitle: text("subtitle"),
+  bodyMarkdown: text("body_markdown"),
+  imageUrl: varchar("image_url", { length: 512 }),
+  ctaLabel: varchar("cta_label", { length: 128 }),
+  ctaHref: varchar("cta_href", { length: 512 }),
+  sortOrder: int("sort_order").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+  targetAudience: mysqlEnum("target_audience", ["all", "new", "returning"]).notNull().default("all"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+// ── Tier 3: A/B testing ───────────────────────────────────────────────────────
+
+export const pwaAbVariants = mysqlTable("pwa_ab_variants", {
+  id: id(),
+  experimentKey: varchar("experiment_key", { length: 128 }).notNull(),
+  variantKey: varchar("variant_key", { length: 64 }).notNull(),
+  description: text("description"),
+  weight: int("weight").notNull().default(50),
+  isControl: boolean("is_control").notNull().default(false),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: createdAt(),
+});
+
+export const pwaAbEvents = mysqlTable("pwa_ab_events", {
+  id: bigint("id", { mode: "number", unsigned: true }).autoincrement().primaryKey(),
+  experimentKey: varchar("experiment_key", { length: 128 }).notNull(),
+  variantKey: varchar("variant_key", { length: 64 }).notNull(),
+  userId: int("user_id"),
+  sessionId: varchar("session_id", { length: 128 }),
+  eventType: varchar("event_type", { length: 64 }).notNull().default("impression"),
+  metadata: json("metadata"),
+  createdAt: createdAt(),
+});
+
+// ── Tier 3: Admin preferences ─────────────────────────────────────────────────
+
+export const adminNavPreferences = mysqlTable("admin_nav_preferences", {
+  id: id(),
+  userId: int("user_id").notNull(),
+  pinnedItems: json("pinned_items"),
+  collapsedSections: json("collapsed_sections"),
+  defaultView: varchar("default_view", { length: 64 }),
+  updatedAt: updatedAt(),
+});
+
+export const pinnedQuickAdd = mysqlTable("pinned_quick_add", {
+  id: id(),
+  userId: int("user_id").notNull(),
+  actionKey: varchar("action_key", { length: 64 }).notNull(),
+  label: varchar("label", { length: 128 }).notNull(),
+  href: varchar("href", { length: 512 }).notNull(),
+  sortOrder: int("sort_order").notNull().default(0),
+  createdAt: createdAt(),
+});
+
+// ── Tier 3: Support permissions ───────────────────────────────────────────────
+
+export const supportPermissions = mysqlTable("support_permissions", {
+  id: id(),
+  userId: int("user_id").notNull(),
+  canViewAllTickets: boolean("can_view_all_tickets").notNull().default(false),
+  canCloseTickets: boolean("can_close_tickets").notNull().default(false),
+  canAssignTickets: boolean("can_assign_tickets").notNull().default(false),
+  canViewCustomerPii: boolean("can_view_customer_pii").notNull().default(false),
+  canIssueRefunds: boolean("can_issue_refunds").notNull().default(false),
+  ticketCategories: json("ticket_categories"),
+  grantedByUserId: int("granted_by_user_id").notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+// ── Tier 3: Feature toggle scheduling ────────────────────────────────────────
+
+export const featureToggleSchedules = mysqlTable("feature_toggle_schedules", {
+  id: id(),
+  flagKey: varchar("flag_key", { length: 128 }).notNull(),
+  scheduledValue: boolean("scheduled_value").notNull(),
+  scheduledAt: timestamp("scheduled_at").notNull(),
+  executedAt: timestamp("executed_at"),
+  createdByUserId: int("created_by_user_id"),
+  note: text("note"),
+  createdAt: createdAt(),
+});
+
+// ── Tier 3: System backups ────────────────────────────────────────────────────
+
+export const systemBackups = mysqlTable("system_backups", {
+  id: id(),
+  filename: varchar("filename", { length: 512 }).notNull(),
+  sizeBytes: bigint("size_bytes", { mode: "number", unsigned: true }).notNull().default(0),
+  backupType: mysqlEnum("backup_type", ["full", "database", "files", "incremental"]).notNull().default("full"),
+  status: mysqlEnum("status", ["running", "completed", "failed", "deleted"]).notNull().default("completed"),
+  schemaVersion: varchar("schema_version", { length: 32 }),
+  checksum: varchar("checksum", { length: 128 }),
+  storagePath: varchar("storage_path", { length: 1024 }),
+  triggeredBy: mysqlEnum("triggered_by", ["scheduler", "manual", "pre_upgrade"]).notNull().default("scheduler"),
+  triggeredByUserId: int("triggered_by_user_id"),
+  error: text("error"),
+  createdAt: createdAt(),
+});
+
+// ── Tier 3: Email automation rate limits ──────────────────────────────────────
+
+export const emailAutomationRateLimits = mysqlTable("email_automation_rate_limits", {
+  id: id(),
+  automationId: int("automation_id").notNull(),
+  userId: int("user_id").notNull(),
+  sentCount: int("sent_count").notNull().default(0),
+  windowStart: timestamp("window_start").notNull().defaultNow(),
+});

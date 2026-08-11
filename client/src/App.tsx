@@ -73,6 +73,16 @@ import EmailSettings from "@/pages/admin/EmailSettings";
 import EmailAutomations from "@/pages/admin/EmailAutomations";
 import Checkout from "@/pages/portal/Checkout";
 import Wizard from "@/pages/portal/Wizard";
+import { AdminCRM } from "@/pages/admin/CRM";
+import { AdminBackups } from "@/pages/admin/Backups";
+import { AdminAIHub } from "@/pages/admin/AIHub";
+import { AdminScheduling } from "@/pages/admin/Scheduling";
+import { AdminWizardSlides } from "@/pages/admin/WizardSlides";
+import { AdminOutboundConnections } from "@/pages/admin/OutboundConnections";
+import { AdminInboundWebhooks } from "@/pages/admin/InboundWebhooks";
+import { AdminSupportPermissions } from "@/pages/admin/SupportPermissions";
+import { AdminABTests } from "@/pages/admin/ABTests";
+import { AdminSubscriptions } from "@/pages/admin/Subscriptions";
 
 /** Full-page loader shown while the session is being resolved. */
 function BootScreen() {
@@ -258,6 +268,16 @@ function AdminRoutes() {
         <Route path="/admin/integrations" component={AdminIntegrationsPage} />
         <Route path="/admin/email-settings" component={EmailSettings} />
         <Route path="/admin/email-automations" component={EmailAutomations} />
+        <Route path="/admin/crm" component={AdminCRM} />
+        <Route path="/admin/backups" component={AdminBackups} />
+        <Route path="/admin/ai-hub" component={AdminAIHub} />
+        <Route path="/admin/scheduling" component={AdminScheduling} />
+        <Route path="/admin/wizard-slides" component={AdminWizardSlides} />
+        <Route path="/admin/outbound" component={AdminOutboundConnections} />
+        <Route path="/admin/inbound-webhooks" component={AdminInboundWebhooks} />
+        <Route path="/admin/support-permissions" component={AdminSupportPermissions} />
+        <Route path="/admin/ab-tests" component={AdminABTests} />
+        <Route path="/admin/subscriptions" component={AdminSubscriptions} />
         <Route component={NotFoundPage} />
       </Switch>
     </AdminLayout>

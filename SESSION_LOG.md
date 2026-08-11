@@ -511,3 +511,43 @@ The `validateCoupon` procedure is a query, not a mutation. The checkout page was
 ---
 
 *Session log updated as required by project instructions.*
+
+---
+
+## Session 7 — Tier 2 and Tier 3 Feature Additions (Aug 11, 2026)
+
+### User request
+"add Tier 2 and Tier 3" — implement all remaining operational features and the full 100-table schema with routers and admin UI.
+
+### Tier 2 features added
+
+**Deployment scripts:** `deploy/upgrade.sh` (idempotent in-place upgrade), `deploy/factory-reset.sh` (wipes database and storage with safety confirmation phrase), `deploy/health-check.sh` (CLI health check covering service status, nginx, MySQL, TLS certificate expiry, disk, memory, backup freshness).
+
+**Analytics charts:** Admin dashboard rewritten with Recharts — 30-day order trend (AreaChart), revenue trend (AreaChart), signup trend (BarChart) using real database data.
+
+**SIEM/syslog export:** `siemExport` tRPC router with CEF and JSON-LD formats, streaming export endpoint at `/api/siem/export`, configurable time range and severity filter.
+
+**Maintenance subscriber notifications:** Wired into `updateSetting` — when `maintenance.enabled` toggles, queued emails go to all `maintenance_subscribers`.
+
+**Microsoft Graph email transport:** `emailGraph.ts` with OAuth2 client-credentials token caching, Graph API send-mail, SMTP fallback on error.
+
+**Email automations engine:** `email_automations` table (migration 003), automations service, tRPC router, fired at registration and email verification events.
+
+### Tier 3 features added
+
+**28 new tables** in migration 004, bringing total to exactly 100 tables: `subscription_plans`, `billing_events`, `crm_contacts`, `crm_notes`, `crm_tags`, `crm_contact_tags`, `availability_slots`, `meeting_bookings`, `portal_wizard_slides`, `pwa_ab_variants`, `pwa_ab_events`, `support_permissions`, `feature_toggle_schedules`, `system_backups`, `ai_sessions`, `ai_messages`, `ai_response_logs`, `inbound_webhook_listeners`, `inbound_webhook_events`, `outbound_connections`, `outbound_call_logs`, `api_key_rate_limits`, `api_request_logs`, `api_action_logs`, `admin_nav_preferences`, `pinned_quick_add`, `newsletter_subscribers`, `referral_program_config`.
+
+**New tRPC routers:** `crm` (contacts, notes, tags), `tier3` (combined namespace: subscriptions, scheduling, wizard slides, A/B tests, support permissions, system backups, AI hub, inbound webhooks, outbound connections).
+
+**10 new admin UI pages:** `/admin/crm`, `/admin/backups`, `/admin/ai-hub`, `/admin/scheduling`, `/admin/wizard-slides`, `/admin/outbound`, `/admin/inbound-webhooks`, `/admin/support-permissions`, `/admin/ab-tests`, `/admin/subscriptions`.
+
+### Defects found and fixed
+
+9 type errors across the new pages: Toast API mismatch (`push({tone,title})` vs `toast.success(title)`), Button prop mismatches (`icon=`, `loading=`, `tone=` don't exist), EmptyState `leadingIcon` vs `icon`, FieldShell alias, DataTable vs Table, ConfirmDialog `onConfirm` syntax (semicolon inside object literal from regex substitution), conditional icon expressions, WizardSlides `targetAudience` type narrowing, CRM `createdAt: Date` vs `string`.
+
+### Verification
+- 0 TypeScript errors
+- 112/112 unit tests pass
+- Client build: 6.08s, 4 chunks, no warnings
+
+*Session log updated as required by project instructions.*

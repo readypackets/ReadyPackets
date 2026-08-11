@@ -10,6 +10,7 @@
  * read credentials out of the database.
  */
 import { TRPCError } from "@trpc/server";
+import { notifyMaintenanceStart, notifyMaintenanceEnd } from "../services/maintenanceNotify.js";
 import { and, count, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { env } from "../config/env.js";
@@ -501,6 +502,14 @@ export const adminSecurityRouter = router({
         changes: existing[0]?.isSecret ? { redacted: true } : { value: input.value },
         ipAddress: ctx.clientIp,
       });
+      // Fire maintenance subscriber notifications when maintenance.enabled changes.
+      if (input.key === "maintenance.enabled") {
+        if (input.value === "true" || input.value === "1") {
+          void notifyMaintenanceStart();
+        } else {
+          void notifyMaintenanceEnd();
+        }
+      }
       return { ok: true as const };
     }),
 
