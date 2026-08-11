@@ -241,6 +241,24 @@ export async function restoreSession(sessionId: string): Promise<void> {
     .where(eq(userSessions.id, sessionId));
 }
 
+/**
+ * Revoke any active sessions that are still awaiting MFA for a given user.
+ * Called at the start of a new login so the browser cannot accumulate stale
+ * mfaPending cookies that confuse the session refresh after MFA succeeds.
+ */
+export async function revokePendingMfaSessions(userId: number): Promise<void> {
+  await db
+    .update(userSessions)
+    .set({ status: "revoked", revokedAt: new Date(), revokedReason: "superseded_by_new_login" })
+    .where(
+      and(
+        eq(userSessions.userId, userId),
+        eq(userSessions.mfaPending, true),
+        eq(userSessions.status, "active"),
+      ),
+    );
+}
+
 /** Revoke every session for a user, optionally sparing the current one. */
 export async function revokeAllUserSessions(
   userId: number,

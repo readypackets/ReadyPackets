@@ -48,6 +48,7 @@ import {
   createSession,
   markMfaSatisfied,
   resolveSession,
+  revokePendingMfaSessions,
   revokeAllUserSessions,
   revokeSession,
   rotateSession,
@@ -390,6 +391,12 @@ export const authRouter = router({
       const adminNeedsEnrolment =
         user.role === "admin" && requireAdminMfa && !mfaConfirmed;
 
+      // Revoke any stale mfaPending sessions before creating a new one.
+      // Without this, the browser can accumulate multiple session cookies and
+      // the session.refresh() call after verifyMfa may read the old pending
+      // session instead of the newly-satisfied one, causing an infinite loop.
+      await revokePendingMfaSessions(user.id);
+
       const { csrfToken } = await createSession(ctx.res, {
         userId: user.id,
         ipAddress: ctx.clientIp,
@@ -456,7 +463,11 @@ export const authRouter = router({
         });
       }
 
-      await markMfaSatisfied(session.sessionId);
+      // Rotate the session after MFA succeeds: this revokes the mfaPending
+      // session and issues a fresh cookie. The browser then has exactly one
+      // valid session cookie pointing at a row with mfaPending=false, so the
+      // subsequent session.refresh() call reliably returns authenticated=true.
+      await rotateSession(ctx.res, session, { mfaPending: false, restricted: false });
       void recordSecurityEvent({
         eventType: input.useBackupCode ? "mfa.backup_code_used" : "login.mfa_success",
         message: input.useBackupCode
