@@ -278,14 +278,15 @@ export const integrationsRouter = router({
         .limit(1);
       if (!orderRows[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Order not found." });
 
-      await runPhaseKickoff(input.orderId, input.phase as any);
+      const forceWebhook = input.phase === "phase_1_intake" || input.phase === "phase_2_synthesis";
+      await runPhaseKickoff(input.orderId, input.phase as any, { forceWebhook });
       void recordActivity({
         actorUserId: ctx.session.user.id,
         actorRole: ctx.session.user.role,
         action: "order.phase_kickoff_manual",
-        summary: `Manually kicked off ${input.phase} for order ${orderRows[0].orderNumber}`,
+        summary: `Manually kicked off ${input.phase} for order ${orderRows[0].orderNumber}${forceWebhook ? " and queued its phase-start webhook" : ""}`,
       });
-      return { ok: true };
+      return { ok: true, webhookQueued: forceWebhook };
     }),
 
   // =========================================================================

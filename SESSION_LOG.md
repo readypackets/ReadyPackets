@@ -845,3 +845,23 @@ All three links were corrected to `/portal/orders/:id/mnda`, including the actio
 ### Phase webhook configuration
 
 Phase-start payload URLs are configured at **Admin → Integrations → Webhook Endpoints**. The top of that page contains dedicated cards named **Phase I Start — P101** and **Phase II Start — P201**, each with a required HTTPS destination URL, optional HMAC signing secret, and an enable/disable control. The same page's **Delivery Log** tab displays delivery result, response code, diagnostics, retry, and redelivery controls.
+
+## 2026-08-11 — Phase I / II Webhook Dispatch Correction
+
+### User report
+
+The administrator reported that starting the Phase I and Phase II outbound webhook actions did not work.
+
+### Root cause
+
+The dedicated P101 and P201 destination records were present and enabled, but the Phase I kickoff configuration had `notify_webhooks` disabled and the Phase II kickoff configuration did not exist. The manual Phase buttons relied on those optional phase-configuration flags, so they queued no webhook job even though the user explicitly selected **Start Phase I / queue P101** or **Start Phase II / queue P201**.
+
+### Correction
+
+Manual Phase I and Phase II starts now force a `notify_webhooks` job regardless of the optional phase configuration. The normal configuration still controls automatic lifecycle kickoffs. Production phase configuration was also corrected: Phase I webhook notifications are enabled, and an enabled Phase II configuration with webhook notifications was seeded.
+
+The dedicated endpoint records remain configurable at **Admin → Integrations → Webhook Endpoints** under **Phase I Start — P101** and **Phase II Start — P201**. Delivery outcomes, retry, and redelivery remain available from **Delivery Log**.
+
+### Validation and deployment
+
+TypeScript typecheck completed with zero errors. The corrected server bundle was deployed, the service restarted successfully, and the readiness endpoint returned `{"status":"ready"}`.

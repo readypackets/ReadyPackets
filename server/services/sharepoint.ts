@@ -321,7 +321,8 @@ export async function queueFullOrderFolderProvisioning(orderId: number): Promise
 
 export async function runPhaseKickoff(
   orderId: number,
-  phase: OrderStatus
+  phase: OrderStatus,
+  options: { forceWebhook?: boolean } = {},
 ): Promise<void> {
   // Load the kickoff config for this phase.
   const configRows = await db
@@ -330,15 +331,14 @@ export async function runPhaseKickoff(
     .where(and(eq(phaseKickoffConfigs.phase, phase), eq(phaseKickoffConfigs.enabled, true)))
     .limit(1);
 
-  if (configRows.length === 0) {
+  const config = configRows[0] ?? null;
+  if (!config && !options.forceWebhook) {
     logger.debug("sharepoint.kickoff.no_config", { orderId, phase });
     return;
   }
 
-  const config = configRows[0]!;
-
   // Auto-set order completion % if configured.
-  if (config.completionPercent > 0) {
+  if (config && config.completionPercent > 0) {
     await db
       .update(orders)
       .set({ completionPercent: config.completionPercent })
@@ -348,10 +348,10 @@ export async function runPhaseKickoff(
 
   // Queue jobs for each automation step.
   const jobs: { jobType: string }[] = [];
-  if (config.createFolders) jobs.push({ jobType: "create_folders" });
-  if (config.attachPlaceholders) jobs.push({ jobType: "attach_placeholders" });
-  if (config.notifyWebhooks) jobs.push({ jobType: "notify_webhooks" });
-  if (config.notifyCustomer) jobs.push({ jobType: "notify_customer" });
+  if (config?.createFolders) jobs.push({ jobType: "create_folders" });
+  if (config?.attachPlaceholders) jobs.push({ jobType: "attach_placeholders" });
+  if (config?.notifyWebhooks || options.forceWebhook) jobs.push({ jobType: "notify_webhooks" });
+  if (config?.notifyCustomer) jobs.push({ jobType: "notify_customer" });
 
   for (const job of jobs) {
     await db.insert(phaseJobs).values({
@@ -363,7 +363,7 @@ export async function runPhaseKickoff(
     });
   }
 
-  logger.info("sharepoint.kickoff.queued", { orderId, phase, jobCount: jobs.length });
+  logger.info("sharepoint.kickoff.queued", { orderId, phase, jobCount: jobs.length, forceWebhook: Boolean(options.forceWebhook) });
 }
 
 // ---------------------------------------------------------------------------
