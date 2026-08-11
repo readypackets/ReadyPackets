@@ -241,8 +241,9 @@ DATA_ENCRYPTION_KEY=${DATA_ENCRYPTION_KEY}
 EMAIL_INDEX_KEY=${EMAIL_INDEX_KEY}
 
 # nginx on this host is the only proxy in front of the application.
+# BEHIND_CLOUDFLARE=true tells the app to read CF-Connecting-IP for real client IPs.
 TRUST_PROXY_HOPS=1
-BEHIND_CLOUDFLARE=false
+BEHIND_CLOUDFLARE=true
 
 SESSION_TTL_MINUTES=720
 SESSION_IDLE_TIMEOUT_MINUTES=120

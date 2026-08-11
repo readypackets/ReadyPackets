@@ -596,20 +596,25 @@ async function seedSettings(): Promise<void> {
 
   for (const category of RATE_LIMIT_CATEGORIES) {
     const fallback = DEFAULT_RATE_LIMITS[category];
-    const existing = await db
-      .select({ category: rateLimitConfigs.category })
-      .from(rateLimitConfigs)
-      .where(eq(rateLimitConfigs.category, category))
-      .limit(1);
-    if (existing.length > 0) continue;
-    await db.insert(rateLimitConfigs).values({
-      category,
-      label: fallback.label,
-      windowSeconds: fallback.windowSeconds,
-      maxRequests: fallback.maxRequests,
-      enabled: fallback.enabled,
-      penaltyEnabled: fallback.penaltyEnabled,
-    });
+    // Upsert: insert if missing, update limits if the stored values differ from
+    // the current defaults (so a re-run after a code change applies the fix).
+    await db
+      .insert(rateLimitConfigs)
+      .values({
+        category,
+        label: fallback.label,
+        windowSeconds: fallback.windowSeconds,
+        maxRequests: fallback.maxRequests,
+        enabled: fallback.enabled,
+        penaltyEnabled: fallback.penaltyEnabled,
+      })
+      .onDuplicateKeyUpdate({
+        set: {
+          label: fallback.label,
+          windowSeconds: fallback.windowSeconds,
+          maxRequests: fallback.maxRequests,
+        },
+      });
   }
 
   console.log(
