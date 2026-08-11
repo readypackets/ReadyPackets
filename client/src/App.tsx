@@ -61,7 +61,7 @@ import { MfaSetupPage, SecurityPage } from "@/pages/portal/Security";
 import { WorkspacesPage } from "@/pages/portal/Workspaces";
 
 import { AdminDashboard } from "@/pages/admin/Dashboard";
-import { AdminOrderDetailPage, AdminOrdersPage } from "@/pages/admin/Orders";
+import { AdminOrderDetailPage, AdminOrdersPage, AdminOrderTrashPage } from "@/pages/admin/Orders";
 import { AdminCustomerDetailPage, AdminCustomersPage } from "@/pages/admin/Customers";
 import { AdminCatalogPage } from "@/pages/admin/Catalog";
 import { AdminTicketDetailPage, AdminTicketsPage } from "@/pages/admin/Tickets";
@@ -142,6 +142,10 @@ function PublicRoutes() {
         <Route path="/changelog" component={ChangelogPage} />
         <Route path="/contact" component={ContactPage} />
         <Route path="/legal/:slug" component={PolicyPage} />
+        <Route path="/privacy" component={PolicyPage} />
+        <Route path="/terms" component={PolicyPage} />
+        <Route path="/refunds" component={PolicyPage} />
+        <Route path="/disclaimer" component={PolicyPage} />
         <Route component={NotFoundPage} />
       </Switch>
     </PublicLayout>
@@ -292,6 +296,7 @@ function AdminRoutes() {
       <Switch>
         <Route path="/admin" component={AdminDashboard} />
         <Route path="/admin/orders" component={AdminOrdersPage} />
+        <Route path="/admin/orders/trash" component={AdminOrderTrashPage} />
         <Route path="/admin/orders/:id" component={AdminOrderDetailPage} />
         <Route path="/admin/customers" component={AdminCustomersPage} />
         <Route path="/admin/customers/:id" component={AdminCustomerDetailPage} />

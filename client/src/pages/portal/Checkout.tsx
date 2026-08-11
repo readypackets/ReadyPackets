@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { trpc } from "../../lib/trpc";
 import { Card } from "../../components/ui/Surface";
@@ -25,7 +25,9 @@ export default function Checkout() {
   const params = new URLSearchParams(window.location.search);
   const orderId = parseInt(params.get("order") ?? "0", 10);
 
-  const [couponCode, setCouponCode] = useState("");
+  const initialCouponCode = params.get("coupon")?.trim().toUpperCase() ?? "";
+  const [couponCode, setCouponCode] = useState(initialCouponCode);
+  const shouldAutoApplyCoupon = useRef(Boolean(initialCouponCode));
   const [appliedCoupon, setAppliedCoupon] = useState<CouponPreview | null>(null);
   const [couponError, setCouponError] = useState<string | null>(null);
   const [isApplyingCoupon, setIsApplyingCoupon] = useState(false);
@@ -69,6 +71,12 @@ export default function Checkout() {
       setIsApplyingCoupon(false);
     }
   }, [appliedCoupon?.code, couponCode, order.data?.order, success, utils.stripe.validateCoupon]);
+
+  useEffect(() => {
+    if (!shouldAutoApplyCoupon.current || !order.data?.order || !couponCode || appliedCoupon || isApplyingCoupon) return;
+    shouldAutoApplyCoupon.current = false;
+    void applyCouponCode();
+  }, [appliedCoupon, applyCouponCode, couponCode, isApplyingCoupon, order.data?.order]);
 
   async function startCheckout() {
     try {

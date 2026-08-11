@@ -987,3 +987,46 @@ The report records the customer’s requested coupon behavior, full cart, tier-p
 The historic references to Manus OAuth and a PWA/service worker are intentional exceptions, not defects: the application is self-hosted without Manus runtime dependencies and PWA support remains disabled at the user’s request.
 
 ---
+
+
+---
+
+## 12. Commerce, policy-route, and recoverable-order release — August 11, 2026
+
+### 12.1 Request received
+
+> start working on the to do list and add these items as well to the list and then begin working on the needed gaps
+>
+> 1. also add to the to do list fix all the policies so that they show and not a 404 page error.
+> 2. add a link to the trash can for orders that are deleted
+
+The user supplied a public `/refunds` screenshot showing the branded 404 page and an `/admin/orders` screenshot showing that no deleted-order destination was visible. The prior approved workplan already prioritized the checkout coupon, cart, Stripe hand-off, payment lifecycle, and recommendation gaps.
+
+### 12.2 Workplan changes
+
+The active workplan was expanded to cover policy routing and deleted-order recovery before the commerce release. The subsequent build sequence was: diagnose and correct public policy aliases; add a recoverable order-trash route; repair Stripe configuration consistency and payment lifecycle safeguards; move the live order builder into the checkout flow; add coupon controls and a persistent cart; add catalog-driven recommendations; validate and deploy.
+
+### 12.3 Implementation completed
+
+| Area | Completed outcome |
+| --- | --- |
+| **Public policy routes** | Registered legacy public aliases `/privacy`, `/terms`, `/refunds`, and `/disclaimer`, as well as canonical `/legal/<slug>` mappings. The policy renderer now resolves the published versioned policy document for each supported route. |
+| **Order trash** | Added an **Order trash** link to the admin order queue, a dedicated `/admin/orders/trash` page, server-side trashed-order listing, audited restore action, confirmation dialog, and return to active order queue. Soft deletion and retention remain unchanged. |
+| **Coupon experience** | Added a visible coupon field to the live order-builder quote panel. A coupon applies either through an explicit **Apply** control, Enter, or blur; it previews the discount, supports removal, forwards the accepted code to checkout, and returns clear validation feedback. |
+| **Checkout hand-off** | Standard priced orders now proceed from order creation to `/portal/checkout` rather than directly to the order detail. Custom-quote orders remain on the existing invoice path. Checkout automatically validates a carried coupon. |
+| **Payment return** | Added clear paid/confirming/cancelled feedback after Stripe redirects back to the order. The customer-facing paid status remains based on server-side verification, not the browser return URL. |
+| **Stripe configuration** | Centralized execution paths on database-or-environment effective Stripe credentials and effective webhook signing secret. Coupon start dates are enforced, and an invalid code is rejected during checkout creation rather than silently ignored. |
+| **Payment idempotency** | Added a guard that makes repeated completed-checkout notifications harmless once an order is paid, preventing repeat coupon/referral handling for that order. |
+| **Cart and recommendations** | The packet selector is now a persistent browser cart: selections, project name, and draft coupon survive navigation/reload in the browser until checkout or explicit clearing. The UI enforces one tier visually, the service now rejects duplicate packet-group tiers server-side, and the quote panel offers non-coercive catalog-driven packet suggestions plus bundle-progress guidance. |
+
+### 12.4 Verification and deployment
+
+`pnpm run typecheck` completed successfully after each implementation stage. The Vitest suite completed successfully with **142 passing tests**. The production client and server bundles were built and deployed under `/opt/readypackets` with the previous client build retained as a timestamped rollback artifact. `readypackets.service` restarted successfully, the public readiness endpoint returned `{"status":"ready"}`, and the live security verification suite passed **46/46 checks**.
+
+The deployed `https://myportal.readypackets.com/refunds` route was verified in a browser. It now renders the published Refund Policy, version 2026.03 effective March 2026, rather than the public 404 page. The verification record is stored in `docs/verification/policy-route-check-2026-08-11.md`.
+
+### 12.5 Remaining optional production configuration
+
+Stripe remains intentionally inactive until production Stripe keys and a signed webhook endpoint are configured. The implementation can be tested immediately using Stripe test keys; a complete test-mode lifecycle should be run before accepting real payment. The recoverable order-trash view requires an authenticated administrator to exercise the restore workflow, and no order was modified solely for verification.
+
+---

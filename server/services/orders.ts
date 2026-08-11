@@ -56,6 +56,10 @@ export async function createOrder(input: CreateOrderInput) {
   if (quote.lines.length === 0) {
     throw new OrderStateError("None of the selected packets are currently available.");
   }
+  const packetGroups = new Set(quote.lines.map((line) => line.packetGroupId));
+  if (packetGroups.size !== quote.lines.length) {
+    throw new OrderStateError("Choose only one tier from each packet group.");
+  }
 
   // Look up the customer's unique number to embed in the order ID.
   const customerRow = await db

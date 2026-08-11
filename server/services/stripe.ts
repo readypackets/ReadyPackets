@@ -126,6 +126,7 @@ export async function validateCoupon(
       and(
         eq(coupons.code, code.toUpperCase().trim()),
         eq(coupons.active, true),
+        sql`(${coupons.startsAt} IS NULL OR ${coupons.startsAt} <= ${now})`,
         sql`(${coupons.expiresAt} IS NULL OR ${coupons.expiresAt} > ${now})`,
         sql`(${coupons.maxRedemptions} IS NULL OR ${coupons.redemptionCount} < ${coupons.maxRedemptions})`
       )
@@ -174,7 +175,7 @@ export interface CheckoutInput {
 }
 
 export async function createCheckoutSession(input: CheckoutInput) {
-  const stripe = getStripe();
+  const stripe = await getStripeAsync();
 
   let stripeCouponId: string | undefined;
   let couponDiscountCents = 0;
@@ -182,7 +183,10 @@ export async function createCheckoutSession(input: CheckoutInput) {
 
   if (input.couponCode) {
     const couponResult = await validateCoupon(input.couponCode, input.totalCents);
-    if (couponResult.valid && couponResult.couponId) {
+    if (!couponResult.valid || !couponResult.couponId) {
+      throw new Error(couponResult.message ?? "This coupon cannot be applied to this order.");
+    }
+    {
       appliedCouponId = couponResult.couponId;
       couponDiscountCents = couponResult.discountCents ?? 0;
 
@@ -285,15 +289,16 @@ export async function handleStripeWebhook(
   rawBody: Buffer,
   signature: string
 ): Promise<{ handled: boolean; eventType: string }> {
-  if (!env.stripe.webhookSecret) {
-    throw new Error("STRIPE_WEBHOOK_SECRET is not configured.");
+  const webhookSecret = await getEffectiveWebhookSecret();
+  if (!webhookSecret) {
+    throw new Error("Stripe webhook signing secret is not configured.");
   }
 
-  const stripe = getStripe();
+  const stripe = await getStripeAsync();
   let event: Stripe.Event;
 
   try {
-    event = stripe.webhooks.constructEvent(rawBody, signature, env.stripe.webhookSecret);
+    event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.warn("stripe.webhook.signature_invalid", { error: msg });
@@ -328,6 +333,12 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
 
   if (!orderId) {
     logger.warn("stripe.checkout.completed.no_order_id", { sessionId: session.id });
+    return;
+  }
+
+  const existingOrder = await db.select({ paymentStatus: orders.paymentStatus }).from(orders).where(eq(orders.id, orderId)).limit(1);
+  if (existingOrder[0]?.paymentStatus === "paid") {
+    logger.info("stripe.checkout.completed.duplicate", { orderId, sessionId: session.id });
     return;
   }
 
@@ -447,7 +458,7 @@ export async function initiateRefund(
   reason: string,
   requestedByUserId: number
 ): Promise<{ refundId: string }> {
-  const stripe = getStripe();
+  const stripe = await getStripeAsync();
 
   const paymentRows = await db
     .select()

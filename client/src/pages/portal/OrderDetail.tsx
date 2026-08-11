@@ -6,7 +6,7 @@
  * enforced by the server's state machine.
  */
 import { useState } from "react";
-import { Link, useParams } from "wouter";
+import { Link, useParams, useSearchParams } from "wouter";
 import {
   AlertTriangle,
   ArrowRight,
@@ -50,6 +50,8 @@ import {
 export function OrderDetailPage() {
   const params = useParams<{ id: string }>();
   const orderId = Number(params.id);
+  const [searchParams] = useSearchParams();
+  const paymentReturn = searchParams.get("payment");
   const toast = useToast();
 
   const detail = trpc.orders.detail.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
@@ -61,6 +63,10 @@ export function OrderDetailPage() {
   const intake = trpc.intake.get.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
   const shares = trpc.orders.shares.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
   const workspaces = trpc.orders.workspaces.useQuery();
+  const paymentStatus = trpc.stripe.paymentStatus.useQuery(
+    { orderId },
+    { enabled: Number.isFinite(orderId) && paymentReturn === "success", refetchInterval: paymentReturn === "success" ? 3_000 : false },
+  );
 
   const [note, setNote] = useState("");
   const [answers, setAnswers] = useState<Record<number, string>>({});
@@ -197,6 +203,9 @@ export function OrderDetailPage() {
           </>
         }
       />
+
+      {paymentReturn === "success" ? <Alert tone={paymentStatus.data?.paymentStatus === "paid" ? "success" : "info"} className="mb-6" title={paymentStatus.data?.paymentStatus === "paid" ? "Payment confirmed" : "Confirming payment"}>{paymentStatus.data?.paymentStatus === "paid" ? "Your payment has been verified and your order is marked paid." : "Stripe returned you to ReadyPackets. We are confirming the signed payment notification now; this page will update automatically."}</Alert> : null}
+      {paymentReturn === "cancelled" ? <Alert tone="warning" className="mb-6" title="Checkout cancelled">No payment was taken. You can return to checkout from this order whenever you are ready.</Alert> : null}
 
       {shares.data ? <Card className="mb-6"><CardHeader title="Shared access" description="Invite another customer to contribute to this order, or limit them to a specific capability." actions={<Button size="sm" variant="outline" onClick={() => setShareOpen(true)}>Share order</Button>} /><div className="mt-4 space-y-2">{shares.data.filter((share) => !share.revokedAt).length === 0 ? <p className="text-sm text-muted">This order is private to you.</p> : shares.data.filter((share) => !share.revokedAt).map((share) => <div key={share.id} className="flex items-center justify-between gap-3 rounded border border-line p-3"><div><p className="text-sm font-medium text-ink">{share.name}</p><p className="text-xs text-muted">{share.email} · {share.scope.replace(/_/g, " ")}</p></div><Button size="sm" variant="ghost" busy={revokeShare.isPending} onClick={() => revokeShare.mutate({ orderId, shareId: share.id })}>Remove</Button></div>)}</div></Card> : null}
 

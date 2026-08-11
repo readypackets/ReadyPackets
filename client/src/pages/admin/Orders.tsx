@@ -505,6 +505,9 @@ export function AdminOrdersPage() {
         description="All orders across the platform, newest first."
         actions={
           <div className="flex items-center gap-2">
+            <LinkButton href="/admin/orders/trash" variant="outline" leadingIcon={<Trash2 className="size-4" aria-hidden="true" />}>
+              Order trash
+            </LinkButton>
             <Button
               variant="outline"
               busy={exportCsv.isPending}
@@ -615,6 +618,36 @@ export function AdminOrdersPage() {
       )}
     </>
   );
+}
+
+export function AdminOrderTrashPage() {
+  const toast = useToast();
+  const utils = trpc.useUtils();
+  const [restoreId, setRestoreId] = useState<number | null>(null);
+  const trashed = trpc.admin.trashedOrders.useQuery();
+  const restore = trpc.admin.restoreOrder.useMutation({
+    async onSuccess() {
+      setRestoreId(null);
+      await Promise.all([trashed.refetch(), utils.admin.orders.invalidate()]);
+      toast.success("Order restored", "The order is visible in the order queue again.");
+    },
+    onError(error) { toast.error("Could not restore order", errorMessage(error)); },
+  });
+  const columns: Column<{
+    id: number; orderNumber: string; customer: string; status: string; paymentStatus: string; totalCents: number; projectName: string | null; createdAt: string | Date; deletedAt: string | Date | null;
+  }>[] = [
+    { key: "order", header: "Order", cell: (order) => <div><p className="font-mono text-xs font-semibold text-muted">{order.orderNumber}</p><p className="mt-0.5 font-medium text-ink">{order.projectName ?? "Untitled project"}</p></div> },
+    { key: "customer", header: "Customer", cell: (order) => <span className="text-sm text-body">{order.customer}</span> },
+    { key: "deleted", header: "Moved to trash", cell: (order) => <span className="text-sm text-body">{formatDate(order.deletedAt)}</span> },
+    { key: "total", header: "Total", align: "right", cell: (order) => <span className="font-medium tabular-nums text-ink">{formatMoney(order.totalCents)}</span> },
+    { key: "restore", header: <span className="sr-only">Restore</span>, align: "right", cell: (order) => <Button size="sm" variant="outline" onClick={() => setRestoreId(order.id)}>Restore</Button> },
+  ];
+  return <>
+    <ConfirmDialog open={restoreId !== null} onClose={() => setRestoreId(null)} onConfirm={() => { if (restoreId !== null) restore.mutate({ orderId: restoreId }); }} title="Restore this order?" message="The order will return to the active order queue and become visible to its customer again." confirmLabel="Restore order" cancelLabel="Cancel" variant="primary" busy={restore.isPending} />
+    <PageHeader title="Order trash" description="Soft-deleted orders remain recoverable until the configured retention window expires." breadcrumb={{ href: "/admin/orders", label: "Order queue" }} actions={<LinkButton href="/admin/orders" variant="outline">Back to order queue</LinkButton>} />
+    <Alert tone="info" className="mb-5">Restoring an order preserves its order number, payment state, history, files, and customer association.</Alert>
+    {trashed.isLoading ? <div className="space-y-3">{Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-16 w-full" />)}</div> : <DataTable caption="Orders in trash" columns={columns} rows={trashed.data ?? []} rowKey={(order) => order.id} empty={<EmptyState icon={Trash2} title="Order trash is empty" description="Deleted orders will appear here until the retention window expires." />} />}
+  </>;
 }
 
 export function AdminOrderDetailPage() {

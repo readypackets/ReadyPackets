@@ -200,6 +200,43 @@ export const adminRouter = router({
       }));
     }),
 
+  trashedOrders: adminProcedure
+    .input(z.object({ limit: z.number().int().min(1).max(200).default(100) }).optional())
+    .query(async ({ input }) => {
+      const rows = await db
+        .select({
+          id: orders.id,
+          orderNumber: orders.orderNumber,
+          userId: orders.userId,
+          status: orders.status,
+          paymentStatus: orders.paymentStatus,
+          totalCents: orders.totalCents,
+          projectNameEnc: orders.projectNameEnc,
+          createdAt: orders.createdAt,
+          deletedAt: orders.deletedAt,
+        })
+        .from(orders)
+        .where(sql`${orders.deletedAt} IS NOT NULL`)
+        .orderBy(desc(orders.deletedAt))
+        .limit(input?.limit ?? 100);
+      const customerNames = new Map<number, string>();
+      for (const userId of new Set(rows.map((row) => row.userId))) {
+        const user = await getUserById(userId);
+        customerNames.set(userId, user ? displayNameOf(user) : "Deleted customer");
+      }
+      return rows.map((row) => ({
+        id: row.id,
+        orderNumber: row.orderNumber,
+        customer: customerNames.get(row.userId) ?? "Unknown",
+        status: row.status,
+        paymentStatus: row.paymentStatus,
+        totalCents: row.totalCents,
+        projectName: decryptField(row.projectNameEnc, `order:${row.id}`),
+        createdAt: row.createdAt,
+        deletedAt: row.deletedAt,
+      }));
+    }),
+
   /** Create an order on behalf of a customer (admin/staff initiated). */
   createOrderForCustomer: staffProcedure
     .input(
@@ -577,6 +614,15 @@ export const adminRouter = router({
         summary: `Order soft-deleted: ${input.reason}`,
         ipAddress: ctx.clientIp,
       });
+      return { ok: true as const };
+    }),
+
+  restoreOrder: adminProcedure
+    .input(z.object({ orderId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const result = await db.update(orders).set({ deletedAt: null }).where(and(eq(orders.id, input.orderId), sql`${orders.deletedAt} IS NOT NULL`));
+      if ((result[0] as { affectedRows?: number } | undefined)?.affectedRows !== 1) throw new TRPCError({ code: "NOT_FOUND", message: "Trashed order not found." });
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "order.restore", entityType: "order", entityId: input.orderId, summary: "Administrator restored order from trash", ipAddress: ctx.clientIp });
       return { ok: true as const };
     }),
 

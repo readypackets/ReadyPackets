@@ -490,6 +490,10 @@ const POLICY_ROUTES: Record<string, "privacy-policy" | "refund-policy" | "liabil
   "/refunds": "refund-policy",
   "/disclaimer": "liability-disclaimer",
   "/terms": "terms-of-service",
+  "/legal/privacy-policy": "privacy-policy",
+  "/legal/refund-policy": "refund-policy",
+  "/legal/liability-disclaimer": "liability-disclaimer",
+  "/legal/terms-of-service": "terms-of-service",
 };
 
 export function PolicyPage() {

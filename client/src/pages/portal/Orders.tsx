@@ -6,7 +6,7 @@
  * submission. That guarantees the figure the customer agrees to is the figure
  * recorded, including the bundle discount.
  */
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import {
   ArrowRight,
@@ -229,13 +229,36 @@ export function OrdersListPage() {
 }
 
 const TIER_ORDER = ["basic", "standard", "premium", "custom", "institutional"] as const;
+const CART_STORAGE_KEY = "readypackets.order-cart.v1";
+
+type SavedOrderCart = { selections: Record<number, number>; projectName: string; couponCode: string };
+
+function loadSavedOrderCart(): SavedOrderCart {
+  if (typeof window === "undefined") return { selections: {}, projectName: "", couponCode: "" };
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(CART_STORAGE_KEY) ?? "{}") as Partial<SavedOrderCart>;
+    return {
+      selections: saved.selections && typeof saved.selections === "object" ? saved.selections : {},
+      projectName: typeof saved.projectName === "string" ? saved.projectName.slice(0, 190) : "",
+      couponCode: typeof saved.couponCode === "string" ? saved.couponCode.slice(0, 48).toUpperCase() : "",
+    };
+  } catch {
+    return { selections: {}, projectName: "", couponCode: "" };
+  }
+}
 
 export function NewOrderPage() {
   const [, navigate] = useLocation();
   const toast = useToast();
+  const utils = trpc.useUtils();
   const catalog = trpc.public.catalog.useQuery();
-  const [selections, setSelections] = useState<Record<number, number>>({});
-  const [projectName, setProjectName] = useState("");
+  const restoredCart = useRef(loadSavedOrderCart()).current;
+  const [selections, setSelections] = useState<Record<number, number>>(restoredCart.selections);
+  const [projectName, setProjectName] = useState(restoredCart.projectName);
+  const [couponCode, setCouponCode] = useState(restoredCart.couponCode);
+  const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; discountCents: number } | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [applyingCoupon, setApplyingCoupon] = useState(false);
 
   const selectionList = useMemo(
     () =>
@@ -250,15 +273,49 @@ export function NewOrderPage() {
     { enabled: selectionList.length > 0, staleTime: 0 },
   );
 
+  useEffect(() => {
+    const draft: SavedOrderCart = { selections, projectName, couponCode };
+    if (Object.keys(selections).length === 0 && !projectName.trim() && !couponCode.trim()) {
+      window.localStorage.removeItem(CART_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(draft));
+  }, [couponCode, projectName, selections]);
+
+  const applyCoupon = useCallback(async () => {
+    const code = couponCode.trim().toUpperCase();
+    if (!code || !quote.data) return;
+    setApplyingCoupon(true);
+    setCouponError(null);
+    try {
+      const result = await utils.stripe.validateCoupon.fetch({ code, orderTotalCents: quote.data.totalCents });
+      if (!result.valid || !result.code || result.discountCents === undefined) {
+        setAppliedCoupon(null);
+        setCouponError(result.message ?? "This coupon cannot be applied.");
+        return;
+      }
+      setCouponCode(result.code);
+      setAppliedCoupon({ code: result.code, discountCents: result.discountCents });
+      toast.success(`Coupon ${result.code} applied`, `${formatMoney(result.discountCents)} will be applied at secure checkout.`);
+    } catch (error) {
+      setAppliedCoupon(null);
+      setCouponError(errorMessage(error));
+    } finally {
+      setApplyingCoupon(false);
+    }
+  }, [couponCode, quote.data, toast, utils.stripe.validateCoupon]);
+
   const create = trpc.orders.create.useMutation({
     onSuccess(result) {
-      toast.success(
-        `Order ${result.orderNumber} created`,
-        result.requiresCustomQuote
-          ? "We will prepare a custom quote and contact you shortly."
-          : "Next: sign the mutual NDA and complete your Phase I intake.",
-      );
-      navigate(`/portal/orders/${result.orderId}`);
+      window.localStorage.removeItem(CART_STORAGE_KEY);
+      if (result.requiresCustomQuote) {
+        toast.success(`Order ${result.orderNumber} created`, "We will prepare a custom quote and contact you shortly.");
+        navigate(`/portal/orders/${result.orderId}`);
+        return;
+      }
+      toast.success(`Order ${result.orderNumber} created`, "Continue to secure payment to confirm your order.");
+      const coupon = appliedCoupon?.code ? `&coupon=${encodeURIComponent(appliedCoupon.code)}` : "";
+      navigate(`/portal/checkout?order=${result.orderId}${coupon}`);
     },
     onError(error) {
       toast.error("Could not create the order", errorMessage(error));
@@ -271,6 +328,21 @@ export function NewOrderPage() {
   ).length;
 
   const bundleEligible = selectedGroupCount >= 6;
+  const recommendations = useMemo(
+    () => groups
+      .filter((group) => !selections[group.id])
+      .map((group) => ({
+        group,
+        product: [...group.products].sort((left, right) => {
+          const leftRank = left.tier === "standard" ? -1 : TIER_ORDER.indexOf(left.tier as (typeof TIER_ORDER)[number]);
+          const rightRank = right.tier === "standard" ? -1 : TIER_ORDER.indexOf(right.tier as (typeof TIER_ORDER)[number]);
+          return leftRank - rightRank;
+        })[0],
+      }))
+      .filter((recommendation): recommendation is { group: (typeof groups)[number]; product: NonNullable<typeof recommendation.product> } => Boolean(recommendation.product))
+      .slice(0, 3),
+    [groups, selections],
+  );
 
   const setTier = (groupId: number, productId: number | null) => {
     setSelections((current) => {
@@ -285,8 +357,9 @@ export function NewOrderPage() {
     <>
       <PageHeader
         title="Configure your order"
-        description="Choose a tier for each packet group you need. Commit to all six and a 15% reduction is applied automatically."
+        description="Build a cart by choosing one tier from each packet group. Your selections are saved in this browser until checkout."
         breadcrumb={{ href: "/portal/orders", label: "My orders" }}
+        actions={Object.keys(selections).length > 0 ? <Button variant="outline" onClick={() => { setSelections({}); setProjectName(""); setCouponCode(""); setAppliedCoupon(null); setCouponError(null); }}>Clear cart</Button> : undefined}
       />
 
       <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr] lg:items-start">
@@ -385,7 +458,7 @@ export function NewOrderPage() {
             title={
               <span className="flex items-center gap-2">
                 <ShoppingCart className="size-4 text-teal" aria-hidden="true" />
-                Your quote
+                Your cart ({selectionList.length})
               </span>
             }
           />
@@ -418,11 +491,28 @@ export function NewOrderPage() {
                 ))}
               </ul>
 
+              <div className="mt-4 rounded-lg border border-line bg-surface-soft p-3">
+                <label className="block text-sm font-medium text-ink" htmlFor="order-coupon">Coupon code</label>
+                <p className="mt-0.5 text-xs text-muted">Enter a code, then click Apply or click outside this field.</p>
+                <div className="mt-2 flex gap-2">
+                  <Input id="order-coupon" aria-label="Coupon code" value={couponCode} onChange={(event) => { setCouponCode(event.target.value.toUpperCase()); setCouponError(null); if (appliedCoupon) setAppliedCoupon(null); }} onBlur={() => void applyCoupon()} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void applyCoupon(); } }} placeholder="Enter coupon code" disabled={applyingCoupon} />
+                  {appliedCoupon ? <Button size="sm" variant="outline" onClick={() => { setAppliedCoupon(null); setCouponCode(""); setCouponError(null); }}>Remove</Button> : <Button size="sm" variant="outline" busy={applyingCoupon} disabled={!couponCode.trim()} onClick={() => void applyCoupon()}>Apply</Button>}
+                </div>
+                {appliedCoupon ? <p className="mt-2 text-xs font-medium text-success">Coupon {appliedCoupon.code} applied — saving {formatMoney(appliedCoupon.discountCents)} at checkout.</p> : null}
+                {couponError ? <p className="mt-2 text-xs font-medium text-danger">{couponError}</p> : null}
+              </div>
+
               <dl className="mt-4 space-y-2 text-sm">
                 <div className="flex justify-between">
                   <dt className="text-body">Subtotal</dt>
                   <dd className="tabular-nums text-ink">{formatMoney(quote.data.subtotalCents)}</dd>
                 </div>
+                {appliedCoupon ? (
+                  <div className="flex justify-between text-success">
+                    <dt>Coupon {appliedCoupon.code}</dt>
+                    <dd className="tabular-nums">−{formatMoney(appliedCoupon.discountCents)}</dd>
+                  </div>
+                ) : null}
                 {quote.data.discountCents > 0 ? (
                   <div className="flex justify-between text-success">
                     <dt className="flex items-center gap-1.5">
@@ -434,7 +524,7 @@ export function NewOrderPage() {
                 ) : null}
                 <div className="flex justify-between border-t border-line pt-3 text-base font-semibold">
                   <dt className="text-ink">Total</dt>
-                  <dd className="tabular-nums text-ink">{formatMoney(quote.data.totalCents)}</dd>
+                  <dd className="tabular-nums text-ink">{formatMoney(Math.max(0, quote.data.totalCents - (appliedCoupon?.discountCents ?? 0)))}</dd>
                 </div>
               </dl>
 
@@ -463,6 +553,8 @@ export function NewOrderPage() {
                 </Alert>
               ) : null}
 
+              {recommendations.length > 0 ? <div className="mt-4 border-t border-line pt-4"><h3 className="text-sm font-semibold text-ink">Suggested additions</h3><p className="mt-1 text-xs text-muted">Recommendations are based on the packet groups not yet in your cart. You stay in control of every addition.</p><ul className="mt-3 space-y-2">{recommendations.map(({ group, product }) => <li key={group.id} className="flex items-center justify-between gap-3 rounded-lg border border-line p-2.5"><div className="min-w-0"><p className="truncate text-xs font-medium text-ink">{group.name}</p><p className="text-xs capitalize text-muted">Suggested {product.tier} tier · {product.priceCents === null ? "Custom quote" : formatMoney(product.priceCents)}</p></div><Button size="sm" variant="outline" onClick={() => setTier(group.id, product.id)}>Add</Button></li>)}</ul></div> : null}
+
               <Button
                 fullWidth
                 className="mt-5"
@@ -478,9 +570,7 @@ export function NewOrderPage() {
               </Button>
 
               <p className="mt-3 text-xs text-muted">
-                Placing an order does not begin work. You will be asked to sign the mutual NDA and
-                complete the Phase I intake form first, and no card details are ever stored on our
-                servers.
+                You will be redirected to secure Stripe Checkout to confirm payment. Work does not begin until payment, the mutual NDA, and the Phase I intake are complete; no card details are stored on our servers.
               </p>
             </div>
           ) : null}
