@@ -6,7 +6,7 @@
  * so an administrator can confirm a credential is configured without being able
  * to read it back out of the database through the UI.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Activity,
   Database,
@@ -46,7 +46,7 @@ export function AdminSystemPage() {
         description="Runtime health, platform settings, feature flags, integrations, and housekeeping."
       />
 
-      <TabStrip
+            <TabStrip
         tabs={[
           { id: "health", label: "Health" },
           { id: "settings", label: "Settings" },
@@ -54,11 +54,11 @@ export function AdminSystemPage() {
           { id: "keys", label: "API keys" },
           { id: "saml", label: "SAML" },
           { id: "maintenance", label: "Housekeeping" },
+          { id: "launch", label: "Launch countdown" },
         ]}
         active={tab}
         onChange={setTab}
       />
-
       <div className="mt-6">
         {tab === "health" ? <HealthPanel /> : null}
         {tab === "settings" ? <SettingsPanel /> : null}
@@ -66,6 +66,7 @@ export function AdminSystemPage() {
         {tab === "keys" ? <ApiKeysPanel /> : null}
         {tab === "saml" ? <SamlPanel /> : null}
         {tab === "maintenance" ? <MaintenancePanel /> : null}
+        {tab === "launch" ? <LaunchCountdownPanel /> : null}
       </div>
     </>
   );
@@ -831,6 +832,138 @@ function MaintenancePanel() {
         variant="danger"
         busy={pruneLogs.isPending}
       />
+    </div>
+  );
+}
+
+function LaunchCountdownPanel() {
+  const toast = useToast();
+  const utils = trpc.useUtils();
+
+  const flags = trpc.adminSecurity.featureFlags.useQuery();
+  const countdownEnabled = (flags.data ?? []).find((f) => f.key === "launch_countdown")?.enabled ?? false;
+
+  const [title, setTitle] = useState("");
+  const [message, setMessage] = useState("");
+  const [targetDate, setTargetDate] = useState("");
+  const [loaded, setLoaded] = useState(false);
+
+  const settings = trpc.adminSecurity.getSettings.useQuery({ category: "launch" });
+
+  // Populate form fields once settings load.
+  useEffect(() => {
+    if (!loaded && settings.data) {
+      setTitle(settings.data.find((s) => s.key === "launch.countdown_title")?.value ?? "Coming Soon");
+      setMessage(settings.data.find((s) => s.key === "launch.countdown_message")?.value ?? "");
+      setTargetDate(settings.data.find((s) => s.key === "launch.countdown_target")?.value ?? "");
+      setLoaded(true);
+    }
+  }, [loaded, settings.data]);
+
+  const updateSetting = trpc.adminSecurity.updateSetting.useMutation();
+
+  const setFlag = trpc.adminSecurity.setFeatureFlag.useMutation({
+    async onSuccess() {
+      await flags.refetch();
+      toast.success("Countdown updated");
+    },
+  });
+
+  const handleSave = async () => {
+    await Promise.all([
+      updateSetting.mutateAsync({ key: "launch.countdown_title", value: title }),
+      updateSetting.mutateAsync({ key: "launch.countdown_message", value: message }),
+      updateSetting.mutateAsync({ key: "launch.countdown_target", value: targetDate }),
+    ]);
+    toast.success("Launch countdown settings saved");
+  };
+
+  // Live countdown display
+  const [now, setNow] = useState(Date.now());
+  const target = targetDate ? new Date(targetDate).getTime() : null;
+  const diff = target ? Math.max(0, target - now) : null;
+  const days = diff !== null ? Math.floor(diff / 86400000) : null;
+  const hours = diff !== null ? Math.floor((diff % 86400000) / 3600000) : null;
+  const minutes = diff !== null ? Math.floor((diff % 3600000) / 60000) : null;
+  const seconds = diff !== null ? Math.floor((diff % 60000) / 1000) : null;
+
+  return (
+    <div className="space-y-6">
+      <Alert tone="info" title="Launch countdown">
+        When enabled, a countdown banner is shown on the public homepage and login page.
+        Admins and staff can always bypass it. Configure the target date, title, and message below.
+      </Alert>
+
+      <Card>
+        <CardHeader
+          title="Countdown status"
+          actions={
+            <Button
+              size="sm"
+              variant={countdownEnabled ? "outline" : "primary"}
+              busy={setFlag.isPending}
+              onClick={() => setFlag.mutate({ key: "launch_countdown", enabled: !countdownEnabled })}
+            >
+              {countdownEnabled ? "Disable countdown" : "Enable countdown"}
+            </Button>
+          }
+        />
+        {countdownEnabled && target && diff !== null && diff > 0 ? (
+          <div className="mt-4 flex gap-4 text-center">
+            {[
+              { label: "Days", value: days },
+              { label: "Hours", value: hours },
+              { label: "Minutes", value: minutes },
+              { label: "Seconds", value: seconds },
+            ].map(({ label, value }) => (
+              <div key={label} className="flex-1 rounded-lg bg-surface-raised p-3">
+                <p className="text-2xl font-bold tabular-nums text-ink">{String(value).padStart(2, "0")}</p>
+                <p className="text-xs text-muted">{label}</p>
+              </div>
+            ))}
+          </div>
+        ) : countdownEnabled && diff === 0 ? (
+          <p className="mt-4 text-sm text-success font-medium">🎉 Launch date has passed!</p>
+        ) : (
+          <p className="mt-4 text-sm text-muted">Countdown is currently disabled.</p>
+        )}
+      </Card>
+
+      <Card>
+        <CardHeader title="Countdown settings" />
+        <div className="mt-4 space-y-4">
+          <Input
+            label="Launch date & time"
+            type="datetime-local"
+            value={targetDate}
+            onChange={(e) => setTargetDate(e.target.value)}
+            help="The countdown will reach zero at this date and time (your local timezone)."
+          />
+          <Input
+            label="Countdown title"
+            placeholder="Coming Soon"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+          />
+          <Textarea
+            label="Message"
+            rows={3}
+            placeholder="We are launching soon. Stay tuned!"
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+          />
+          <div className="flex justify-end">
+            <Button
+              variant="primary"
+              busy={updateSetting.isPending}
+              leadingIcon={<Save className="size-4" />}
+              onClick={handleSave}
+            >
+              Save countdown settings
+            </Button>
+          </div>
+        </div>
+      </Card>
     </div>
   );
 }

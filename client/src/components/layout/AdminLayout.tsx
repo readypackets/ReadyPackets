@@ -34,6 +34,7 @@ import {
   Plug,
   ScrollText,
   Server,
+  Shield,
   ShieldAlert,
   ShieldCheck,
   Star,
@@ -76,6 +77,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { href: "/admin/moderation", label: "Moderation", icon: Star },
       { href: "/admin/content", label: "Site content", icon: ScrollText, adminOnly: true },
       { href: "/admin/changelog", label: "Changelog", icon: Newspaper, adminOnly: true },
+      { href: "/admin/policy-center", label: "Policy center", icon: Shield, adminOnly: true },
     ],
   },
   {

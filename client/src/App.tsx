@@ -15,6 +15,7 @@ import {
   LayoutDashboard,
   LifeBuoy,
   MessagesSquare,
+  ScrollText,
   ShieldCheck,
   UserCog,
 } from "lucide-react";
@@ -93,6 +94,8 @@ import { AdminAPIKeysPage } from "@/pages/admin/APIKeys";
 import { AdminCouponsPage } from "@/pages/admin/Coupons";
 import { AdminPayoutsPage } from "@/pages/admin/Payouts";
 import { AdminChangelogPage } from "@/pages/admin/Changelog";
+import { PolicyCenterPage } from "@/pages/admin/PolicyCenter";
+import { PoliciesPage } from "@/pages/portal/Policies";
 
 /** Full-page loader shown while the session is being resolved. */
 function BootScreen() {
@@ -207,6 +210,7 @@ function PortalRoutes() {
       items: [
         { href: "/portal/profile", label: "Settings", icon: UserCog },
         { href: "/portal/security", label: "Security", icon: ShieldCheck },
+        { href: "/portal/policies", label: "Policies", icon: ScrollText },
       ],
     },
   ];
@@ -232,6 +236,7 @@ function PortalRoutes() {
         <Route path="/portal/mfa-setup" component={MfaSetupPage} />
         <Route path="/portal/checkout" component={Checkout} />
         <Route path="/portal/wizard" component={Wizard} />
+        <Route path="/portal/policies" component={PoliciesPage} />
         <Route component={NotFoundPage} />
       </Switch>
     </PortalLayout>
@@ -298,6 +303,7 @@ function AdminRoutes() {
         <Route path="/admin/coupons" component={AdminCouponsPage} />
         <Route path="/admin/payouts" component={AdminPayoutsPage} />
         <Route path="/admin/changelog" component={AdminChangelogPage} />
+        <Route path="/admin/policy-center" component={PolicyCenterPage} />
         <Route component={NotFoundPage} />
       </Switch>
     </AdminLayout>

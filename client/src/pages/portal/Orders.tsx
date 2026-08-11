@@ -50,7 +50,7 @@ interface OrderRow {
 }
 
 export function OrdersListPage() {
-  const orders = trpc.orders.list.useQuery();
+  const orders = trpc.orders.list.useQuery(undefined, { refetchOnMount: "always" });
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 

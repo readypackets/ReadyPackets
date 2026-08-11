@@ -23,6 +23,7 @@ import {
   orderQuestions,
   orders,
   packetGroups,
+  policyAcceptances,
   policyDocuments,
   policyVersions,
   productFeatures,
@@ -1507,6 +1508,78 @@ export const adminRouter = router({
         metadata: { targetUserId: input.userId },
       });
       return { ok: true as const };
+    }),
+
+  /** Manually mark a customer's email as verified (bypasses the email link). */
+  adminVerifyEmail: adminProcedure
+    .input(z.object({ userId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      await db
+        .update(users)
+        .set({ emailVerified: true })
+        .where(eq(users.id, input.userId));
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: "admin",
+        action: "customer.verify_email",
+        entityType: "user",
+        entityId: input.userId,
+        summary: "Administrator manually verified customer email address",
+        ipAddress: ctx.clientIp,
+      });
+      return { ok: true as const };
+    }),
+
+  /** Create a new policy document (slug + title). Versions are added via publishPolicyVersion. */
+  createPolicyDocument: adminProcedure
+    .input(
+      z.object({
+        slug: z.string().trim().min(1).max(64).regex(/^[a-z0-9-]+$/, "Slug must be lowercase letters, numbers, and hyphens only."),
+        title: z.string().trim().min(1).max(190),
+        requiresAcceptance: z.boolean().default(true),
+        publicRoute: z.string().trim().max(96).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const inserted = await db.insert(policyDocuments).values({
+        slug: input.slug,
+        title: input.title,
+        requiresAcceptance: input.requiresAcceptance,
+        publicRoute: input.publicRoute ?? null,
+      });
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: "admin",
+        action: "policy.create",
+        entityType: "policy_document",
+        entityId: insertedId(inserted),
+        summary: `Policy document "${input.title}" created`,
+        ipAddress: ctx.clientIp,
+      });
+      return { ok: true as const, id: insertedId(inserted) };
+    }),
+
+  /** List all policy acceptances for a user. */
+  policyAcceptances: adminProcedure
+    .input(z.object({ userId: z.number().int().positive() }))
+    .query(async ({ input }) => {
+      const rows = await db
+        .select({
+          id: policyAcceptances.id,
+          policyVersionId: policyAcceptances.policyVersionId,
+          acceptedAt: policyAcceptances.acceptedAt,
+          ipAddress: policyAcceptances.ipAddress,
+          version: policyVersions.version,
+          effectiveDate: policyVersions.effectiveDate,
+          policyTitle: policyDocuments.title,
+          policySlug: policyDocuments.slug,
+        })
+        .from(policyAcceptances)
+        .innerJoin(policyVersions, eq(policyAcceptances.policyVersionId, policyVersions.id))
+        .innerJoin(policyDocuments, eq(policyVersions.policyId, policyDocuments.id))
+        .where(eq(policyAcceptances.userId, input.userId))
+        .orderBy(desc(policyAcceptances.acceptedAt));
+      return rows;
     }),
 
   /** Domain-level signup analytics; no addresses are exposed. */

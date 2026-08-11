@@ -38,8 +38,8 @@ import { STATUS_TONES, STATUS_LABELS } from "./orderStatus";
 export function PortalDashboard() {
   const session = useSession();
   const toast = useToast();
-  const summary = trpc.orders.summary.useQuery();
-  const orders = trpc.orders.list.useQuery();
+  const summary = trpc.orders.summary.useQuery(undefined, { refetchOnMount: "always" });
+  const orders = trpc.orders.list.useQuery(undefined, { refetchOnMount: "always" });
   const tickets = trpc.tickets.unreadCount.useQuery();
   const mfa = trpc.auth.mfaStatus.useQuery();
 

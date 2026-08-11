@@ -71,6 +71,8 @@ export const users = mysqlTable(
     avatarStorageKey: varchar("avatar_storage_key", { length: 128 }),
     /** Unique referral code generated on first request; used for the referral programme. */
     referralCode: varchar("referral_code", { length: 48 }),
+    /** Unique customer number in RP-CUST-XXXXXX format, assigned at registration. */
+    customerNumber: varchar("customer_number", { length: 24 }),
     marketingOptIn: boolean("marketing_opt_in").notNull().default(false),
     timezone: varchar("timezone", { length: 64 }).notNull().default("America/New_York"),
     createdAt: createdAt(),
@@ -83,6 +85,7 @@ export const users = mysqlTable(
     statusIdx: index("users_status_idx").on(table.status),
     deletedIdx: index("users_deleted_idx").on(table.deletedAt),
     referralCodeUnique: uniqueIndex("users_referral_code_unique").on(table.referralCode),
+    customerNumberUnique: uniqueIndex("users_customer_number_unique").on(table.customerNumber),
   }),
 );
 

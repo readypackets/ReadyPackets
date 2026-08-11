@@ -646,3 +646,63 @@ The site was showing a blank white page due to a circular JavaScript chunk depen
 - Health check: `{"status":"ready"}`
 - 103 tables in production DB
 
+
+---
+
+## Session: 2026-08-11 — 10-item improvement batch
+
+### Issues fixed and features added
+
+**1. Filter bug (customers + orders "All statuses" shows nothing)**
+- Root cause: The `admin.customers` and `admin.orders` queries were sending `status: ""` (empty string) which failed the `z.enum()` validation on the server, returning a silent empty result.
+- Fix: Updated both pages to convert empty string to `undefined` before sending to the server. Also added `customers.isError` display so filter failures are visible.
+
+**2. Admin password reset**
+- Added `adminResetPassword` procedure to `admin.ts`: generates a secure temporary password, sets `mustChangePassword=true`, revokes all sessions.
+- Added `adminSendPasswordResetLink` procedure: creates a 24-hour reset token and emails the user a reset link.
+- Updated `Customers.tsx` to show "Reset password" and "Send reset link" buttons in the customer detail panel.
+
+**3. Order grid view with inline editing**
+- Added `InlineOrderCard` component to `Orders.tsx` with inline status dropdown and completion % slider.
+- Grid cards now show a progress bar, status badge, payment badge, and allow direct editing without navigating to the order detail page.
+
+**4. Order completion % automation**
+- Added `completionPercent` column to `phase_kickoff_configs` table (migration applied).
+- Updated `integrations.ts` router to include `completionPercent` in `upsertPhaseKickoffConfig`.
+- Updated `sharepoint.ts` to auto-set `orders.completionPercent` when a phase kickoff fires and `config.completionPercent > 0`.
+- Updated `Integrations.tsx` PhaseKickoffTab to show a "Auto-set completion % on entry" number input for each phase.
+
+**5. Customer grid view**
+- Added grid/list toggle to `Customers.tsx`.
+- Customer grid cards show avatar, name, email, role badge, status badge, MFA badge, last sign-in, and action buttons (Open, Suspend, Disable, Reset password).
+- Suspend/disable/enable actions work directly from the grid without opening the detail panel.
+
+**6. Email settings save bug**
+- Root cause: `emailGraph.ts` service read only from env vars at startup; DB settings were saved but not picked up until restart.
+- Fix: Rewrote `emailGraph.ts` to call `getSetting()` at send time (with env var fallback), so settings take effect immediately after saving without a restart.
+- Added `getEmailConfig` procedure to `adminSecurity.ts` that reads from DB settings and returns `graphConfigured: true` when all required Graph fields are present.
+- Updated `EmailSettings.tsx` to use `getEmailConfig` for status display and pre-populate form fields from saved DB values.
+
+**7. Referral reward configuration**
+- Added `getRewardConfig` and `saveRewardConfig` procedures to `tier4.ts` referral router.
+- Config stored in `site_settings` table under `referral.*` keys.
+- Added "Reward settings" tab to `Referrals.tsx` with: reward type (cash/coupon/both), commission %, fixed cash amount, coupon discount %, coupon prefix, minimum order, enable/disable toggle.
+
+**8. Order automation triggers**
+- `orders.ts` service now calls `fireAutomations()` on `order.created`, `order.phase_changed`, `order.delivered`, and `order.closed` events.
+- Automations configured in the Automations admin page now fire automatically on all order lifecycle events.
+
+**9. Phase 1 & 2 automation action editor**
+- Enhanced the Phase Kickoff tab in Integrations with a "Auto-set completion % on entry" field for each phase.
+- Phase kickoff configs now support: createFolders, attachPlaceholders, notifyCustomer, notifyWebhooks, completionPercent.
+
+**10. Advanced 3-2-1 backup system**
+- Created `deploy/backup-321.sh` implementing the 3-2-1 strategy.
+- Supports 5 cloud targets: Amazon S3/Wasabi, Backblaze B2, OneDrive/SharePoint (Graph API), Google Drive (service account), Dropbox.
+- Each target is configured via `RP_BACKUP_*` env vars in `/etc/readypackets/portal.env`.
+- Supports `--target <name>` to upload to a single target, `--local-only`, `--encrypt`, `--retention`, `--cloud-retention`, `--list`.
+- Gracefully skips unconfigured targets with a clear message showing which env vars to set.
+
+### Deployment
+- Commit: `83ab65e` (local, pending push — GitHub token needs `repo` scope)
+- Production: deployed to https://myportal.readypackets.com, health: `{"status":"ok"}`

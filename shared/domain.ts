@@ -132,6 +132,13 @@ export const FEATURE_FLAG_KEYS = [
   "saml_sso",
   "newsletter",
   "meeting_scheduler",
+  "login_block",
+  "email_verification_bypass",
+  "show_prices",
+  "launch_countdown",
+  "referrals",
+  "stripe_payments",
+  "webhooks",
 ] as const;
 export type FeatureFlagKey = (typeof FEATURE_FLAG_KEYS)[number];
 

@@ -17,6 +17,7 @@ import {
   orders,
   phaseJobs,
   phaseKickoffConfigs,
+  users,
 } from "../db/schema.js";
 import { decryptField, encryptField, generateOrderNumber } from "../security/crypto.js";
 import { logger } from "../observability/logger.js";
@@ -48,7 +49,14 @@ export async function createOrder(input: CreateOrderInput) {
     throw new OrderStateError("None of the selected packets are currently available.");
   }
 
-  const orderNumber = generateOrderNumber();
+  // Look up the customer's unique number to embed in the order ID.
+  const customerRow = await db
+    .select({ customerNumber: users.customerNumber })
+    .from(users)
+    .where(eq(users.id, input.userId))
+    .limit(1);
+  const customerNumber = customerRow[0]?.customerNumber ?? null;
+  const orderNumber = generateOrderNumber(new Date(), customerNumber);
   const inserted = await db.insert(orders).values({
     orderNumber,
     userId: input.userId,

@@ -17,6 +17,8 @@ import {
   orderNotes,
   orders,
   policyAcceptances,
+  policyDocuments,
+  policyVersions,
   reviews,
   ticketReplies,
   tickets,
@@ -286,4 +288,63 @@ export const accountRouter = router({
       .where(eq(users.id, ctx.session.user.id));
     return { ok: true as const };
   }),
+
+  /**
+   * Returns policies that require acceptance and have not yet been accepted
+   * by this user at the current published version.
+   */
+  pendingPolicies: protectedProcedure.query(async ({ ctx }) => {
+    const userId = ctx.session.user.id;
+    const published = await db
+      .select({
+        policyId: policyDocuments.id,
+        slug: policyDocuments.slug,
+        title: policyDocuments.title,
+        versionId: policyVersions.id,
+        version: policyVersions.version,
+        effectiveDate: policyVersions.effectiveDate,
+        bodyMarkdown: policyVersions.bodyMarkdown,
+      })
+      .from(policyDocuments)
+      .innerJoin(policyVersions, eq(policyVersions.policyId, policyDocuments.id))
+      .where(and(eq(policyDocuments.requiresAcceptance, true), eq(policyVersions.published, true)))
+      .orderBy(desc(policyVersions.id));
+
+    const latestByPolicy = new Map<number, (typeof published)[0]>();
+    for (const row of published) {
+      if (!latestByPolicy.has(row.policyId)) latestByPolicy.set(row.policyId, row);
+    }
+
+    const accepted = await db
+      .select({ policyVersionId: policyAcceptances.policyVersionId })
+      .from(policyAcceptances)
+      .where(eq(policyAcceptances.userId, userId));
+    const acceptedVersionIds = new Set(accepted.map((a) => a.policyVersionId));
+
+    return Array.from(latestByPolicy.values()).filter(
+      (p) => !acceptedVersionIds.has(p.versionId),
+    );
+  }),
+
+  /** Accept a specific policy version. */
+  acceptPolicy: protectedProcedure
+    .input(z.object({ policyVersionId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.session.user.id;
+      await db
+        .insert(policyAcceptances)
+        .values({
+          userId,
+          policyVersionId: input.policyVersionId,
+          ipAddress: ctx.clientIp,
+          userAgent: ctx.userAgent,
+        })
+        .onDuplicateKeyUpdate({
+          set: {
+            acceptedAt: new Date(),
+            ipAddress: ctx.clientIp,
+          },
+        });
+      return { ok: true as const };
+    }),
 });

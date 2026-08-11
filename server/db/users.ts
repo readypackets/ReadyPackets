@@ -39,6 +39,7 @@ export interface DecryptedUser {
   passwordHash: string | null;
   avatarStorageKey: string | null;
   referralCode: string | null;
+  customerNumber: string | null;
 }
 
 type UserRow = typeof users.$inferSelect;
@@ -84,6 +85,7 @@ export function decryptUser(row: UserRow): DecryptedUser {
     passwordHash: row.passwordHash,
     avatarStorageKey: row.avatarStorageKey ?? null,
     referralCode: row.referralCode ?? null,
+    customerNumber: row.customerNumber ?? null,
   };
 }
 
@@ -126,6 +128,7 @@ export async function createUser(input: CreateUserInput): Promise<DecryptedUser>
 
   const userId = insertedId(inserted);
   const aad = `user:${userId}`;
+  const customerNumber = `RP-CUST-${String(userId).padStart(6, '0')}`;
 
   await db
     .update(users)
@@ -140,6 +143,7 @@ export async function createUser(input: CreateUserInput): Promise<DecryptedUser>
       phoneEnc: encryptField(input.phone ?? null, aad),
       addressEnc: encryptField(input.address ?? null, aad),
       notesEnc: encryptField(input.notes ?? null, aad),
+      customerNumber,
     })
     .where(eq(users.id, userId));
 

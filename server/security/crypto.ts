@@ -155,11 +155,19 @@ export function generateBackupCode(): string {
   return `${pick()}-${pick()}`;
 }
 
-/** Sequential-looking but unguessable order number, e.g. `RP-2608-4F7QK2`. */
-export function generateOrderNumber(date = new Date()): string {
+/** Sequential-looking but unguessable order number.
+ * When customerNumber is supplied (e.g. RP-CUST-000002) the order number
+ * embeds the customer ID: RP-C000002-2608-4F7QK2
+ */
+export function generateOrderNumber(date = new Date(), customerNumber?: string | null): string {
   const year = String(date.getUTCFullYear()).slice(2);
   const month = String(date.getUTCMonth() + 1).padStart(2, "0");
   const suffix = randomBytes(4).toString("hex").toUpperCase().slice(0, 6);
+  if (customerNumber) {
+    // Extract the numeric part from RP-CUST-000002 → C000002
+    const custPart = customerNumber.replace(/^RP-CUST-/, "C");
+    return `RP-${custPart}-${year}${month}-${suffix}`;
+  }
   return `RP-${year}${month}-${suffix}`;
 }
 

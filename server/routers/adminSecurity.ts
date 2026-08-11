@@ -465,10 +465,25 @@ export const adminSecurityRouter = router({
       valueType: row.valueType,
       category: row.category,
       description: row.description,
-      isSecret: row.isSecret,
+            isSecret: row.isSecret,
       updatedAt: row.updatedAt,
     }));
   }),
+
+  /** Get settings filtered by category (for targeted panels like launch countdown). */
+  getSettings: adminProcedure
+    .input(z.object({ category: z.string().trim().min(1).max(48) }))
+    .query(async ({ input }) => {
+      const rows = await db
+        .select()
+        .from(siteSettings)
+        .where(eq(siteSettings.category, input.category))
+        .orderBy(siteSettings.settingKey);
+      return rows.map((row) => ({
+        key: row.settingKey,
+        value: row.isSecret ? null : (row.settingValue ?? ""),
+      }));
+    }),
 
   updateSetting: adminProcedure
     .input(

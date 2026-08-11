@@ -257,6 +257,8 @@ export const authRouter = router({
       }
 
       const passwordHash = await hashPassword(input.password);
+      // When email_verification_bypass is enabled, accounts are pre-verified.
+      const emailBypass = await isFeatureEnabled("email_verification_bypass", false);
       const user = await createUser({
         email: input.email,
         passwordHash,
@@ -267,13 +269,16 @@ export const authRouter = router({
         phone: input.phone ?? null,
         marketingOptIn: input.marketingOptIn,
         role: "customer",
+        emailVerified: emailBypass,
       });
 
       for (const [key, value] of Object.entries(input.customFields ?? {})) {
         await setProfileValue(user.id, key, value);
       }
 
-      await issueVerificationEmail(user.id, user.email, displayNameOf(user));
+      if (!emailBypass) {
+        await issueVerificationEmail(user.id, user.email, displayNameOf(user));
+      }
 
       void recordSecurityEvent({
         eventType: "register.success",
@@ -311,6 +316,15 @@ export const authRouter = router({
         throw new TRPCError({
           code: "SERVICE_UNAVAILABLE",
           message: "The portal is temporarily unavailable for maintenance.",
+        });
+      }
+
+      // Admin-configurable login block (separate from maintenance mode).
+      const loginBlocked = await isFeatureEnabled("login_block", false);
+      if (loginBlocked && !bypass) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Logins are currently disabled. Please contact support for assistance.",
         });
       }
 
