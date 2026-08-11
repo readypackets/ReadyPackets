@@ -586,3 +586,63 @@ Updated `vite.config.ts` `manualChunks` to:
 
 ### Commit
 `b94513b` — "fix: eliminate circular chunk dependency causing blank white page"
+
+---
+
+## Session: Tier 4 / 5 Implementation (2026-08-11)
+
+### User prompt
+> continue adding tier 4 and tier 5 items
+
+### Work completed
+
+**Root cause fix (blank white page):**
+The site was showing a blank white page due to a circular JavaScript chunk dependency in the Vite build. The `manualChunks` function was using loose substring matching that caused `react-router` to land in the `vendor` chunk, which loaded before the `react` chunk. This produced a silent crash: `Cannot set properties of undefined (setting 'Activity')`. Fixed by using exact path-segment matching to consolidate the entire React ecosystem into a single deterministic chunk.
+
+**Tier 4 backend (server/routers/tier4.ts):**
+- Newsletter management: list (paginated, filterable), export CSV, unsubscribe, delete, stats
+- Referral programme: list with referrer names, status updates (pending → approved → paid/rejected), stats
+- Login page configurator: public `get` + admin `update` for hero, testimonial, feature list, background style
+- Forum teaser click tracking: `recordClick` (IP-hashed for dedup), `analytics` by topic
+- Activity log replay: `entityHistory`, `userTimeline`, `summary` stats
+- Avatar management: `getMyAvatar`, `deleteMyAvatar`, admin `getForUser`/`deleteForUser`
+- SIEM UI stats: security log and activity log counts
+
+**HTTP endpoints (server/http/avatar.ts):**
+- `POST /api/avatar` — authenticated avatar upload, JPEG/PNG/WebP/GIF only, max 2 MB, CSRF validated
+- `GET /api/avatar/:userId` — public avatar serve with 24h cache header
+
+**Database migration (0005_tier4_tier5.sql):**
+- `ALTER users`: `avatar_storage_key VARCHAR(128)`, `referral_code VARCHAR(48) UNIQUE`
+- `ALTER forum_topics`: `teaser_click_count INT DEFAULT 0`
+- `CREATE forum_teaser_clicks`: topicId, sessionId, ipHash, referrer, createdAt
+- `CREATE login_page_config`: id=1 singleton, all config fields, JSON feature_list
+
+**6 new admin pages:**
+- `/admin/newsletter` — subscriber list, CSV export, unsubscribe/delete, stats tab
+- `/admin/referrals` — referral list with status filter, approve/reject/mark-paid, stats tab
+- `/admin/login-config` — hero/testimonial/feature list/background configurator with live preview link
+- `/admin/siem-export` — download security logs (CEF/JSONL), activity logs (JSONL), syslog (RFC 5424)
+- `/admin/activity-replay` — entity history timeline, user timeline, action summary table
+- `/admin/preferences` — default view, quick-add shortcuts (presets + custom)
+
+**Portal Profile page additions:**
+- Avatar upload/remove section: file picker → `POST /api/avatar`, 2 MB limit, instant preview
+- Referral code section: auto-generates unique 8-char code, copy-to-clipboard button
+
+**Public Community Teaser page:**
+- Forum topic cards now call `tier4.forumClick.recordClick` on click/keyboard interaction
+- IP is SHA-256 hashed before storage (no PII stored)
+
+**Test suite expansion (tests/tier4.test.ts):**
+- 30 new unit tests across 7 describe blocks
+- Total: 142 tests (was 112), all passing
+
+**Type errors fixed:** 6 (StatTile wrong module, ConfirmDialog onConfirm return type, Card onClick not supported, duplicate imports)
+
+### Deployment
+- Committed: `e2b617b`
+- Deployed via installer to `myportal.readypackets.com`
+- Health check: `{"status":"ready"}`
+- 103 tables in production DB
+
