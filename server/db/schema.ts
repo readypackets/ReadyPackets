@@ -2068,3 +2068,36 @@ export const customerWorkspaceMembers = mysqlTable("customer_workspace_members",
   createdAt: createdAt(),
   revokedAt: timestamp("revoked_at"),
 }, (table) => ({ workspaceUserUnique: uniqueIndex("customer_workspace_member_unique").on(table.workspaceId, table.userId), userIdx: index("customer_workspace_member_user_idx").on(table.userId) }));
+
+
+// ── Controlled platform upgrades ────────────────────────────────────────────
+export const platformUpgradeRuns = mysqlTable(
+  "platform_upgrade_runs",
+  {
+    id: id(),
+    repository: varchar("repository", { length: 255 }).notNull(),
+    branch: varchar("branch", { length: 128 }).notNull().default("main"),
+    fromCommit: varchar("from_commit", { length: 64 }).notNull(),
+    targetCommit: varchar("target_commit", { length: 64 }).notNull(),
+    status: mysqlEnum("status", ["scanned", "approved", "running", "completed", "failed", "rolled_back"]).notNull().default("scanned"),
+    changedFiles: json("changed_files"),
+    scanSummary: json("scan_summary"),
+    riskSummary: json("risk_summary"),
+    backupFilename: varchar("backup_filename", { length: 512 }),
+    rollbackSnapshot: varchar("rollback_snapshot", { length: 1024 }),
+    output: text("output"),
+    scannedByUserId: int("scanned_by_user_id").notNull(),
+    approvedByUserId: int("approved_by_user_id"),
+    approvedAt: timestamp("approved_at"),
+    startedAt: timestamp("started_at"),
+    completedAt: timestamp("completed_at"),
+    rolledBackByUserId: int("rolled_back_by_user_id"),
+    rolledBackAt: timestamp("rolled_back_at"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    statusCreatedIdx: index("platform_upgrade_runs_status_created_idx").on(table.status, table.createdAt),
+    targetCommitIdx: index("platform_upgrade_runs_target_commit_idx").on(table.targetCommit),
+  }),
+);

@@ -109,6 +109,7 @@ import { AdminEntraSetupPage } from "@/pages/admin/EntraSetup";
 import { AdminAnnouncementsPage } from "@/pages/admin/Announcements";
 import { AdminNavigationPage } from "@/pages/admin/Navigation";
 import { AdminKnowledgeBasePage } from "@/pages/admin/KnowledgeBase";
+import { AdminPlatformUpdates } from "@/pages/admin/PlatformUpdates";
 
 /** Full-page loader shown while the session is being resolved. */
 function BootScreen() {
@@ -334,6 +335,7 @@ function AdminRoutes() {
         <Route path="/admin/knowledge-base" component={AdminKnowledgeBasePage} />
         <Route path="/admin/crm" component={AdminCRM} />
         <Route path="/admin/backups" component={AdminBackups} />
+        <Route path="/admin/platform-updates" component={AdminPlatformUpdates} />
         <Route path="/admin/ai-hub" component={AdminAIHub} />
         <Route path="/admin/scheduling" component={AdminScheduling} />
         <Route path="/admin/wizard-slides" component={AdminWizardSlides} />

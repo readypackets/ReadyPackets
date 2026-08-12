@@ -1,0 +1,232 @@
+  id: id(),
+  experimentKey: varchar("experiment_key", { length: 128 }).notNull(),
+  variantKey: varchar("variant_key", { length: 64 }).notNull(),
+  description: text("description"),
+  weight: int("weight").notNull().default(50),
+  isControl: boolean("is_control").notNull().default(false),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: createdAt(),
+});
+
+export const pwaAbEvents = mysqlTable("pwa_ab_events", {
+  id: bigint("id", { mode: "number", unsigned: true }).autoincrement().primaryKey(),
+  experimentKey: varchar("experiment_key", { length: 128 }).notNull(),
+  variantKey: varchar("variant_key", { length: 64 }).notNull(),
+  userId: int("user_id"),
+  sessionId: varchar("session_id", { length: 128 }),
+  eventType: varchar("event_type", { length: 64 }).notNull().default("impression"),
+  metadata: json("metadata"),
+  createdAt: createdAt(),
+});
+
+// ── Tier 3: Admin preferences ─────────────────────────────────────────────────
+
+export const adminNavPreferences = mysqlTable("admin_nav_preferences", {
+  id: id(),
+  userId: int("user_id").notNull(),
+  pinnedItems: json("pinned_items"),
+  collapsedSections: json("collapsed_sections"),
+  defaultView: varchar("default_view", { length: 64 }),
+  updatedAt: updatedAt(),
+});
+
+export const pinnedQuickAdd = mysqlTable("pinned_quick_add", {
+  id: id(),
+  userId: int("user_id").notNull(),
+  actionKey: varchar("action_key", { length: 64 }).notNull(),
+  label: varchar("label", { length: 128 }).notNull(),
+  href: varchar("href", { length: 512 }).notNull(),
+  sortOrder: int("sort_order").notNull().default(0),
+  createdAt: createdAt(),
+});
+
+// ── Tier 3: Support permissions ───────────────────────────────────────────────
+
+export const supportPermissions = mysqlTable("support_permissions", {
+  id: id(),
+  userId: int("user_id").notNull(),
+  canViewAllTickets: boolean("can_view_all_tickets").notNull().default(false),
+  canCloseTickets: boolean("can_close_tickets").notNull().default(false),
+  canAssignTickets: boolean("can_assign_tickets").notNull().default(false),
+  canViewCustomerPii: boolean("can_view_customer_pii").notNull().default(false),
+  canIssueRefunds: boolean("can_issue_refunds").notNull().default(false),
+  ticketCategories: json("ticket_categories"),
+  grantedByUserId: int("granted_by_user_id").notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+// ── Tier 3: Feature toggle scheduling ────────────────────────────────────────
+
+export const featureToggleSchedules = mysqlTable("feature_toggle_schedules", {
+  id: id(),
+  flagKey: varchar("flag_key", { length: 128 }).notNull(),
+  scheduledValue: boolean("scheduled_value").notNull(),
+  scheduledAt: timestamp("scheduled_at").notNull(),
+  executedAt: timestamp("executed_at"),
+  createdByUserId: int("created_by_user_id"),
+  note: text("note"),
+  createdAt: createdAt(),
+});
+
+// ── Tier 3: System backups ────────────────────────────────────────────────────
+
+export const systemBackups = mysqlTable("system_backups", {
+  id: id(),
+  filename: varchar("filename", { length: 512 }).notNull(),
+  sizeBytes: bigint("size_bytes", { mode: "number", unsigned: true }).notNull().default(0),
+  backupType: mysqlEnum("backup_type", ["full", "database", "files", "incremental"]).notNull().default("full"),
+  status: mysqlEnum("status", ["running", "completed", "failed", "deleted"]).notNull().default("completed"),
+  schemaVersion: varchar("schema_version", { length: 32 }),
+  checksum: varchar("checksum", { length: 128 }),
+  storagePath: varchar("storage_path", { length: 1024 }),
+  triggeredBy: mysqlEnum("triggered_by", ["scheduler", "manual", "pre_upgrade"]).notNull().default("scheduler"),
+  triggeredByUserId: int("triggered_by_user_id"),
+  error: text("error"),
+  createdAt: createdAt(),
+});
+
+// ── Tier 3: Email automation rate limits ──────────────────────────────────────
+
+export const emailAutomationRateLimits = mysqlTable("email_automation_rate_limits", {
+  id: id(),
+  automationId: int("automation_id").notNull(),
+  userId: int("user_id").notNull(),
+  sentCount: int("sent_count").notNull().default(0),
+  windowStart: timestamp("window_start").notNull().defaultNow(),
+});
+
+// ── Knowledge base ──────────────────────────────────────────────────────────
+
+export const knowledgeBaseArticles = mysqlTable(
+  "knowledge_base_articles",
+  {
+    id: id(),
+    title: varchar("title", { length: 255 }).notNull(),
+    slug: varchar("slug", { length: 160 }).notNull(),
+    category: varchar("category", { length: 96 }),
+    excerpt: text("excerpt"),
+    bodyMarkdown: text("body_markdown").notNull(),
+    status: varchar("status", { length: 24 }).notNull().default("draft"),
+    authorUserId: int("author_user_id").notNull(),
+    reviewedByUserId: int("reviewed_by_user_id"),
+    submittedAt: timestamp("submitted_at"),
+    reviewedAt: timestamp("reviewed_at"),
+    publishedAt: timestamp("published_at"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    slugUnique: uniqueIndex("knowledge_base_articles_slug_unique").on(table.slug),
+    visibleIdx: index("knowledge_base_articles_visible_idx").on(table.status, table.publishedAt),
+  }),
+);
+
+// ── Tier 4: Forum teaser click tracking ──────────────────────────────────────
+
+export const forumTeaserClicks = mysqlTable(
+  "forum_teaser_clicks",
+  {
+    id: bigint("id", { mode: "number", unsigned: true }).autoincrement().primaryKey(),
+    topicId: int("topic_id").notNull(),
+    /** Anonymous session identifier (from cookie or generated). */
+    sessionId: varchar("session_id", { length: 128 }),
+    /** SHA-256 of the client IP, for deduplication without storing PII. */
+    ipHash: varchar("ip_hash", { length: 64 }),
+    referrer: varchar("referrer", { length: 512 }),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    topicIdx: index("forum_teaser_clicks_topic_idx").on(table.topicId),
+    createdIdx: index("forum_teaser_clicks_created_idx").on(table.createdAt),
+  }),
+);
+
+// ── Tier 4: Login page configurator ──────────────────────────────────────────
+
+export const loginPageConfig = mysqlTable("login_page_config", {
+  id: int("id").autoincrement().primaryKey(),
+  heroHeadline: varchar("hero_headline", { length: 255 }),
+  heroSubheadline: varchar("hero_subheadline", { length: 512 }),
+  showTestimonial: boolean("show_testimonial").notNull().default(false),
+  testimonialText: text("testimonial_text"),
+  testimonialAuthor: varchar("testimonial_author", { length: 128 }),
+  showFeatureList: boolean("show_feature_list").notNull().default(true),
+  featureList: json("feature_list"),
+  backgroundStyle: varchar("background_style", { length: 32 }).notNull().default("default"),
+  accentColor: varchar("accent_color", { length: 32 }),
+  updatedByUserId: int("updated_by_user_id"),
+  updatedAt: updatedAt(),
+});
+
+// ── Customer collaboration workspaces ─────────────────────────────────────────
+export const customerWorkspaces = mysqlTable("customer_workspaces", {
+  id: id(),
+  name: varchar("name", { length: 190 }).notNull(),
+  slug: varchar("slug", { length: 96 }).notNull(),
+  ownerUserId: int("owner_user_id").notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (table) => ({ slugUnique: uniqueIndex("customer_workspace_slug_unique").on(table.slug), ownerIdx: index("customer_workspace_owner_idx").on(table.ownerUserId) }));
+
+export const customerWorkspaceMembers = mysqlTable("customer_workspace_members", {
+  id: id(),
+  workspaceId: int("workspace_id").notNull(),
+  userId: int("user_id").notNull(),
+  role: varchar("role", { length: 24 }).notNull().default("member"),
+  invitedByUserId: int("invited_by_user_id"),
+  createdAt: createdAt(),
+  revokedAt: timestamp("revoked_at"),
+}, (table) => ({ workspaceUserUnique: uniqueIndex("customer_workspace_member_unique").on(table.workspaceId, table.userId), userIdx: index("customer_workspace_member_user_idx").on(table.userId) }));
+--- routers ---
+/**
+ * Root router. The type exported here is the single source of truth for the
+ * client's API surface, which is what removes an entire class of drift bugs
+ * between server and browser.
+ */
+import { router } from "../trpc/trpc.js";
+import { accountRouter } from "./account.js";
+import { adminRouter } from "./admin.js";
+import { adminFilesRouter } from "./adminFiles.js";
+import { adminSecurityRouter } from "./adminSecurity.js";
+import { adminNavigationRouter } from "./adminNavigation.js";
+import { authRouter } from "./auth.js";
+import { communityRouter } from "./community.js";
+import { filesRouter } from "./files.js";
+import { intakeRouter } from "./intake.js";
+import { ordersRouter } from "./orders.js";
+import { publicRouter } from "./public.js";
+import { ticketsRouter } from "./tickets.js";
+import { stripeRouter } from "./stripe.js";
+import { integrationsRouter } from "./integrations.js";
+import { emailAutomationsRouter } from "./emailAutomations.js";
+import { siemExportRouter } from "./siemExport.js";
+import { crmRouter } from "./crm.js";
+import { tier3Router } from "./tier3.js";
+import { tier4Router } from "./tier4.js";
+import { knowledgeBaseRouter } from "./knowledgeBase.js";
+
+export const appRouter = router({
+  auth: authRouter,
+  public: publicRouter,
+  orders: ordersRouter,
+  intake: intakeRouter,
+  files: filesRouter,
+  tickets: ticketsRouter,
+  community: communityRouter,
+  account: accountRouter,
+  admin: adminRouter,
+  adminFiles: adminFilesRouter,
+  adminSecurity: adminSecurityRouter,
+  adminNavigation: adminNavigationRouter,
+  stripe: stripeRouter,
+  integrations: integrationsRouter,
+  emailAutomations: emailAutomationsRouter,
+  siemExport: siemExportRouter,
+  crm: crmRouter,
+  tier3: tier3Router,
+  tier4: tier4Router,
+  knowledgeBase: knowledgeBaseRouter,
+});
+
+export type AppRouter = typeof appRouter;

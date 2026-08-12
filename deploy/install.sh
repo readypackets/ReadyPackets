@@ -487,6 +487,7 @@ install -m 0644 "${APP_DIR}/deploy/logrotate.conf" /etc/logrotate.d/readypackets
 log "Installing the nightly backup timer"
 install -m 0750 "${APP_DIR}/deploy/backup.sh" /usr/local/sbin/readypackets-backup
 install -m 0750 "${APP_DIR}/deploy/backup-control.sh" /usr/local/sbin/readypackets-backup-control
+install -m 0750 "${APP_DIR}/deploy/platform-upgrade-control.sh" /usr/local/sbin/readypackets-platform-update
 install -m 0644 "${APP_DIR}/deploy/readypackets-backup.service" /etc/systemd/system/
 install -m 0644 "${APP_DIR}/deploy/readypackets-backup.timer" /etc/systemd/system/
 # The application can invoke only the allowlisted helper; the helper validates every
@@ -494,6 +495,14 @@ install -m 0644 "${APP_DIR}/deploy/readypackets-backup.timer" /etc/systemd/syste
 printf 'readypackets ALL=(root) NOPASSWD: /usr/local/sbin/readypackets-backup-control *\n' > /etc/sudoers.d/readypackets-backup-control
 chmod 0440 /etc/sudoers.d/readypackets-backup-control
 visudo -cf /etc/sudoers.d/readypackets-backup-control
+# Platform upgrades have a separate root-owned allowlisted helper. The web
+# service can request only status, validated approved upgrades, or rollback by
+# a recorded run ID; it cannot execute arbitrary shell commands.
+printf 'readypackets ALL=(root) NOPASSWD: /usr/local/sbin/readypackets-platform-update *\n' > /etc/sudoers.d/readypackets-platform-update
+chmod 0440 /etc/sudoers.d/readypackets-platform-update
+visudo -cf /etc/sudoers.d/readypackets-platform-update
+install -d -m 0700 -o root -g root /var/backups/readypackets/platform-upgrades
+install -d -m 0700 -o root -g root /var/lib/readypackets/platform-upgrades
 # The service needs to list/copy archives into its protected download staging area,
 # but the archives remain root-owned and never become world-readable.
 install -d -m 0750 -o root -g readypackets /var/backups/readypackets
