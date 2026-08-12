@@ -1655,3 +1655,8 @@ Added `tests/mfaPolicy.test.ts` covering required enrolment, optional sign-in, s
 ### Publication pending
 
 The MFA policy source, tests, and session record are ready for integrity review and publication to the private repository. A final session-log publication entry will be appended after the commit is pushed.
+
+
+### Publication outcome
+
+The configurable role-based MFA policy, Security Centre controls, SAML/local/magic-link enforcement alignment, MFA policy regression tests, and complete session record were committed and pushed to the private `readypackets/ReadyPackets` `main` branch as `644c1436c5d489d47a37046b0fe25dcb1b8e381d` with the message `feat: add configurable MFA enforcement policy`. A final log-only publication commit follows so GitHub contains this outcome as well as the implementation. The production release marker is updated after that closing commit is pushed.
