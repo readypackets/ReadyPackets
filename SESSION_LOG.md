@@ -1808,3 +1808,8 @@ The customer-side recording flow now checks for `mediaDevices.getUserMedia`, req
 Validation completed with TypeScript passing, 150 automated tests passing, and successful production client/server builds. The client assets were deployed with a timestamped rollback copy. The initial three-second probe ran before Node finished its normal delayed startup and returned connection refused; the service log confirmed it began listening approximately five seconds after restart. A follow-up production health check returned `{"status":"ok"}` and `readypackets.service` is active.
 
 Pending source-control publication after this entry.
+
+
+### Publication outcome
+
+The microphone diagnostic repair and this session record were published to the private `main` branch as `d89d47378d0a717664e4f4bb3f2bb956957977ef` (`fix: clarify business pitch microphone startup failures`).
