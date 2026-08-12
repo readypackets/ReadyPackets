@@ -352,7 +352,7 @@ export function OrderDetailPage() {
                   return (
                     <li key={question.id} className="border-b border-line pb-5 last:border-0 last:pb-0">
                       <div className="flex items-start justify-between gap-3">
-                        <p className="text-sm font-medium text-ink">{question.question}</p>
+                        <div className="min-w-0"><div className="mb-1"><Badge tone={question.phase === "phase_2" ? "teal" : "gold"}>{question.phase === "phase_2" ? "Phase 2" : "Phase 1"}</Badge></div><p className="text-sm font-medium text-ink">{question.question}</p></div>
                         <Badge tone={answered ? "success" : "warning"} className="shrink-0">
                           {answered ? "Answered" : "Awaiting reply"}
                         </Badge>

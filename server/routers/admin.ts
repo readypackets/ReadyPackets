@@ -13,6 +13,7 @@ import {
   changelogEntries,
   contactMessages,
   emailTemplates,
+  emailLog,
   files,
   forumPosts,
   forumTopics,
@@ -40,6 +41,7 @@ import {
   users,
 } from "../db/schema.js";
 import { decryptField, encryptField, hashPassword, randomToken } from "../security/crypto.js";
+import { getSetting, getSettingNumber, setSetting } from "../services/settings.js";
 import {
   createUser,
   decryptUser,
@@ -478,6 +480,7 @@ export const adminRouter = router({
       z.object({
         orderId: z.number().int().positive(),
         question: z.string().trim().min(5).max(2000),
+        phase: z.enum(["phase_1", "phase_2"]).default("phase_1"),
         required: z.boolean().default(true),
       }),
     )
@@ -486,6 +489,7 @@ export const adminRouter = router({
         orderId: input.orderId,
         askedByUserId: ctx.session.user.id,
         questionEnc: encryptField(input.question, "order_question:pending") ?? "",
+        phase: input.phase,
         required: input.required,
       });
       const questionId = insertedId(inserted);
@@ -558,7 +562,7 @@ export const adminRouter = router({
     .mutation(async ({ ctx, input }) => {
       const template = (await db.select().from(orderQuestionTemplates).where(and(eq(orderQuestionTemplates.id, input.templateId), eq(orderQuestionTemplates.isActive, true))).limit(1))[0];
       if (!template) throw new TRPCError({ code: "NOT_FOUND", message: "Question template not found." });
-      const inserted = await db.insert(orderQuestions).values({ orderId: input.orderId, askedByUserId: ctx.session.user.id, questionEnc: encryptField(template.question, "order_question:pending") ?? "", required: template.required, sortOrder: template.sortOrder });
+      const inserted = await db.insert(orderQuestions).values({ orderId: input.orderId, askedByUserId: ctx.session.user.id, questionEnc: encryptField(template.question, "order_question:pending") ?? "", phase: template.phase, required: template.required, sortOrder: template.sortOrder });
       const questionId = insertedId(inserted);
       await db.update(orderQuestions).set({ questionEnc: encryptField(template.question, `order_question:${questionId}`) ?? "" }).where(eq(orderQuestions.id, questionId));
       return { ok: true as const, questionId };
@@ -1519,6 +1523,65 @@ export const adminRouter = router({
         ipAddress: ctx.clientIp,
       });
       return { ok: true as const };
+    }),
+
+  cloneEmailTemplate: adminProcedure
+    .input(z.object({ sourceTemplateKey: z.string().trim().max(64), templateKey: z.string().trim().regex(/^[a-z0-9_.-]+$/).max(64), name: z.string().trim().min(2).max(190) }))
+    .mutation(async ({ ctx, input }) => {
+      const source = (await db.select().from(emailTemplates).where(eq(emailTemplates.templateKey, input.sourceTemplateKey)).limit(1))[0];
+      if (!source) throw new TRPCError({ code: "NOT_FOUND", message: "Source email template not found." });
+      try {
+        await db.insert(emailTemplates).values({ templateKey: input.templateKey, name: input.name, subject: source.subject, bodyHtml: source.bodyHtml, bodyText: source.bodyText, variables: source.variables, enabled: false });
+      } catch {
+        throw new TRPCError({ code: "CONFLICT", message: "That template key is already in use." });
+      }
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "email.template_clone", entityType: "email_template", entityId: input.templateKey, summary: `Cloned email template ${input.sourceTemplateKey}`, ipAddress: ctx.clientIp });
+      return { ok: true as const };
+    }),
+
+  emailAuditSettings: adminProcedure.query(async () => ({
+    auditBcc: (await getSetting("email.audit_bcc")) ?? "",
+    retentionDays: await getSettingNumber("email.retention_days", 365),
+  })),
+
+  updateEmailAuditSettings: adminProcedure
+    .input(z.object({ auditBcc: z.union([z.literal(""), z.string().trim().email().max(255)]), retentionDays: z.number().int().min(7).max(3650) }))
+    .mutation(async ({ ctx, input }) => {
+      await Promise.all([
+        setSetting("email.audit_bcc", input.auditBcc || null, { category: "email", isSecret: true, userId: ctx.session.user.id }),
+        setSetting("email.retention_days", String(input.retentionDays), { category: "email", userId: ctx.session.user.id }),
+      ]);
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "email.audit_settings_update", entityType: "email_settings", entityId: "delivery_audit", summary: "Updated email BCC and retention settings", ipAddress: ctx.clientIp });
+      return { ok: true as const };
+    }),
+
+  emailDeliveryHistory: adminProcedure
+    .input(z.object({ limit: z.number().int().min(1).max(200).default(50) }).optional())
+    .query(async ({ input }) => {
+      const rows = await db.select().from(emailLog).orderBy(desc(emailLog.createdAt)).limit(input?.limit ?? 50);
+      return rows.map((row) => ({
+        id: row.id,
+        templateKey: row.templateKey,
+        subject: row.subject,
+        status: row.status,
+        detail: row.detail,
+        createdAt: row.createdAt,
+        sentAt: row.sentAt,
+        to: row.toAddressEnc ? decryptField(row.toAddressEnc, "email_log:to") : null,
+        bcc: row.bccAddressEnc ? decryptField(row.bccAddressEnc, "email_log:bcc") : null,
+        bodyHtml: row.bodyHtmlEnc ? decryptField(row.bodyHtmlEnc, "email_log:html") : null,
+        bodyText: row.bodyTextEnc ? decryptField(row.bodyTextEnc, "email_log:text") : null,
+      }));
+    }),
+
+  purgeEmailDeliveryHistory: adminProcedure
+    .mutation(async ({ ctx }) => {
+      const retentionDays = await getSettingNumber("email.retention_days", 365);
+      const cutoff = new Date(Date.now() - retentionDays * 86_400_000);
+      const result = await db.delete(emailLog).where(sql`${emailLog.createdAt} < ${cutoff}`);
+      const deleted = Number((result as { affectedRows?: number }).affectedRows ?? 0);
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "email.delivery_history_purge", entityType: "email_log", entityId: "retention", summary: `Purged ${deleted} email delivery logs older than ${retentionDays} days`, ipAddress: ctx.clientIp });
+      return { ok: true as const, deleted, retentionDays };
     }),
 
   registrationFields: adminProcedure.query(async () =>

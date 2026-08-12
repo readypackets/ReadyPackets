@@ -84,9 +84,10 @@ const NAV: { section: string; items: NavItem[] }[] = [
     section: "Email",
     items: [
       { href: "/admin/email-settings", label: "Email settings", icon: Mail, adminOnly: true },
+      { href: "/admin/email-center", label: "Email Template Center", icon: Mail, adminOnly: true },
       { href: "/admin/email-automations", label: "Email automations", icon: Zap, adminOnly: true },
       { href: "/admin/order-automations", label: "Order automations", icon: Zap, adminOnly: true },
-      { href: "/admin/question-templates", label: "Phase 1 templates", icon: ClipboardList, adminOnly: true },
+      { href: "/admin/question-templates", label: "Order Question Banks", icon: ClipboardList, adminOnly: true },
     ],
   },
   {

@@ -239,9 +239,6 @@ export function IntakePage() {
     save.mutate({
       orderId,
       projectName: projectName.trim() || undefined,
-      desiredOutcomes: desiredOutcomes as never,
-      integrityChoice: (integrityChoice || undefined) as never,
-      answers,
     });
   };
 
@@ -251,24 +248,10 @@ export function IntakePage() {
     const timer = setTimeout(saveDraft, 45_000);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dirty, answers, projectName, desiredOutcomes, integrityChoice, readOnly]);
+  }, [dirty, projectName, readOnly]);
 
   const validateAndSubmit = () => {
     const next: Record<string, string> = {};
-    for (const question of questions.data ?? []) {
-      const value = (answers[question.key] ?? "").trim();
-      if (question.required && value.length === 0) {
-        next[question.key] = "This answer is required.";
-      } else if (value.length > 0 && value.length < question.minLength) {
-        next[question.key] = `Please expand this answer to at least ${question.minLength} characters (currently ${value.length}).`;
-      }
-    }
-    if (desiredOutcomes.length === 0) {
-      next.desiredOutcomes = "Choose at least one desired outcome.";
-    }
-    if (!integrityChoice) {
-      next.integrityChoice = "Choose how we should proceed under the Integrity Clause.";
-    }
     if (!confirmAccurate) {
       next.confirmAccurate = "Please confirm your answers are accurate.";
     }
@@ -284,9 +267,6 @@ export function IntakePage() {
       {
         orderId,
         projectName: projectName.trim() || undefined,
-        desiredOutcomes: desiredOutcomes as never,
-        integrityChoice: integrityChoice as never,
-        answers,
       },
       {
         onSuccess() {
@@ -338,7 +318,7 @@ export function IntakePage() {
     <>
       <PageHeader
         title="Phase I — Intake form"
-        description="These answers are the raw material for your analysis. Considered answers produce a materially better packet."
+        description="Upload supporting materials and record a Business Pitch Idea. Your project team will send the specific Phase 1 questions needed for this order."
         breadcrumb={{ href: `/portal/orders/${orderId}`, label: "Back to order" }}
         actions={
           readOnly ? (
@@ -470,7 +450,7 @@ export function IntakePage() {
           </div>
         </Card>
 
-        <Card id="intake-desiredOutcomes">
+        <Card id="intake-desiredOutcomes" className="hidden">
           <CardHeader
             title="Section 7 — Desired outcomes"
             description="What are you trying to achieve with this packet? Choose everything that applies."
@@ -499,7 +479,7 @@ export function IntakePage() {
           ) : null}
         </Card>
 
-        <Card id="intake-integrityChoice" className="border-gold/35">
+        <Card id="intake-integrityChoice" className="hidden border-gold/35">
           <CardHeader
             title="Section 8 — The Integrity Clause"
             description="If our analysis concludes the concept cannot work as described, we will not write a favourable report. Choose now how you would like us to proceed."

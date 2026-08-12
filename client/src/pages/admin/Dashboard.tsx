@@ -100,10 +100,10 @@ export function AdminDashboard() {
           Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-24 w-full" />)
         ) : (
           <>
-            <StatTile label="Orders (all time)" value={orderStats?.total ?? 0} icon={ClipboardList} tone="teal" hint={`${orderStats?.last30DaysCount ?? 0} in the last 30 days`} />
-            <StatTile label="Collected revenue" value={formatMoney(orderStats?.revenueCents ?? 0)} icon={DollarSign} tone="success" hint="Paid and partially refunded orders" />
-            <StatTile label="Customers" value={stats?.customers ?? 0} icon={Users} tone="navy" />
-            <StatTile label="Failed logins (24h)" value={totalFailures} icon={ShieldAlert} tone={totalFailures > 50 ? "danger" : totalFailures > 10 ? "warning" : "neutral"} hint={`${(pressure.data ?? []).length} distinct source addresses`} />
+            <Link href="/admin/orders" className="no-underline"><StatTile label="Orders (all time)" value={orderStats?.total ?? 0} icon={ClipboardList} tone="teal" hint={`${orderStats?.last30DaysCount ?? 0} in the last 30 days`} /></Link>
+            <Link href="/admin/finance" className="no-underline"><StatTile label="Collected revenue" value={formatMoney(orderStats?.revenueCents ?? 0)} icon={DollarSign} tone="success" hint="Paid and partially refunded orders" /></Link>
+            <Link href="/admin/customers" className="no-underline"><StatTile label="Customers" value={stats?.customers ?? 0} icon={Users} tone="navy" /></Link>
+            <Link href="/admin/security" className="no-underline"><StatTile label="Failed logins (24h)" value={totalFailures} icon={ShieldAlert} tone={totalFailures > 50 ? "danger" : totalFailures > 10 ? "warning" : "neutral"} hint={`${(pressure.data ?? []).length} distinct source addresses`} /></Link>
           </>
         )}
       </div>

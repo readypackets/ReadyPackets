@@ -154,17 +154,23 @@ export async function queueTemplatedEmail(input: SendTemplateInput): Promise<voi
   });
 }
 
+async function getAuditBcc(): Promise<string | null> {
+  const configured = (await getSetting("email.audit_bcc"))?.trim() ?? "";
+  return configured && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(configured) ? configured : null;
+}
+
 async function deliver(
   to: string,
   subject: string,
   html: string,
   text: string | null,
+  bcc: string | null = null,
 ): Promise<void> {
   const fromName = (await getSetting("email.from_name")) ?? BRAND.companyShortName;
 
   // Try Microsoft Graph first if configured; fall back to SMTP.
   if (await isGraphEmailEnabled()) {
-    const sent = await sendViaGraph({ to, subject, html, text, fromName });
+    const sent = await sendViaGraph({ to, subject, html, text, fromName, bcc });
     if (sent) {
       logger.debug("Email delivered via Microsoft Graph", { subject });
       return;
@@ -181,6 +187,7 @@ async function deliver(
     from: `"${fromName}" <${fromAddress}>`,
     replyTo: env.smtp.enabled ? env.smtp.replyTo : undefined,
     to,
+    ...(bcc ? { bcc } : {}),
     subject,
     html,
     text: text ?? undefined,
@@ -217,16 +224,22 @@ export async function processEmailQueue(batchSize = 20): Promise<{ sent: number;
     }
 
     try {
-      await deliver(to, message.subject, message.bodyHtml, message.bodyText);
+      const auditBcc = await getAuditBcc();
+      await deliver(to, message.subject, message.bodyHtml, message.bodyText, auditBcc);
       await db
         .update(emailQueue)
         .set({ status: "sent", sentAt: new Date() })
         .where(eq(emailQueue.id, message.id));
       await db.insert(emailLog).values({
         toAddressHash: blindIndex(to),
+        toAddressEnc: encryptField(to, "email_log:to"),
+        bccAddressEnc: auditBcc ? encryptField(auditBcc, "email_log:bcc") : null,
         templateKey: message.templateKey,
         subject: message.subject,
+        bodyHtmlEnc: encryptField(message.bodyHtml, "email_log:html"),
+        bodyTextEnc: message.bodyText ? encryptField(message.bodyText, "email_log:text") : null,
         status: "sent",
+        sentAt: new Date(),
       });
       sent += 1;
     } catch (error) {
@@ -243,10 +256,15 @@ export async function processEmailQueue(batchSize = 20): Promise<{ sent: number;
           runAfter: new Date(Date.now() + Math.min(2 ** attempts, 16) * 60_000),
         })
         .where(eq(emailQueue.id, message.id));
+      const auditBcc = await getAuditBcc();
       await db.insert(emailLog).values({
         toAddressHash: blindIndex(to),
+        toAddressEnc: encryptField(to, "email_log:to"),
+        bccAddressEnc: auditBcc ? encryptField(auditBcc, "email_log:bcc") : null,
         templateKey: message.templateKey,
         subject: message.subject,
+        bodyHtmlEnc: encryptField(message.bodyHtml, "email_log:html"),
+        bodyTextEnc: message.bodyText ? encryptField(message.bodyText, "email_log:text") : null,
         status: giveUp ? "failed" : "retrying",
         detail,
       });
@@ -273,12 +291,18 @@ export async function sendTestEmail(to: string): Promise<void> {
      <p style="margin:0 0 12px 0;">If you are reading this, outbound email from your ReadyPackets Portal instance is working.</p>
      <p style="margin:0;">Sent at ${new Date().toISOString()}.</p>`,
   );
-  await deliver(to, "ReadyPackets Portal — SMTP test", html, "SMTP test message.");
+  const auditBcc = await getAuditBcc();
+  await deliver(to, "ReadyPackets Portal — SMTP test", html, "SMTP test message.", auditBcc);
   await db.insert(emailLog).values({
     toAddressHash: blindIndex(to),
+    toAddressEnc: encryptField(to, "email_log:to"),
+    bccAddressEnc: auditBcc ? encryptField(auditBcc, "email_log:bcc") : null,
     templateKey: "smtp_test",
     subject: "ReadyPackets Portal — SMTP test",
+    bodyHtmlEnc: encryptField(html, "email_log:html"),
+    bodyTextEnc: encryptField("SMTP test message.", "email_log:text"),
     status: "sent",
+    sentAt: new Date(),
   });
 }
 

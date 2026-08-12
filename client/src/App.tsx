@@ -17,6 +17,7 @@ import {
   MessagesSquare,
   ScrollText,
   ShieldCheck,
+  Gift,
   UsersRound,
   UserCog,
 } from "lucide-react";
@@ -59,6 +60,7 @@ import { CommunityPage, NewTopicPage, TopicDetailPage } from "@/pages/portal/Com
 import { ProfilePage } from "@/pages/portal/Profile";
 import { MfaSetupPage, SecurityPage } from "@/pages/portal/Security";
 import { WorkspacesPage } from "@/pages/portal/Workspaces";
+import { ReferralsPage } from "@/pages/portal/Referrals";
 
 import { AdminDashboard } from "@/pages/admin/Dashboard";
 import { AdminOrderDetailPage, AdminOrdersPage, AdminOrderTrashPage } from "@/pages/admin/Orders";
@@ -74,6 +76,7 @@ import { AdminFinancePage } from "@/pages/admin/Finance";
 import { AdminIntegrationsPage } from "@/pages/admin/Integrations";
 import EmailSettings from "@/pages/admin/EmailSettings";
 import EmailAutomations from "@/pages/admin/EmailAutomations";
+import { EmailCenterPage } from "@/pages/admin/EmailCenter";
 import { AdminOrderAutomations } from "@/pages/admin/OrderAutomations";
 import { AdminQuestionTemplates } from "@/pages/admin/QuestionTemplates";
 import Checkout from "@/pages/portal/Checkout";
@@ -234,6 +237,7 @@ function PortalRoutes() {
       title: "Account",
       items: [
         { href: "/portal/profile", label: "Settings", icon: UserCog },
+        { href: "/portal/referrals", label: "Referrals", icon: Gift },
         { href: "/portal/security", label: "Security", icon: ShieldCheck },
         { href: "/portal/policies", label: "Policies", icon: ScrollText },
       ],
@@ -253,6 +257,8 @@ function PortalRoutes() {
         <Route path="/portal/orders/:id/nda" component={MndaPage} />
         <Route path="/portal/files" component={FilesPage} />
         <Route path="/portal/workspaces" component={WorkspacesPage} />
+        {/* Backward-compatible support alias for dashboard links issued before ticket routes were standardized. */}
+        <Route path="/portal/support" component={TicketsListPage} />
         <Route path="/portal/tickets" component={TicketsListPage} />
         <Route path="/portal/tickets/new" component={NewTicketPage} />
         <Route path="/portal/tickets/:id" component={TicketDetailPage} />
@@ -260,6 +266,7 @@ function PortalRoutes() {
         <Route path="/portal/community/new" component={NewTopicPage} />
         <Route path="/portal/community/:slug" component={TopicDetailPage} />
         <Route path="/portal/profile" component={ProfilePage} />
+        <Route path="/portal/referrals" component={ReferralsPage} />
         <Route path="/portal/security" component={SecurityPage} />
         <Route path="/portal/mfa-setup" component={MfaSetupPage} />
         <Route path="/portal/checkout" component={Checkout} />
@@ -312,6 +319,7 @@ function AdminRoutes() {
         <Route path="/admin/finance" component={AdminFinancePage} />
         <Route path="/admin/integrations" component={AdminIntegrationsPage} />
         <Route path="/admin/email-settings" component={EmailSettings} />
+        <Route path="/admin/email-center" component={EmailCenterPage} />
         <Route path="/admin/entra-setup" component={AdminEntraSetupPage} />
         <Route path="/admin/announcements" component={AdminAnnouncementsPage} />
         <Route path="/admin/navigation" component={AdminNavigationPage} />

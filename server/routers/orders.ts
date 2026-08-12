@@ -263,6 +263,7 @@ export const ordersRouter = router({
           return {
             id: question.id,
             question: decryptField(question.questionEnc, `order_question:${question.id}`) ?? "",
+            phase: question.phase,
             required: question.required,
             status: question.status,
             answer: answer

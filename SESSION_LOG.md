@@ -1116,3 +1116,43 @@ The server now includes `trashedCustomers`, `bulkRestoreCustomers`, and `bulkRes
 TypeScript passed with zero errors and the full test suite passed with 142 tests. Production artifacts were built and deployed; `readypackets.service` restarted successfully, the readiness endpoint returned `{"status":"ready"}`, and the previous client bundle was kept as a rollback artifact.
 
 ---
+
+
+## Continuation session — 2026-08-12: Dashboard routing, referrals, announcements, question banks, and email operations
+
+### User requests addressed
+
+The customer reported that the portal **Unread replies** card led to a 404 page, requested clickable administrative dashboard cards, a dedicated customer referral area, targeted portal announcements, order-specific Phase 1 and Phase 2 question banks, removal of the built-in intake questionnaire, and a comprehensive email-template/audit center. The work preserves the platform's self-hosted security model and was deployed to the existing VPS.
+
+### Delivered capability changes
+
+| Area | Completed change |
+|---|---|
+| Dashboard navigation | Repaired the unread-replies target to the ticket list and made customer and administration dashboard KPI cards use direct related routes. |
+| Customer referrals | Added a Referrals portal destination and navigation item with private referral statistics, referral-code copying, mail-link sharing, and web-link sharing. Added a dashboard referral-statistics card. |
+| Portal announcements | Added selected-account targeting on top of all-user, customer, and staff audiences. Administrators can select individual accounts or bulk-select the listed accounts. Customer visibility is enforced server-side. |
+| Question workflow | Renamed Phase 1 templates to **Order Question Banks**. Templates and direct questions now support Phase 1 or Phase 2, and the selected template is copied to an order immediately. Customer questions display their phase on the order detail page. |
+| Intake | Disabled the legacy built-in multi-section questionnaire and its required validation. The intake now focuses on project preparation, supporting materials, Business Pitch recording, and staff-assigned order questions. |
+| Email Template Center | Added `/admin/email-center` for template editing, HTML or rich-text authoring, sandboxed preview, cloning, retained sent-email history, and viewing retained message copies. |
+| Email audit operations | Added encrypted audit retention for recipient, BCC, HTML, plain-text content, status, and timestamps. Added configurable global audit BCC and 7–3650 day retention policies, plus confirmed purge controls. BCC applies through both Microsoft Graph and SMTP. |
+
+### Schema migrations
+
+Applied to production:
+
+- `0012_announcement_recipients.sql` — selected announcement recipient records.
+- `0013_order_question_phases.sql` — Phase 1/Phase 2 question metadata and index.
+- `0014_email_delivery_retention.sql` — encrypted recipient/BCC/body retention fields for sent-email audit history.
+
+### Verification and deployment
+
+- TypeScript check completed with **0 errors**.
+- Full test suite completed with **142 passing tests**.
+- Client and server production build completed successfully.
+- Production service restarted successfully; the application reports `{"status":"ok"}`.
+- Live security verification completed with **46/46 passing checks**.
+- The deployment retained the prior client build on the VPS for rollback.
+
+### Notes
+
+The first post-restart local health probe occurred during the service's normal several-second startup window and was retried after log confirmation. The service listener and both local/public readiness checks succeeded afterward. The `build:cli` alias is not present in the repository, so the documented separate `build:client` and `build:server` commands were used instead.

@@ -727,8 +727,9 @@ export function AdminOrderDetailPage() {
     },
   });
 
-  const questionTemplates = trpc.admin.questionTemplates.useQuery({ phase: "phase_1" });
+  const questionTemplates = trpc.admin.questionTemplates.useQuery();
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [questionPhase, setQuestionPhase] = useState<"phase_1" | "phase_2">("phase_1");
   const [adminAnswerByQuestion, setAdminAnswerByQuestion] = useState<Record<number, string>>({});
   const applyTemplate = trpc.admin.applyQuestionTemplate.useMutation({
     async onSuccess() { setSelectedTemplateId(""); await refetchAll(); toast.success("Template question added to this order"); },
@@ -1184,9 +1185,10 @@ export function AdminOrderDetailPage() {
                 description="The customer sees this in their portal and is notified by email."
               />
               <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto]">
-                <Select label="Phase 1 template bank" value={selectedTemplateId} onChange={(event) => setSelectedTemplateId(event.target.value)} options={[{ value: "", label: "Choose a reusable question…" }, ...(questionTemplates.data ?? []).map((template) => ({ value: String(template.id), label: template.name }))]} />
-                <div className="flex items-end"><Button variant="outline" busy={applyTemplate.isPending} disabled={!selectedTemplateId} onClick={() => applyTemplate.mutate({ orderId, templateId: Number(selectedTemplateId) })}>Add template</Button></div>
+                <Select label="Order Question Bank" value={selectedTemplateId} onChange={(event) => setSelectedTemplateId(event.target.value)} options={[{ value: "", label: "Choose a reusable question…" }, ...(questionTemplates.data ?? []).map((template) => ({ value: String(template.id), label: `${template.phase === "phase_2" ? "Phase 2" : "Phase 1"} — ${template.name}` }))]} />
+                <div className="flex items-end"><Button variant="outline" busy={applyTemplate.isPending} disabled={!selectedTemplateId} onClick={() => applyTemplate.mutate({ orderId, templateId: Number(selectedTemplateId) })}>Apply to order</Button></div>
               </div>
+              <Select className="mt-4" label="Order phase" value={questionPhase} onChange={(event) => setQuestionPhase(event.target.value as "phase_1" | "phase_2")} options={[{ value: "phase_1", label: "Phase 1" }, { value: "phase_2", label: "Phase 2" }]} />
               <Textarea
                 label="Question"
                 className="mt-4"
@@ -1210,6 +1212,7 @@ export function AdminOrderDetailPage() {
                   addQuestion.mutate({
                     orderId,
                     question: question.trim(),
+                    phase: questionPhase,
                     required: questionRequired,
                   })
                 }

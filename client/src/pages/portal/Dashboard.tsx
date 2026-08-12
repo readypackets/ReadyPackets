@@ -12,6 +12,7 @@ import {
   ClipboardList,
   FileCheck2,
   FileText,
+  Gift,
   Inbox,
   MailCheck,
   Package,
@@ -41,6 +42,7 @@ export function PortalDashboard() {
   const summary = trpc.orders.summary.useQuery(undefined, { refetchOnMount: "always" });
   const orders = trpc.orders.list.useQuery(undefined, { refetchOnMount: "always" });
   const tickets = trpc.tickets.unreadCount.useQuery();
+  const referralStats = trpc.tier4.referral.myStats.useQuery();
   const mfa = trpc.auth.mfaStatus.useQuery();
   const announcements = trpc.tier3.announcements.visible.useQuery();
 
@@ -181,7 +183,7 @@ export function PortalDashboard() {
 
       {(announcements.data ?? []).length > 0 ? <Card className="mb-6 border-teal/30"><CardHeader title="Announcements" description="Updates from the ReadyPackets team." /> <div className="mt-4 space-y-3">{(announcements.data ?? []).map((announcement) => <div key={announcement.id} className="rounded-lg border border-line bg-surface-soft p-3"><p className="font-medium text-ink">{announcement.title}</p><p className="mt-1 whitespace-pre-wrap text-sm text-body">{announcement.bodyMarkdown}</p></div>)}</div></Card> : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
         {summary.isLoading ? (
           Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-24 w-full" />)
         ) : (
@@ -189,7 +191,8 @@ export function PortalDashboard() {
             <Link href="/portal/orders" className="no-underline"><StatTile label="Active orders" value={summary.data?.active ?? 0} icon={ClipboardList} tone="teal" /></Link>
             <Link href="/portal/files" className="no-underline"><StatTile label="Delivered" value={summary.data?.delivered ?? 0} icon={FileCheck2} tone="success" /></Link>
             <Link href="/portal/orders" className="no-underline"><StatTile label="Awaiting payment" value={summary.data?.awaitingPayment ?? 0} icon={MailCheck} tone="warning" /></Link>
-            <Link href="/portal/support" className="no-underline"><StatTile label="Unread replies" value={tickets.data ?? 0} icon={Inbox} tone="navy" /></Link>
+            <Link href="/portal/tickets" className="no-underline"><StatTile label="Unread replies" value={tickets.data ?? 0} icon={Inbox} tone="navy" /></Link>
+            <Link href="/portal/referrals" className="no-underline"><StatTile label="Referral rewards" value={formatMoney(referralStats.data?.totalRewardCents ?? 0)} icon={Gift} tone="gold" hint={`${referralStats.data?.total ?? 0} referral(s)`} /></Link>
           </>
         )}
       </div>

@@ -214,7 +214,7 @@ async function getOrCreateSubmission(orderId: number, userId: number): Promise<n
 }
 
 export const intakeRouter = router({
-  /** The question catalogue, so the client never hard-codes the form. */
+  /** Legacy built-in questions are intentionally disabled; staff assign order-specific Phase 1 and Phase 2 questions instead. */
   questions: protectedProcedure.query(() =>
     INTAKE_QUESTIONS.map((question) => ({
       key: question.key,
@@ -224,7 +224,7 @@ export const intakeRouter = router({
       minLength: question.minLength,
       maxLength: question.maxLength,
       required: question.required,
-    })),
+    })).slice(0, 0),
   ),
 
   outcomes: protectedProcedure.query(() => ({
@@ -414,30 +414,8 @@ export const intakeRouter = router({
       );
 
       const problems: string[] = [];
-      for (const question of INTAKE_QUESTIONS) {
-        const value = (answerMap.get(question.key) ?? "").trim();
-        if (!question.required && value.length === 0) continue;
-        if (question.required && value.length === 0) {
-          problems.push(`"${question.label}" is required.`);
-          continue;
-        }
-        if (value.length < question.minLength) {
-          problems.push(
-            `"${question.label}" needs at least ${question.minLength} characters of detail.`,
-          );
-        }
-        if (value.length > question.maxLength) {
-          problems.push(`"${question.label}" exceeds the ${question.maxLength} character limit.`);
-        }
-      }
-
-      const outcomes = (submission.desiredOutcomes as string[] | null) ?? [];
-      if (outcomes.length === 0) {
-        problems.push("Select at least one desired outcome.");
-      }
-      if (!submission.integrityChoice) {
-        problems.push("Choose how you would like us to proceed under the Integrity Clause.");
-      }
+      // There is no built-in questionnaire. Required responses are controlled by
+      // the Phase 1 or Phase 2 questions that staff assign to this order.
 
       // Enforce file limits on submission
       const orderFiles = await db
@@ -462,6 +440,7 @@ export const intakeRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: problems.join(" ") });
       }
 
+      const outcomes = (submission.desiredOutcomes as string[] | null) ?? [];
       const submittedAt = new Date();
       await db
         .update(intakeSubmissions)

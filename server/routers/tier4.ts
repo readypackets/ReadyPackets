@@ -249,6 +249,29 @@ const referralRouter = router({
     return { code };
   }),
 
+  /** Referral statistics visible only to the current referrer. */
+  myStats: protectedProcedure.query(async ({ ctx }) => {
+    const [totals] = await db
+      .select({
+        total: count(),
+        pending: sql<number>`SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END)`,
+        approved: sql<number>`SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END)`,
+        paid: sql<number>`SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END)`,
+        totalRewardCents: sql<number>`SUM(reward_cents)`,
+        paidRewardCents: sql<number>`SUM(CASE WHEN status = 'paid' THEN reward_cents ELSE 0 END)`,
+      })
+      .from(referrals)
+      .where(eq(referrals.referrerUserId, ctx.session.user.id));
+    return {
+      total: Number(totals?.total ?? 0),
+      pending: Number(totals?.pending ?? 0),
+      approved: Number(totals?.approved ?? 0),
+      paid: Number(totals?.paid ?? 0),
+      totalRewardCents: Number(totals?.totalRewardCents ?? 0),
+      paidRewardCents: Number(totals?.paidRewardCents ?? 0),
+    };
+  }),
+
   /** Get the referral reward configuration. */
   getRewardConfig: adminProcedure.query(async () => {
     const rows = await db

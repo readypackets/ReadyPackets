@@ -27,6 +27,7 @@ import {
   pinnedQuickAdd,
   portalWizardSlides,
   portalAnnouncements,
+  portalAnnouncementRecipients,
   pwaAbEvents,
   pwaAbVariants,
   subscriptionItems,
@@ -502,15 +503,33 @@ const featureScheduleRouter = router({
 
 // ── Customer portal announcements ────────────────────────────────────────────
 const announcementsRouter = router({
-  list: adminProcedure.query(async () => db.select().from(portalAnnouncements).orderBy(desc(portalAnnouncements.createdAt))),
-  visible: protectedProcedure.query(async () => {
-    const now = new Date();
-    return db.select().from(portalAnnouncements).where(and(eq(portalAnnouncements.isActive, true), sql`(${portalAnnouncements.startsAt} IS NULL OR ${portalAnnouncements.startsAt} <= ${now})`, sql`(${portalAnnouncements.endsAt} IS NULL OR ${portalAnnouncements.endsAt} >= ${now})`)).orderBy(desc(portalAnnouncements.createdAt));
+  list: adminProcedure.query(async () => {
+    const [announcements, recipients] = await Promise.all([
+      db.select().from(portalAnnouncements).orderBy(desc(portalAnnouncements.createdAt)),
+      db.select().from(portalAnnouncementRecipients),
+    ]);
+    const recipientMap = new Map<number, number[]>();
+    for (const recipient of recipients) recipientMap.set(recipient.announcementId, [...(recipientMap.get(recipient.announcementId) ?? []), recipient.userId]);
+    return announcements.map((announcement) => ({ ...announcement, recipientUserIds: recipientMap.get(announcement.id) ?? [] }));
   }),
-  upsert: adminProcedure.input(z.object({ id: z.number().int().positive().optional(), title: z.string().trim().min(2).max(255), bodyMarkdown: z.string().trim().min(1).max(20_000), audience: z.enum(["all", "customers", "staff"]).default("all"), isActive: z.boolean().default(true), startsAt: z.string().datetime().optional(), endsAt: z.string().datetime().optional() })).mutation(async ({ ctx, input }) => {
+  visible: protectedProcedure.query(async ({ ctx }) => {
+    const now = new Date();
+    const rows = await db.select().from(portalAnnouncements).where(and(eq(portalAnnouncements.isActive, true), sql`(${portalAnnouncements.startsAt} IS NULL OR ${portalAnnouncements.startsAt} <= ${now})`, sql`(${portalAnnouncements.endsAt} IS NULL OR ${portalAnnouncements.endsAt} >= ${now})`)).orderBy(desc(portalAnnouncements.createdAt));
+    const selected = await db.select({ announcementId: portalAnnouncementRecipients.announcementId }).from(portalAnnouncementRecipients).where(eq(portalAnnouncementRecipients.userId, ctx.session.user.id));
+    const selectedIds = new Set(selected.map((row) => row.announcementId));
+    return rows.filter((announcement) => announcement.audience === "all" || (announcement.audience === "customers" && ctx.session.user.role === "customer") || (announcement.audience === "staff" && ctx.session.user.role !== "customer") || (announcement.audience === "selected" && selectedIds.has(announcement.id)));
+  }),
+  upsert: adminProcedure.input(z.object({ id: z.number().int().positive().optional(), title: z.string().trim().min(2).max(255), bodyMarkdown: z.string().trim().min(1).max(20_000), audience: z.enum(["all", "customers", "staff", "selected"]).default("all"), recipientUserIds: z.array(z.number().int().positive()).max(200).default([]), isActive: z.boolean().default(true), startsAt: z.string().datetime().optional(), endsAt: z.string().datetime().optional() })).mutation(async ({ ctx, input }) => {
+    if (input.audience === "selected" && input.recipientUserIds.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Choose at least one recipient for a selected-user announcement." });
     const values = { title: input.title, bodyMarkdown: input.bodyMarkdown, audience: input.audience, isActive: input.isActive, startsAt: input.startsAt ? new Date(input.startsAt) : null, endsAt: input.endsAt ? new Date(input.endsAt) : null };
-    if (input.id) { await db.update(portalAnnouncements).set(values).where(eq(portalAnnouncements.id, input.id)); return { id: input.id }; }
-    const [r] = await db.insert(portalAnnouncements).values({ ...values, createdByUserId: ctx.session.user.id }); return { id: (r as { insertId: number }).insertId };
+    let id = input.id;
+    if (id) await db.update(portalAnnouncements).set(values).where(eq(portalAnnouncements.id, id));
+    else { const [r] = await db.insert(portalAnnouncements).values({ ...values, createdByUserId: ctx.session.user.id }); id = (r as { insertId: number }).insertId; }
+    await db.delete(portalAnnouncementRecipients).where(eq(portalAnnouncementRecipients.announcementId, id));
+    const recipientUserIds = [...new Set(input.recipientUserIds)];
+    if (input.audience === "selected" && recipientUserIds.length > 0) await db.insert(portalAnnouncementRecipients).values(recipientUserIds.map((userId) => ({ announcementId: id!, userId })));
+    void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "portal_announcement.upsert", entityType: "portal_announcement", entityId: id!, summary: `${input.id ? "Updated" : "Created"} ${input.audience} announcement`, ipAddress: ctx.clientIp });
+    return { id };
   }),
   remove: adminProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ input }) => { await db.delete(portalAnnouncements).where(eq(portalAnnouncements.id, input.id)); return { ok: true as const }; }),
 });

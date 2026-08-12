@@ -437,6 +437,7 @@ export const orderQuestions = mysqlTable(
     orderId: int("order_id").notNull(),
     askedByUserId: int("asked_by_user_id").notNull(),
     questionEnc: text("question_enc").notNull(),
+    phase: varchar("phase", { length: 16 }).notNull().default("phase_1"),
     required: boolean("required").notNull().default(true),
     status: varchar("status", { length: 16 }).notNull().default("open"),
     sortOrder: int("sort_order").notNull().default(0),
@@ -445,6 +446,7 @@ export const orderQuestions = mysqlTable(
   },
   (table) => ({
     orderIdx: index("order_questions_order_idx").on(table.orderId),
+    phaseIdx: index("order_questions_phase_idx").on(table.orderId, table.phase, table.status),
   }),
 );
 
@@ -885,10 +887,15 @@ export const emailLog = mysqlTable(
   {
     id: id(),
     toAddressHash: varchar("to_address_hash", { length: 64 }).notNull(),
+    toAddressEnc: text("to_address_enc"),
+    bccAddressEnc: text("bcc_address_enc"),
     templateKey: varchar("template_key", { length: 64 }),
     subject: varchar("subject", { length: 255 }).notNull(),
+    bodyHtmlEnc: text("body_html_enc"),
+    bodyTextEnc: text("body_text_enc"),
     status: varchar("status", { length: 16 }).notNull(),
     detail: varchar("detail", { length: 500 }),
+    sentAt: timestamp("sent_at"),
     createdAt: createdAt(),
   },
   (table) => ({
@@ -1799,6 +1806,21 @@ export const portalAnnouncements = mysqlTable(
     updatedAt: updatedAt(),
   },
   (table) => ({ visibleIdx: index("portal_announcement_visible_idx").on(table.isActive, table.startsAt, table.endsAt) }),
+);
+
+export const portalAnnouncementRecipients = mysqlTable(
+  "portal_announcement_recipients",
+  {
+    id: id(),
+    announcementId: int("announcement_id").notNull(),
+    userId: int("user_id").notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    announcementIdx: index("portal_announcement_recipient_announcement_idx").on(table.announcementId),
+    userIdx: index("portal_announcement_recipient_user_idx").on(table.userId),
+    recipientUnique: uniqueIndex("portal_announcement_recipient_unique").on(table.announcementId, table.userId),
+  }),
 );
 
 export const portalWizardSlides = mysqlTable("portal_wizard_slides", {

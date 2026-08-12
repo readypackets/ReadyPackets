@@ -19,6 +19,7 @@ interface GraphMailMessage {
   html: string;
   text: string | null;
   fromName?: string;
+  bcc?: string | null;
 }
 
 /** Cached access token with expiry. */
@@ -134,6 +135,7 @@ export async function sendViaGraph(message: GraphMailMessage): Promise<boolean> 
           emailAddress: { address: message.to },
         },
       ],
+      ...(message.bcc ? { bccRecipients: [{ emailAddress: { address: message.bcc } }] } : {}),
       from: {
         emailAddress: { address: sender, name: fromName },
       },
