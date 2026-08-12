@@ -1867,3 +1867,8 @@ The administrator payment controls, test-order safeguards, Business Pitch status
 The portal-wide **My Business Packets** page was updated to describe and enforce its revised role: it lists only customer-uploaded files. Staff-published documents are intentionally excluded from that cross-order library and are available to the authorized customer only inside the relevant order workspace. The customer Intake and Phase 2 pages use the per-order authorized file query, so published staff documents remain visible in their associated order. The final client-only update passed TypeScript validation, 150 automated tests, and a production client build; it was deployed with a timestamped asset rollback copy and the production health endpoint returned `{"status":"ok"}`.
 
 Pending source-control publication after this entry.
+
+
+### Publication outcome
+
+The final customer file-library scoping clarification and session record were published to the private `main` branch as `8460b73d2056af5df4a2c694b20a3b696b6623f3` (`fix: scope staff documents to customer order workspace`).
