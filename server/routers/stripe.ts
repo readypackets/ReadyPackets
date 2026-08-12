@@ -32,6 +32,27 @@ import { protectedProcedure, adminProcedure, staffProcedure, router } from "../t
 import { getUserById } from "../db/users.js";
 import { TRPCError } from "@trpc/server";
 
+const couponInput = z
+  .object({
+    id: z.number().int().positive().optional(),
+    code: z.string().min(1).max(48).toUpperCase(),
+    description: z.string().max(255).optional(),
+    discountType: z.enum(["percent", "fixed", "cart_price"]),
+    discountValue: z.number().int().nonnegative(),
+    maxRedemptions: z.number().int().positive().optional().nullable(),
+    startsAt: z.string().datetime().optional().nullable(),
+    expiresAt: z.string().datetime().optional().nullable(),
+    active: z.boolean().default(true),
+  })
+  .superRefine((coupon, ctx) => {
+    if (coupon.discountType === "percent" && (coupon.discountValue < 1 || coupon.discountValue > 100)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["discountValue"], message: "Percentage discounts must be between 1 and 100." });
+    }
+    if (coupon.discountType === "fixed" && coupon.discountValue < 1) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["discountValue"], message: "Fixed discounts must be at least one cent." });
+    }
+  });
+
 export const stripeRouter = router({
   // -------------------------------------------------------------------------
   // Customer: validate a coupon code before checkout
@@ -209,19 +230,7 @@ export const stripeRouter = router({
   // Admin: create or update a coupon
   // -------------------------------------------------------------------------
   upsertCoupon: adminProcedure
-    .input(
-      z.object({
-        id: z.number().int().positive().optional(),
-        code: z.string().min(1).max(48).toUpperCase(),
-        description: z.string().max(255).optional(),
-        discountType: z.enum(["percent", "fixed"]),
-        discountValue: z.number().int().positive(),
-        maxRedemptions: z.number().int().positive().optional().nullable(),
-        startsAt: z.string().datetime().optional().nullable(),
-        expiresAt: z.string().datetime().optional().nullable(),
-        active: z.boolean().default(true),
-      })
-    )
+    .input(couponInput)
     .mutation(async ({ input }) => {
       const data = {
         code: input.code,

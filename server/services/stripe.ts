@@ -119,9 +119,12 @@ export interface CouponResult {
   valid: boolean;
   couponId?: number;
   code?: string;
-  discountType?: "percent" | "fixed";
+  discountType?: "percent" | "fixed" | "cart_price";
+  // Percent for percentage discounts; cents off for fixed discounts; target
+  // cart total in cents for fixed-cart-price discounts.
   discountValue?: number;
   discountCents?: number;
+  cartPriceCents?: number;
   message?: string;
 }
 
@@ -153,8 +156,18 @@ export async function validateCoupon(
   let discountCents = 0;
   if (coupon.discountType === "percent") {
     discountCents = Math.round((orderTotalCents * coupon.discountValue) / 100);
+  } else if (coupon.discountType === "cart_price") {
+    // A cart-price coupon sets the final total, never increases it. The stored
+    // value is the desired final cart price in cents.
+    discountCents = Math.max(0, orderTotalCents - coupon.discountValue);
+    if (discountCents === 0) {
+      return {
+        valid: false,
+        message: "This fixed cart price does not reduce the current order total.",
+      };
+    }
   } else {
-    // fixed amount in cents
+    // Fixed amount in cents.
     discountCents = Math.min(coupon.discountValue, orderTotalCents);
   }
 
@@ -162,9 +175,10 @@ export async function validateCoupon(
     valid: true,
     couponId: coupon.id,
     code: coupon.code,
-    discountType: coupon.discountType as "percent" | "fixed",
+    discountType: coupon.discountType as "percent" | "fixed" | "cart_price",
     discountValue: coupon.discountValue,
     discountCents,
+    cartPriceCents: coupon.discountType === "cart_price" ? coupon.discountValue : undefined,
   };
 }
 
@@ -201,8 +215,13 @@ export async function createCheckoutSession(input: CheckoutInput) {
       appliedCouponId = couponResult.couponId;
       couponDiscountCents = couponResult.discountCents ?? 0;
 
-      // Create or retrieve a Stripe coupon matching our internal one.
-      const stripeCouponName = `RP-${input.couponCode}`;
+      // Stripe supports percentage and amount-off coupons, but not a final-cart
+      // price directly. Translate cart-price coupons to the exact amount off for
+      // this order. Include the original amount in its Stripe name so a coupon
+      // generated for one cart total cannot be reused for a different total.
+      const stripeCouponName = couponResult.discountType === "cart_price"
+        ? `RP-${input.couponCode}-TOTAL-${input.totalCents}`
+        : `RP-${input.couponCode}`;
       const existingCoupons = await stripe.coupons.list({ limit: 100 });
       const existing = existingCoupons.data.find((c) => c.name === stripeCouponName);
 
@@ -218,7 +237,7 @@ export async function createCheckoutSession(input: CheckoutInput) {
               }
             : {
                 name: stripeCouponName,
-                amount_off: couponResult.discountValue!,
+                amount_off: couponResult.discountCents!,
                 currency: "usd",
                 duration: "once",
               }

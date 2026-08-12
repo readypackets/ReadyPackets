@@ -13,7 +13,7 @@ function formatMoney(cents: number): string {
 type CouponPreview = {
   code: string;
   discountCents: number;
-  discountType: "percent" | "fixed";
+  discountType: "percent" | "fixed" | "cart_price";
   discountValue: number;
 };
 
@@ -63,7 +63,12 @@ export default function Checkout() {
         discountType: result.discountType,
         discountValue: result.discountValue,
       });
-      success(`Coupon ${result.code} applied`, `${formatMoney(result.discountCents)} will be applied at payment.`);
+      success(
+        `Coupon ${result.code} applied`,
+        result.discountType === "cart_price"
+          ? `Your final cart price will be ${formatMoney(result.discountValue)}.`
+          : `${formatMoney(result.discountCents)} will be applied at payment.`,
+      );
     } catch (cause) {
       setAppliedCoupon(null);
       setCouponError(cause instanceof Error ? cause.message : "Could not validate this coupon code.");
@@ -144,7 +149,7 @@ export default function Checkout() {
         )}
         {appliedCoupon && (
           <div className="flex justify-between text-sm text-green-600 dark:text-green-400">
-            <span>Coupon {appliedCoupon.code}</span><span>−{formatMoney(couponDiscount)}</span>
+            <span>Coupon {appliedCoupon.code}{appliedCoupon.discountType === "cart_price" ? ` — cart price ${formatMoney(appliedCoupon.discountValue)}` : ""}</span><span>−{formatMoney(couponDiscount)}</span>
           </div>
         )}
         <div className="border-t border-gray-200 dark:border-gray-700 pt-3 flex justify-between font-semibold">

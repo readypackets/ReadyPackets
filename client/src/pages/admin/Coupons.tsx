@@ -98,7 +98,7 @@ export function AdminCouponsPage() {
       id: form.id ?? undefined,
       code: form.code.trim().toUpperCase(),
       description: form.description.trim() || undefined,
-      discountType: form.discountType as "percent" | "fixed",
+      discountType: form.discountType as "percent" | "fixed" | "cart_price",
       discountValue: Number(form.discountValue),
       maxRedemptions: form.maxRedemptions ? Number(form.maxRedemptions) : undefined,
       startsAt: form.startsAt || undefined,
@@ -126,8 +126,10 @@ export function AdminCouponsPage() {
       cell: (row) => (
         <span className="font-semibold text-ink">
           {row.discountType === "percent"
-            ? `${row.discountValue}%`
-            : formatMoney(row.discountValue)}
+            ? `${row.discountValue}% off`
+            : row.discountType === "cart_price"
+            ? `Cart price ${formatMoney(row.discountValue)}`
+            : `${formatMoney(row.discountValue)} off`}
         </span>
       ),
     },
@@ -211,14 +213,15 @@ export function AdminCouponsPage() {
               value={form.discountType}
               onChange={(e) => setForm((f) => ({ ...f, discountType: e.target.value }))}
               options={[
-                { value: "percent", label: "Percentage" },
-                { value: "fixed", label: "Fixed amount" },
+                { value: "percent", label: "Percentage off" },
+                { value: "fixed", label: "Fixed amount off" },
+                { value: "cart_price", label: "Fixed cart price" },
               ]}
             />
             <Input
-              label={form.discountType === "percent" ? "Percent off" : "Cents off"}
+              label={form.discountType === "percent" ? "Percent off" : form.discountType === "cart_price" ? "Final cart price (cents)" : "Cents off"}
               type="number"
-              min={1}
+              min={form.discountType === "cart_price" ? 0 : 1}
               required
               value={form.discountValue}
               onChange={(e) => setForm((f) => ({ ...f, discountValue: e.target.value }))}

@@ -1239,3 +1239,22 @@ The saved secret and publishable keys were confirmed present without reading the
 ### Required administrator action
 
 In Stripe Workbench/Dashboard, create an HTTPS webhook endpoint at `https://myportal.readypackets.com/api/stripe/webhook`, configure the snapshot events `checkout.session.completed`, `payment_intent.payment_failed`, and `charge.refunded`, then copy the resulting endpoint signing secret (`whsec_...`) into **Admin → Finance → Stripe Settings** and save. Use **Test Stripe connection** before accepting live payment. A 100% coupon such as `ALEX99` leaves no amount to collect; test a nonzero order when confirming the hosted payment redirect.
+
+
+## 2026-08-12 — Fixed Cart Price Coupon Method
+
+### User request
+
+The user requested three coupon methods: **percentage off**, **fixed amount off**, and **fixed cart price**.
+
+### Implemented behavior
+
+Coupon administration now offers all three methods in both Finance → Coupons and the dedicated Coupons management page. Percentage discounts are limited to 1–100%; fixed-amount discounts must be at least one cent; fixed-cart-price discounts accept a target final cart price in cents, including zero for a fully covered cart.
+
+A fixed-cart-price coupon stores the desired final total, not a static discount. At validation time, the service calculates `current cart total − target cart price`; it rejects the coupon if that would not reduce the current order. Customer checkout now displays the computed savings and labels the selected coupon with its final cart price.
+
+Stripe represents discounts only as percentage or amount-off coupons. For a fixed-cart-price coupon, ReadyPackets creates/reuses a Stripe amount-off coupon equal to the server-calculated discount for that exact order total. Its provider-side name includes the original order total, preventing reuse of an amount-off translation for a different cart total.
+
+### Validation and deployment
+
+No database migration was required because the existing coupon method storage is a varchar field. TypeScript passed with zero errors, all 143 tests passed, the production service returned ready after deployment, and the live security verification suite passed 46/46 checks.

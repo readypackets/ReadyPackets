@@ -243,7 +243,7 @@ function CouponsTab() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<NonNullable<typeof data>[0] | null>(null);
   const [form, setForm] = useState({
-    code: "", description: "", discountType: "percent" as "percent" | "fixed",
+    code: "", description: "", discountType: "percent" as "percent" | "fixed" | "cart_price",
     discountValue: 10, maxRedemptions: "", expiresAt: "", active: true,
   });
 
@@ -258,7 +258,7 @@ function CouponsTab() {
     setForm({
       code: c.code,
       description: c.description ?? "",
-      discountType: c.discountType as "percent" | "fixed",
+      discountType: c.discountType as "percent" | "fixed" | "cart_price",
       discountValue: c.discountValue,
       maxRedemptions: c.maxRedemptions ? String(c.maxRedemptions) : "",
       expiresAt: c.expiresAt ? new Date(c.expiresAt).toISOString().slice(0, 16) : "",
@@ -307,7 +307,7 @@ function CouponsTab() {
               <tr key={c.id} className="border-b hover:bg-gray-50">
                 <td className="py-2 pr-4 font-mono font-medium">{c.code}</td>
                 <td className="py-2 pr-4">
-                  {c.discountType === "percent" ? `${c.discountValue}%` : formatCents(c.discountValue)}
+                  {c.discountType === "percent" ? `${c.discountValue}% off` : c.discountType === "cart_price" ? `Cart price ${formatCents(c.discountValue)}` : `${formatCents(c.discountValue)} off`}
                 </td>
                 <td className="py-2 pr-4">
                   {c.redemptionCount}{c.maxRedemptions ? ` / ${c.maxRedemptions}` : ""}
@@ -348,12 +348,13 @@ function CouponsTab() {
           </Field>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Discount type">
-              <Select value={form.discountType} onChange={e => setForm(f => ({ ...f, discountType: e.target.value as "percent" | "fixed" }))}>
-                <option value="percent">Percentage</option>
-                <option value="fixed">Fixed amount (cents)</option>
+              <Select value={form.discountType} onChange={e => setForm(f => ({ ...f, discountType: e.target.value as "percent" | "fixed" | "cart_price" }))}>
+                <option value="percent">Percentage off</option>
+                <option value="fixed">Fixed amount off</option>
+                <option value="cart_price">Fixed cart price</option>
               </Select>
             </Field>
-            <Field label={form.discountType === "percent" ? "Percentage" : "Amount (cents)"}>
+            <Field label={form.discountType === "percent" ? "Percentage off" : form.discountType === "cart_price" ? "Final cart price (cents)" : "Amount off (cents)"}>
               <Input type="number" value={form.discountValue} onChange={e => setForm(f => ({ ...f, discountValue: Number(e.target.value) }))} />
             </Field>
           </div>
