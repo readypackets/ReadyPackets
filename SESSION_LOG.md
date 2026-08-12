@@ -1193,3 +1193,28 @@ The reported defect originated in the one shared focus-trap effect. The original
 Because every client modal and confirmation dialog uses that shared primitive, the fix covers all existing modal form surfaces rather than only the address-block dialog. A regression test, `tests/modal-focus.test.ts`, now prevents reintroducing the unstable `[open, onClose]` focus lifecycle. The complete suite passed with **143 tests**, including the new modal-focus test, and TypeScript passed with zero errors.
 
 No new production bundle was required during this audit because the shared modal correction was already deployed in the immediately preceding release. This continuation adds regression coverage and the completed audit record.
+
+
+## 2026-08-12 — Delivery Control, Knowledge Base, Automation, and Backup Operations Release
+
+### User-requested outcomes addressed
+
+The user requested administrative controls to stop queued email retries, retry failed messages, resend historical messages, choose Email Template Center templates in email automations, add email and webhook actions to order automations, support Phase I, Phase II, both-phase, and unassigned question-bank templates, introduce an admin-approved customer knowledge base, add a Stripe connection test, and expand the backup console with encrypted configuration export, scheduled backups, protected downloads, and multiple external-cloud sync destinations.
+
+### Implemented capabilities
+
+1. **Email delivery operations.** The Email Template Center now includes queued-delivery visibility and audited stop, retry, and resend actions. Queue cancellation prevents further retry processing; retry restores an eligible failed/cancelled queued message; resend creates a new queued delivery while retaining lineage to the original message.
+2. **Email automation template selection.** Email automations now use an Email Template Center dropdown rather than a free-text template key. The server validates selected templates before rules are saved.
+3. **Order automation actions.** Lifecycle rules can now set completion percentage, queue a selected email template to the order customer, or queue a delivery to an enabled outbound webhook endpoint. Actions use the existing mail and webhook queues and write system audit activity.
+4. **Flexible question-bank phases.** Reusable order-question templates now support Phase I, Phase II, both phases, or unassigned. Applying a both-phases template creates distinct Phase I and Phase II question records for the order.
+5. **Stripe connection test.** Finance → Stripe Settings now offers an administrator-only connection test using Stripe's authenticated balance endpoint. It reports safe account/balance metadata only and does not expose credentials.
+6. **Knowledge base.** Added approved knowledge-base articles with draft, pending-review, published, and rejected states. Staff can draft and submit articles; administrators approve/publish, unpublish, request revisions, or delete. Only published articles are exposed inside the customer portal Knowledge base destination.
+7. **Backup operations.** Added a root-owned, allowlisted backup-control helper used by the application through a narrow sudo rule. The admin backup page now offers immediate runs, daily schedule selection, protected archive downloads, passphrase-encrypted configuration-export downloads, and management of multiple rclone destinations for Amazon S3, Wasabi S3, Backblaze B2, Azure Blob Storage, SharePoint, Google Drive, OneDrive, and Dropbox. Archive synchronization runs after each completed backup and does not delete the verified local archive when a remote target fails.
+
+### Production changes and safeguards
+
+Migrations `0015_delivery_and_automation_actions.sql` and `0016_knowledge_base_articles.sql` were applied. The VPS now has rclone installed and a documented backup-control helper. Backup archives and administrative export staging use `root:readypackets` mode `0750`; individual archive/export files remain non-world-readable. External provider credentials remain in root-owned rclone configuration rather than portal storage or browser state. The change is recorded in the VPS `AGENTS.md` operating record.
+
+### Validation
+
+`pnpm run typecheck` completed with zero TypeScript errors. `pnpm test` passed all 143 tests. Shell syntax checks passed for the backup scripts and installer. The production readiness endpoint succeeded, schema additions were confirmed, the restricted `readypackets` service-account backup-control path was verified, and the live security suite passed all 46 of 46 checks.

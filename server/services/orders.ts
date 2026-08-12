@@ -15,6 +15,8 @@ import {
   orderItems,
   orderAutomationRules,
   orderStatusHistory,
+  webhookDeliveries,
+  webhookEndpoints,
   orderShares,
   orders,
   phaseJobs,
@@ -27,6 +29,8 @@ import { recordActivity } from "../observability/audit.js";
 import { priceSelection } from "./catalog.js";
 import { fireAutomations } from "./emailAutomations.js";
 import { queueFullOrderFolderProvisioning } from "./sharepoint.js";
+import { queueTemplatedEmail } from "./email.js";
+import { displayNameOf, getUserById } from "../db/users.js";
 import { ORDER_TRANSITIONS, type OrderStatus } from "../../shared/domain.js";
 import { insertedId } from "../db/result.js";
 
@@ -159,6 +163,22 @@ export async function applyOrderAutomationRules(
     .where(and(eq(orderAutomationRules.isActive, true), eq(orderAutomationRules.triggerType, triggerType)))
     .orderBy(orderAutomationRules.sortOrder);
 
+  const [order] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+  if (!order) return;
+  const customer = await getUserById(order.userId);
+  const projectName = order.projectNameEnc ? decryptField(order.projectNameEnc, `order:${order.id}`) : null;
+  const variables = {
+    name: customer ? displayNameOf(customer) : "Customer",
+    email: customer?.email ?? "",
+    orderNumber: order.orderNumber,
+    orderId: order.id,
+    projectName: projectName ?? "",
+    orderStatus: order.status,
+    paymentStatus: order.paymentStatus,
+    automationEvent: triggerType,
+    automationValue: triggerValue ?? "",
+  };
+
   for (const rule of rules) {
     if (rule.triggerValue && rule.triggerValue !== (triggerValue ?? null)) continue;
     if (rule.actionType === "set_completion_percent" && rule.completionPercent !== null) {
@@ -174,6 +194,39 @@ export async function applyOrderAutomationRules(
         entityId: orderId,
         summary: `Order automation \"${rule.name}\" set completion to ${rule.completionPercent}%`,
         changes: { ruleId: rule.id, triggerType, triggerValue: triggerValue ?? null, completionPercent: rule.completionPercent },
+      });
+    } else if (rule.actionType === "send_email" && rule.emailTemplateKey && customer?.email) {
+      await queueTemplatedEmail({ to: customer.email, templateKey: rule.emailTemplateKey, variables });
+      void recordActivity({
+        actorUserId: null,
+        actorRole: "system",
+        action: "order.automation_email_queued",
+        entityType: "order",
+        entityId: orderId,
+        summary: `Order automation \"${rule.name}\" queued email template ${rule.emailTemplateKey}`,
+        changes: { ruleId: rule.id, triggerType, triggerValue: triggerValue ?? null, templateKey: rule.emailTemplateKey },
+      });
+    } else if (rule.actionType === "send_webhook" && rule.webhookEndpointId) {
+      const [endpoint] = await db.select({ id: webhookEndpoints.id }).from(webhookEndpoints).where(and(eq(webhookEndpoints.id, rule.webhookEndpointId), eq(webhookEndpoints.enabled, true))).limit(1);
+      if (!endpoint) {
+        logger.warn("order.automation.webhook_endpoint_unavailable", { orderId, ruleId: rule.id, endpointId: rule.webhookEndpointId });
+        continue;
+      }
+      await db.insert(webhookDeliveries).values({
+        endpointId: endpoint.id,
+        eventType: `order.${triggerType}`,
+        payload: { orderId: order.id, orderNumber: order.orderNumber, customerId: order.userId, projectName, status: order.status, paymentStatus: order.paymentStatus, triggerType, triggerValue: triggerValue ?? null, ruleId: rule.id, occurredAt: new Date().toISOString() },
+        status: "pending",
+        attempts: 0,
+      });
+      void recordActivity({
+        actorUserId: null,
+        actorRole: "system",
+        action: "order.automation_webhook_queued",
+        entityType: "order",
+        entityId: orderId,
+        summary: `Order automation \"${rule.name}\" queued webhook endpoint ${endpoint.id}`,
+        changes: { ruleId: rule.id, triggerType, triggerValue: triggerValue ?? null, endpointId: endpoint.id },
       });
     }
   }

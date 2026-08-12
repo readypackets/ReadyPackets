@@ -486,11 +486,18 @@ install -m 0644 "${APP_DIR}/deploy/logrotate.conf" /etc/logrotate.d/readypackets
 
 log "Installing the nightly backup timer"
 install -m 0750 "${APP_DIR}/deploy/backup.sh" /usr/local/sbin/readypackets-backup
+install -m 0750 "${APP_DIR}/deploy/backup-control.sh" /usr/local/sbin/readypackets-backup-control
 install -m 0644 "${APP_DIR}/deploy/readypackets-backup.service" /etc/systemd/system/
 install -m 0644 "${APP_DIR}/deploy/readypackets-backup.timer" /etc/systemd/system/
-# The destination must exist before the unit runs: ReadWritePaths cannot mount a
-# path that is absent, and the unit would fail with 226/NAMESPACE.
-install -d -m 0700 -o root -g root /var/backups/readypackets
+# The application can invoke only the allowlisted helper; the helper validates every
+# argument and keeps backup credentials/configuration out of the browser and app files.
+printf 'readypackets ALL=(root) NOPASSWD: /usr/local/sbin/readypackets-backup-control *\n' > /etc/sudoers.d/readypackets-backup-control
+chmod 0440 /etc/sudoers.d/readypackets-backup-control
+visudo -cf /etc/sudoers.d/readypackets-backup-control
+# The service needs to list/copy archives into its protected download staging area,
+# but the archives remain root-owned and never become world-readable.
+install -d -m 0750 -o root -g readypackets /var/backups/readypackets
+install -d -m 0750 -o root -g readypackets /var/lib/readypackets/storage/admin-exports
 systemctl daemon-reload
 systemctl enable --now readypackets-backup.timer
 

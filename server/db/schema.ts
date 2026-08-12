@@ -875,6 +875,8 @@ export const emailQueue = mysqlTable(
     lastError: varchar("last_error", { length: 500 }),
     runAfter: timestamp("run_after").notNull().defaultNow(),
     sentAt: timestamp("sent_at"),
+    cancelledAt: timestamp("cancelled_at"),
+    sourceQueueId: int("source_queue_id"),
     createdAt: createdAt(),
   },
   (table) => ({
@@ -1762,6 +1764,8 @@ export const orderAutomationRules = mysqlTable(
     triggerValue: varchar("trigger_value", { length: 64 }),
     actionType: varchar("action_type", { length: 48 }).notNull().default("set_completion_percent"),
     completionPercent: int("completion_percent"),
+    emailTemplateKey: varchar("email_template_key", { length: 64 }),
+    webhookEndpointId: int("webhook_endpoint_id"),
     isActive: boolean("is_active").notNull().default(true),
     sortOrder: int("sort_order").notNull().default(0),
     createdByUserId: int("created_by_user_id"),
@@ -1780,7 +1784,7 @@ export const orderQuestionTemplates = mysqlTable(
     id: id(),
     name: varchar("name", { length: 190 }).notNull(),
     question: text("question").notNull(),
-    phase: varchar("phase", { length: 16 }).notNull().default("phase_1"),
+    phase: varchar("phase", { length: 16 }).notNull().default("unassigned"),
     required: boolean("required").notNull().default(true),
     sortOrder: int("sort_order").notNull().default(0),
     isActive: boolean("is_active").notNull().default(true),
@@ -1938,6 +1942,32 @@ export const emailAutomationRateLimits = mysqlTable("email_automation_rate_limit
   sentCount: int("sent_count").notNull().default(0),
   windowStart: timestamp("window_start").notNull().defaultNow(),
 });
+
+// ── Knowledge base ──────────────────────────────────────────────────────────
+
+export const knowledgeBaseArticles = mysqlTable(
+  "knowledge_base_articles",
+  {
+    id: id(),
+    title: varchar("title", { length: 255 }).notNull(),
+    slug: varchar("slug", { length: 160 }).notNull(),
+    category: varchar("category", { length: 96 }),
+    excerpt: text("excerpt"),
+    bodyMarkdown: text("body_markdown").notNull(),
+    status: varchar("status", { length: 24 }).notNull().default("draft"),
+    authorUserId: int("author_user_id").notNull(),
+    reviewedByUserId: int("reviewed_by_user_id"),
+    submittedAt: timestamp("submitted_at"),
+    reviewedAt: timestamp("reviewed_at"),
+    publishedAt: timestamp("published_at"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    slugUnique: uniqueIndex("knowledge_base_articles_slug_unique").on(table.slug),
+    visibleIdx: index("knowledge_base_articles_visible_idx").on(table.status, table.publishedAt),
+  }),
+);
 
 // ── Tier 4: Forum teaser click tracking ──────────────────────────────────────
 

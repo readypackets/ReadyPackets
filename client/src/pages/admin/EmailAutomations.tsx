@@ -43,6 +43,7 @@ export default function EmailAutomations() {
   const { success, error } = useToast();
   const utils = trpc.useUtils();
   const list = trpc.emailAutomations.list.useQuery();
+  const templates = trpc.admin.emailTemplates.useQuery();
   const createMut = trpc.emailAutomations.create.useMutation();
   const updateMut = trpc.emailAutomations.update.useMutation();
   const deleteMut = trpc.emailAutomations.delete.useMutation();
@@ -202,12 +203,19 @@ export default function EmailAutomations() {
               ))}
             </Select>
           </FieldShell>
-          <FieldShell label="Email template key" required>
-            <Input
+          <FieldShell label="Email template" help="Choose an entry from the Email Template Center." required>
+            <Select
               value={form.templateKey}
               onChange={(e) => setForm((f) => ({ ...f, templateKey: e.target.value }))}
-              placeholder="welcome_email"
-            />
+              disabled={templates.isLoading}
+            >
+              <option value="">{templates.isLoading ? "Loading templates…" : "Select an email template"}</option>
+              {(templates.data ?? []).map((template) => (
+                <option key={template.templateKey} value={template.templateKey}>
+                  {template.name} — {template.templateKey}{template.enabled ? "" : " (disabled)"}
+                </option>
+              ))}
+            </Select>
           </FieldShell>
           <FieldShell label="Delay (minutes)">
             <Input

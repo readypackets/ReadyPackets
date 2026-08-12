@@ -87,6 +87,17 @@ export async function getStripeAsync(): Promise<Stripe> {
   return _stripe!;
 }
 
+export async function testStripeConnection(): Promise<{ mode: "test" | "live"; availableBalanceCurrencies: string[] }> {
+  const stripe = await getStripeAsync();
+  // The balance endpoint requires valid account credentials but exposes no secret material.
+  const balance = await stripe.balance.retrieve();
+  const secretKey = await getEffectiveStripeKey();
+  return {
+    mode: balance.livemode || secretKey?.startsWith("sk_live_") ? "live" : "test",
+    availableBalanceCurrencies: [...new Set(balance.available.map((entry) => entry.currency.toUpperCase()))],
+  };
+}
+
 export function getStripe(): Stripe {
   if (!env.stripe.enabled || !env.stripe.secretKey) {
     throw new Error("Stripe is not configured. Set STRIPE_SECRET_KEY in your environment.");

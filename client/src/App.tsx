@@ -18,6 +18,7 @@ import {
   ScrollText,
   ShieldCheck,
   Gift,
+  BookOpen,
   UsersRound,
   UserCog,
 } from "lucide-react";
@@ -61,6 +62,7 @@ import { ProfilePage } from "@/pages/portal/Profile";
 import { MfaSetupPage, SecurityPage } from "@/pages/portal/Security";
 import { WorkspacesPage } from "@/pages/portal/Workspaces";
 import { ReferralsPage } from "@/pages/portal/Referrals";
+import { KnowledgeBasePage } from "@/pages/portal/KnowledgeBase";
 
 import { AdminDashboard } from "@/pages/admin/Dashboard";
 import { AdminOrderDetailPage, AdminOrdersPage, AdminOrderTrashPage } from "@/pages/admin/Orders";
@@ -106,6 +108,7 @@ import { PoliciesPage } from "@/pages/portal/Policies";
 import { AdminEntraSetupPage } from "@/pages/admin/EntraSetup";
 import { AdminAnnouncementsPage } from "@/pages/admin/Announcements";
 import { AdminNavigationPage } from "@/pages/admin/Navigation";
+import { AdminKnowledgeBasePage } from "@/pages/admin/KnowledgeBase";
 
 /** Full-page loader shown while the session is being resolved. */
 function BootScreen() {
@@ -231,6 +234,7 @@ function PortalRoutes() {
           badgeCount: unread.data ?? 0,
         },
         { href: "/portal/community", label: "Community", icon: MessagesSquare },
+        { href: "/portal/knowledge-base", label: "Knowledge base", icon: BookOpen },
       ],
     },
     {
@@ -265,6 +269,7 @@ function PortalRoutes() {
         <Route path="/portal/community" component={CommunityPage} />
         <Route path="/portal/community/new" component={NewTopicPage} />
         <Route path="/portal/community/:slug" component={TopicDetailPage} />
+        <Route path="/portal/knowledge-base" component={KnowledgeBasePage} />
         <Route path="/portal/profile" component={ProfilePage} />
         <Route path="/portal/referrals" component={ReferralsPage} />
         <Route path="/portal/security" component={SecurityPage} />
@@ -326,6 +331,7 @@ function AdminRoutes() {
         <Route path="/admin/email-automations" component={EmailAutomations} />
         <Route path="/admin/order-automations" component={AdminOrderAutomations} />
         <Route path="/admin/question-templates" component={AdminQuestionTemplates} />
+        <Route path="/admin/knowledge-base" component={AdminKnowledgeBasePage} />
         <Route path="/admin/crm" component={AdminCRM} />
         <Route path="/admin/backups" component={AdminBackups} />
         <Route path="/admin/ai-hub" component={AdminAIHub} />

@@ -6,7 +6,7 @@ import { TRPCError } from "@trpc/server";
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
-import { emailAutomations } from "../db/schema.js";
+import { emailAutomations, emailTemplates } from "../db/schema.js";
 import { recordActivity } from "../observability/audit.js";
 import { adminProcedure, router } from "../trpc/trpc.js";
 import { AUTOMATION_EVENTS } from "../services/emailAutomations.js";
@@ -28,6 +28,8 @@ export const emailAutomationsRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      const [template] = await db.select({ templateKey: emailTemplates.templateKey }).from(emailTemplates).where(eq(emailTemplates.templateKey, input.templateKey)).limit(1);
+      if (!template) throw new TRPCError({ code: "BAD_REQUEST", message: "Choose a template from the Email Template Center." });
       const result = await db.insert(emailAutomations).values({
         name: input.name,
         description: input.description ?? null,
@@ -67,7 +69,11 @@ export const emailAutomationsRouter = router({
       if (fields.name !== undefined) updateData.name = fields.name;
       if (fields.description !== undefined) updateData.description = fields.description;
       if (fields.triggerEvent !== undefined) updateData.triggerEvent = fields.triggerEvent;
-      if (fields.templateKey !== undefined) updateData.templateKey = fields.templateKey;
+      if (fields.templateKey !== undefined) {
+        const [template] = await db.select({ templateKey: emailTemplates.templateKey }).from(emailTemplates).where(eq(emailTemplates.templateKey, fields.templateKey)).limit(1);
+        if (!template) throw new TRPCError({ code: "BAD_REQUEST", message: "Choose a template from the Email Template Center." });
+        updateData.templateKey = fields.templateKey;
+      }
       if (fields.delayMinutes !== undefined) updateData.delayMinutes = fields.delayMinutes;
       if (fields.enabled !== undefined) updateData.enabled = fields.enabled;
 

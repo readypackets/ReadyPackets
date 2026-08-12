@@ -11,7 +11,7 @@ type MenuEntry = { href: string; label: string; section: string; hidden: boolean
 
 const DEFAULT_ENTRIES: MenuEntry[] = [
   ["/admin", "Dashboard", "Operations"], ["/admin/orders", "Orders", "Operations"], ["/admin/customers", "Customers", "Operations"], ["/admin/tickets", "Support", "Operations"], ["/admin/files", "Files", "Operations"],
-  ["/admin/catalog", "Catalogue", "Content"], ["/admin/moderation", "Moderation", "Content"], ["/admin/content", "Site content", "Content"], ["/admin/changelog", "Changelog", "Content"], ["/admin/policy-center", "Policy center", "Content"],
+  ["/admin/catalog", "Catalogue", "Content"], ["/admin/moderation", "Moderation", "Content"], ["/admin/content", "Site content", "Content"], ["/admin/changelog", "Changelog", "Content"], ["/admin/policy-center", "Policy center", "Content"], ["/admin/knowledge-base", "Knowledge base", "Content"],
   ["/admin/email-settings", "Email settings", "Email"], ["/admin/email-center", "Email Template Center", "Email"], ["/admin/email-automations", "Email automations", "Email"], ["/admin/order-automations", "Order automations", "Email"], ["/admin/question-templates", "Order Question Banks", "Email"],
   ["/admin/finance", "Finance", "Finance"], ["/admin/subscriptions", "Subscriptions", "Finance"], ["/admin/coupons", "Coupons", "Finance"], ["/admin/payouts", "Payouts", "Finance"], ["/admin/referrals", "Referrals", "Finance"], ["/admin/newsletter", "Newsletter", "Finance"],
   ["/admin/crm", "CRM", "CRM"], ["/admin/scheduling", "Scheduling", "CRM"],

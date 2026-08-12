@@ -5,6 +5,9 @@
  * subscription plans, and API access logs.
  */
 import { TRPCError } from "@trpc/server";
+import { spawn } from "node:child_process";
+import { readdir, readFile, stat } from "node:fs/promises";
+import path from "node:path";
 import { and, asc, count, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
@@ -535,12 +538,79 @@ const announcementsRouter = router({
 });
 
 // ── System backups ────────────────────────────────────────────────────────────
+const BACKUP_CONTROL = "/usr/local/sbin/readypackets-backup-control";
+const BACKUP_DIR = "/var/backups/readypackets";
+const BACKUP_EXPORT_DIR = "/var/lib/readypackets/storage/admin-exports";
+const BACKUP_FILENAME = /^readypackets-[0-9TZ-]+\\.tar\\.gz(?:\\.(?:age|gpg))?$/;
+
+function runBackupControl(args: string[], stdin?: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("sudo", ["-n", BACKUP_CONTROL, ...args], { stdio: ["pipe", "pipe", "pipe"] });
+    let output = ""; let error = "";
+    child.stdout.on("data", (chunk) => { output += String(chunk); });
+    child.stderr.on("data", (chunk) => { error += String(chunk); });
+    child.once("error", reject);
+    child.once("close", (code) => code === 0 ? resolve(output.trim()) : reject(new Error(error.trim() || `Backup control exited with ${code}`)));
+    child.stdin.end(stdin ?? "");
+  });
+}
+
+async function availableBackupFiles() {
+  try {
+    const entries = await readdir(BACKUP_DIR);
+    const rows = await Promise.all(entries.filter((filename) => BACKUP_FILENAME.test(filename)).map(async (filename) => {
+      const details = await stat(path.join(BACKUP_DIR, filename));
+      return { filename, sizeBytes: details.size, createdAt: details.mtime };
+    }));
+    return rows.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  } catch { return []; }
+}
+
+async function readProtectedExport(filename: string) {
+  if (!BACKUP_FILENAME.test(filename) && !/^readypackets-config-[0-9TZ-]+\\.rpconfig$/.test(filename)) throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid protected export filename." });
+  const location = path.join(BACKUP_EXPORT_DIR, filename);
+  const details = await stat(location);
+  if (details.size > 50 * 1024 * 1024) throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "This protected export exceeds the 50 MB browser download limit. Retrieve it from the server console instead." });
+  return { filename, mimeType: "application/octet-stream", base64: (await readFile(location)).toString("base64") };
+}
+
 const systemBackupsRouter = router({
   list: adminProcedure
     .input(z.object({ limit: z.number().int().min(1).max(200).default(50) }))
     .query(async ({ input }) =>
       db.select().from(systemBackups).orderBy(desc(systemBackups.createdAt)).limit(input.limit),
     ),
+  files: adminProcedure.query(async () => availableBackupFiles()),
+  status: adminProcedure.query(async () => {
+    const output = await runBackupControl(["status"]).catch((error) => { throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: `Backup control is unavailable: ${String(error.message ?? error)}` }); });
+    const [scheduleLine, ...targetLines] = output.split("\\n");
+    return { nextRun: scheduleLine?.replace(/^next_run=/, "") || null, targets: targetLines.filter((line) => line.includes("|")).map((line) => { const [provider, destination] = line.split("|", 2); return { provider, destination }; }) };
+  }),
+  start: adminProcedure.mutation(async ({ ctx }) => {
+    await runBackupControl(["start"]);
+    void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "backup.started", entityType: "backup", entityId: 0, summary: "Administrator started a backup job", ipAddress: ctx.clientIp });
+    return { ok: true as const };
+  }),
+  setSchedule: adminProcedure.input(z.object({ time: z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/, "Use a 24-hour HH:MM time.") })).mutation(async ({ ctx, input }) => {
+    await runBackupControl(["schedule", input.time]);
+    void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "backup.schedule_updated", entityType: "backup", entityId: 0, summary: `Administrator set the daily backup schedule to ${input.time}`, ipAddress: ctx.clientIp });
+    return { ok: true as const };
+  }),
+  setCloudTargets: adminProcedure.input(z.object({ targets: z.array(z.object({ provider: z.enum(["Amazon S3", "Wasabi S3", "Backblaze B2", "Azure Blob Storage", "SharePoint", "Google Drive", "OneDrive", "Dropbox"]), destination: z.string().trim().min(3).max(512).regex(/^[A-Za-z0-9._-]+:.+$/, "Use an rclone remote and destination path.") })).max(16) })).mutation(async ({ ctx, input }) => {
+    await runBackupControl(["configure-targets"], input.targets.map((target) => `${target.provider}|${target.destination}`).join("\\n") + (input.targets.length ? "\\n" : ""));
+    void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "backup.cloud_targets_updated", entityType: "backup", entityId: 0, summary: `Administrator configured ${input.targets.length} cloud backup target(s)`, changes: { providers: input.targets.map((target) => target.provider) }, ipAddress: ctx.clientIp });
+    return { ok: true as const };
+  }),
+  exportConfiguration: adminProcedure.input(z.object({ passphrase: z.string().min(16).max(512) })).mutation(async ({ ctx, input }) => {
+    const filename = await runBackupControl(["export-config"], `${input.passphrase}\\n`);
+    void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "backup.configuration_exported", entityType: "backup", entityId: 0, severity: "warning", summary: "Administrator exported an encrypted configuration migration bundle", ipAddress: ctx.clientIp });
+    return readProtectedExport(filename);
+  }),
+  download: adminProcedure.input(z.object({ filename: z.string().regex(BACKUP_FILENAME, "Invalid backup filename.") })).mutation(async ({ ctx, input }) => {
+    const filename = await runBackupControl(["prepare-download", input.filename]);
+    void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "backup.downloaded", entityType: "backup", entityId: 0, severity: "warning", summary: `Administrator prepared protected backup ${filename} for download`, ipAddress: ctx.clientIp });
+    return readProtectedExport(filename);
+  }),
   record: adminProcedure
     .input(z.object({
       filename: z.string().trim().min(1).max(512),

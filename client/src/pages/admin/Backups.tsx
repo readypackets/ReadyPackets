@@ -1,124 +1,41 @@
-/**
- * Admin Backups page — system backup history, manual trigger, and status.
- */
-import { useState } from "react";
-import { Database, HardDrive, RefreshCw, Trash2 } from "lucide-react";
-import { trpc } from "@/lib/trpc";
+import { useEffect, useState } from "react";
+import { Cloud, Database, Download, FileKey, HardDrive, Play, Plus, RefreshCw, Settings2, Trash2, X } from "lucide-react";
+import { trpc, errorMessage } from "@/lib/trpc";
 import { Button } from "@/components/ui/Button";
-import { Card, CardHeader, Badge, EmptyState } from "@/components/ui/Surface";
-import { DataTable } from "@/components/ui/DataDisplay";
-import { ConfirmDialog } from "@/components/ui/Modal";
+import { Input, Select } from "@/components/ui/Field";
+import { Card, CardHeader, Badge, EmptyState, Skeleton } from "@/components/ui/Surface";
+import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/layout/PortalLayout";
 import { useToast } from "@/components/ui/Toast";
 
-const STATUS_TONES: Record<string, "success" | "warning" | "danger" | "neutral"> = {
-  completed: "success", running: "warning", failed: "danger", deleted: "neutral",
-};
-
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
-}
+const PROVIDERS = ["Amazon S3", "Wasabi S3", "Backblaze B2", "Azure Blob Storage", "SharePoint", "Google Drive", "OneDrive", "Dropbox"] as const;
+type Provider = typeof PROVIDERS[number];
+type Target = { provider: Provider; destination: string };
+const STATUS_TONES: Record<string, "success" | "warning" | "danger" | "neutral"> = { completed: "success", running: "warning", failed: "danger", deleted: "neutral" };
+const bytes = (value: number) => value < 1024 ? `${value} B` : value < 1024 ** 2 ? `${(value / 1024).toFixed(1)} KB` : value < 1024 ** 3 ? `${(value / 1024 ** 2).toFixed(1)} MB` : `${(value / 1024 ** 3).toFixed(2)} GB`;
+function downloadArtifact(payload: { filename: string; mimeType: string; base64: string }) { const raw = atob(payload.base64); const array = new Uint8Array(raw.length); for (let index = 0; index < raw.length; index += 1) array[index] = raw.charCodeAt(index); const url = URL.createObjectURL(new Blob([array], { type: payload.mimeType })); const anchor = document.createElement("a"); anchor.href = url; anchor.download = payload.filename; anchor.click(); URL.revokeObjectURL(url); }
 
 export function AdminBackups() {
-  const toast = useToast();
-  const [deleteId, setDeleteId] = useState<number | null>(null);
-  const backups = trpc.tier3.systemBackups.list.useQuery({ limit: 100 });
-  const utils = trpc.useUtils();
-
-  const markDeleted = trpc.tier3.systemBackups.markDeleted.useMutation({
-    onSuccess: () => { utils.tier3.systemBackups.list.invalidate(); setDeleteId(null); toast.success("Backup record removed"); },
-    onError: (e) => toast.error("Error", e.message),
-  });
-
-  const backupList = backups.data ?? [];
-
-  return (
-    <>
-      <PageHeader
-        title="Backup management"
-        description="View backup history and manage backup records. Run backups manually via SSH using deploy/backup.sh."
-      />
-
-      <div className="mb-6 grid gap-4 sm:grid-cols-3">
-        <Card className="flex items-center gap-4 p-4">
-          <Database className="size-8 text-teal shrink-0" />
-          <div>
-            <p className="text-sm text-muted">Total backups</p>
-            <p className="text-2xl font-bold text-ink">{backupList.length}</p>
-          </div>
-        </Card>
-        <Card className="flex items-center gap-4 p-4">
-          <HardDrive className="size-8 text-navy shrink-0" />
-          <div>
-            <p className="text-sm text-muted">Total stored</p>
-            <p className="text-2xl font-bold text-ink">{formatBytes(backupList.filter((b) => b.status !== "deleted").reduce((s, b) => s + (b.sizeBytes ?? 0), 0))}</p>
-          </div>
-        </Card>
-        <Card className="flex items-center gap-4 p-4">
-          <RefreshCw className="size-8 text-success shrink-0" />
-          <div>
-            <p className="text-sm text-muted">Last backup</p>
-            <p className="text-sm font-semibold text-ink">{backupList[0] ? new Date(backupList[0].createdAt).toLocaleString() : "Never"}</p>
-          </div>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader title="Backup history" description="Nightly backups run automatically via systemd timer. Run deploy/backup.sh manually for on-demand backups." />
-        {backupList.length === 0 ? (
-          <EmptyState icon={Database} title="No backups recorded" description="Backup records will appear here after the first backup runs." />
-        ) : (
-          <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr><th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-muted">Filename</th><th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-muted">Type</th><th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-muted">Size</th><th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-muted">Status</th><th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-muted">Triggered by</th><th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-muted">Date</th></tr></thead><tbody>
-            {backupList.map((b) => (
-              <tr key={b.id} className="border-t border-line">
-                <td className="px-4 py-3 text-sm font-mono text-ink max-w-xs truncate">{b.filename}</td>
-                <td className="px-4 py-3"><Badge>{b.backupType}</Badge></td>
-                <td className="px-4 py-3 text-sm text-body">{formatBytes(b.sizeBytes ?? 0)}</td>
-                <td className="px-4 py-3"><Badge tone={STATUS_TONES[b.status] ?? "neutral"}>{b.status}</Badge></td>
-                <td className="px-4 py-3 text-sm text-body">{b.triggeredBy}</td>
-                <td className="px-4 py-3 text-sm text-muted">{new Date(b.createdAt).toLocaleString()}</td>
-                <td className="px-4 py-3">
-                  <Button size="sm" variant="ghost" leadingIcon={<Trash2 className="size-4" aria-hidden="true" />} onClick={() => setDeleteId(b.id)}>Remove</Button>
-                </td>
-              </tr>
-            ))}
-          </tbody></table></div>
-        )}
-      </Card>
-
-      <div className="mt-6 rounded-lg border border-line bg-surface-raised p-4">
-        <h3 className="text-sm font-semibold text-ink mb-2">Manual backup</h3>
-        <p className="text-sm text-body mb-3">To run a backup immediately, SSH into the server and run:</p>
-        <pre className="rounded bg-ink/5 px-4 py-3 text-xs font-mono text-ink overflow-x-auto">sudo bash /opt/readypackets/deploy/backup.sh</pre>
-        <p className="mt-3 text-sm text-muted">The backup will be saved to <code className="text-xs bg-ink/5 px-1 rounded">/var/backups/readypackets/</code> and a record will appear in this list automatically on the next page load.</p>
-      </div>
-
-      <Card className="mt-6">
-        <CardHeader title="Encrypted configuration migration" description="Export settings, integration configuration, and required secrets for a controlled replacement-server migration." />
-        <div className="mt-4 space-y-4 text-sm text-body">
-          <p>This encrypted bundle includes the protected environment file, application encryption keys, and database-backed configuration. It deliberately excludes customer data, orders, uploaded files, sessions, and logs.</p>
-          <pre className="overflow-x-auto rounded bg-ink/5 px-4 py-3 text-xs font-mono text-ink">sudo bash /opt/readypackets/deploy/config-migration.sh export --output /var/backups/readypackets/readypackets-config.rpconfig</pre>
-          <div className="flex flex-wrap gap-3">
-            <Button size="sm" variant="outline" onClick={() => { void navigator.clipboard.writeText("sudo bash /opt/readypackets/deploy/config-migration.sh export --output /var/backups/readypackets/readypackets-config.rpconfig"); toast.success("Export command copied"); }}>Copy export command</Button>
-            <a className="inline-flex items-center text-sm font-medium text-teal-700 hover:underline" href="https://github.com/readypackets/ReadyPackets/blob/main/docs/CONFIG_MIGRATION.md" target="_blank" rel="noreferrer">Open migration guide</a>
-          </div>
-          <p className="text-xs text-muted">Use a strong passphrase, transfer the encrypted file and passphrase separately, and run the documented <code>inspect</code> then <code>import --replace-config --apply-env</code> workflow only after the new server has completed its initial installation.</p>
-        </div>
-      </Card>
-
-      <ConfirmDialog
-        open={deleteId !== null}
-        onClose={() => setDeleteId(null)}
-        onConfirm={() => { if (deleteId !== null) markDeleted.mutate({ id: deleteId }); }}
-        title="Remove backup record"
-        message="This removes the record from the database. It does not delete the actual backup file from disk."
-        confirmLabel="Remove record"
-        variant="danger"
-        busy={markDeleted.isPending}
-      />
-    </>
-  );
+  const toast = useToast(); const utils = trpc.useUtils();
+  const [deleteId, setDeleteId] = useState<number | null>(null); const [exportOpen, setExportOpen] = useState(false); const [passphrase, setPassphrase] = useState(""); const [confirmation, setConfirmation] = useState("");
+  const [schedule, setSchedule] = useState("02:30"); const [targets, setTargets] = useState<Target[]>([]);
+  const backups = trpc.tier3.systemBackups.list.useQuery({ limit: 100 }); const files = trpc.tier3.systemBackups.files.useQuery(); const status = trpc.tier3.systemBackups.status.useQuery(undefined, { retry: false });
+  useEffect(() => { if (status.data?.targets) setTargets(status.data.targets as Target[]); }, [status.data]);
+  const markDeleted = trpc.tier3.systemBackups.markDeleted.useMutation({ onSuccess: () => { void utils.tier3.systemBackups.list.invalidate(); setDeleteId(null); toast.success("Backup record removed"); }, onError: (error) => toast.error("Could not remove record", errorMessage(error)) });
+  const start = trpc.tier3.systemBackups.start.useMutation({ onSuccess: () => { toast.success("Backup started", "The protected job is running in the background."); window.setTimeout(() => { void utils.tier3.systemBackups.files.invalidate(); void utils.tier3.systemBackups.list.invalidate(); }, 5000); }, onError: (error) => toast.error("Could not start backup", errorMessage(error)) });
+  const saveSchedule = trpc.tier3.systemBackups.setSchedule.useMutation({ onSuccess: () => { void utils.tier3.systemBackups.status.invalidate(); toast.success("Backup schedule saved"); }, onError: (error) => toast.error("Could not save schedule", errorMessage(error)) });
+  const saveCloudTargets = trpc.tier3.systemBackups.setCloudTargets.useMutation({ onSuccess: () => { void utils.tier3.systemBackups.status.invalidate(); toast.success("Cloud backup destinations saved"); }, onError: (error) => toast.error("Could not save cloud destinations", errorMessage(error)) });
+  const exportConfig = trpc.tier3.systemBackups.exportConfiguration.useMutation({ onSuccess: (payload) => { downloadArtifact(payload); setExportOpen(false); setPassphrase(""); setConfirmation(""); toast.success("Encrypted configuration export downloaded"); }, onError: (error) => toast.error("Could not export configuration", errorMessage(error)) });
+  const download = trpc.tier3.systemBackups.download.useMutation({ onSuccess: (payload) => { downloadArtifact(payload); toast.success("Protected backup download started"); }, onError: (error) => toast.error("Could not prepare download", errorMessage(error)) });
+  const records = backups.data ?? []; const actualFiles = files.data ?? [];
+  if (backups.isLoading) return <div className="space-y-4"><Skeleton className="h-12 w-64" /><Skeleton className="h-80 w-full" /></div>;
+  return <><PageHeader title="Backup management" description="Run, schedule, export, download, and synchronize protected self-hosted backups." actions={<Button variant="primary" busy={start.isPending} leadingIcon={<Play className="size-4" />} onClick={() => start.mutate()}>Run backup now</Button>} />
+    <div className="mb-6 grid gap-4 sm:grid-cols-3"><Card className="flex items-center gap-4 p-4"><Database className="size-8 shrink-0 text-teal" /><div><p className="text-sm text-muted">Local archives</p><p className="text-2xl font-bold text-ink">{actualFiles.length}</p></div></Card><Card className="flex items-center gap-4 p-4"><HardDrive className="size-8 shrink-0 text-navy" /><div><p className="text-sm text-muted">Local storage</p><p className="text-2xl font-bold text-ink">{bytes(actualFiles.reduce((sum, file) => sum + file.sizeBytes, 0))}</p></div></Card><Card className="flex items-center gap-4 p-4"><RefreshCw className="size-8 shrink-0 text-success" /><div><p className="text-sm text-muted">Next scheduled run</p><p className="text-sm font-semibold text-ink">{status.data?.nextRun || "Unavailable until backup controls are installed"}</p></div></Card></div>
+    <Card><CardHeader title="Local backup archives" description="Downloads are prepared inside protected server storage, audited, and limited to 50 MB for browser delivery." />{actualFiles.length ? <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead className="border-b border-line text-xs uppercase tracking-wide text-muted"><tr><th className="px-3 py-2">Archive</th><th className="px-3 py-2">Size</th><th className="px-3 py-2">Created</th><th className="px-3 py-2" /></tr></thead><tbody>{actualFiles.map((file) => <tr key={file.filename} className="border-b border-line/70"><td className="px-3 py-3 font-mono text-xs text-ink">{file.filename}</td><td className="px-3 py-3">{bytes(file.sizeBytes)}</td><td className="px-3 py-3 text-muted">{new Date(file.createdAt).toLocaleString()}</td><td className="px-3 py-3 text-right"><Button size="sm" variant="outline" busy={download.isPending} leadingIcon={<Download className="size-3.5" />} onClick={() => download.mutate({ filename: file.filename })}>Download</Button></td></tr>)}</tbody></table></div> : <EmptyState icon={Database} title="No backup archives found" description="Run a backup now, or wait for the scheduled backup job." />}</Card>
+    <div className="mt-6 grid gap-6 xl:grid-cols-2"><Card><CardHeader title="Daily schedule" description="The server runs the protected backup job once each day. The next timer execution remains available after reboot." /><div className="mt-4 flex flex-wrap items-end gap-3"><Input className="max-w-48" label="24-hour time" type="time" value={schedule} onChange={(event) => setSchedule(event.target.value)} /><Button variant="primary" busy={saveSchedule.isPending} leadingIcon={<Settings2 className="size-4" />} onClick={() => saveSchedule.mutate({ time: schedule })}>Save schedule</Button></div></Card><Card><CardHeader title="Encrypted configuration export" description="Export platform settings and secrets for a controlled replacement-server migration. Customer data and files are excluded." /><div className="mt-4"><Button variant="outline" leadingIcon={<FileKey className="size-4" />} onClick={() => setExportOpen(true)}>Export configuration</Button><p className="mt-3 text-xs text-muted">The export includes encryption keys and integration secrets. Store it offline and keep its passphrase separate.</p></div></Card></div>
+    <Card className="mt-6"><CardHeader title="External cloud synchronization" description="Each completed archive can copy to several independent cloud destinations. Configure one or more rclone remotes on the server, then map them here." /><div className="mt-4 space-y-3">{targets.map((target, index) => <div key={`${target.provider}-${index}`} className="grid gap-3 rounded-lg border border-line p-3 md:grid-cols-[15rem_1fr_auto]"><Select label={index === 0 ? "Provider" : undefined} value={target.provider} onChange={(event) => setTargets((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, provider: event.target.value as Provider } : item))}>{PROVIDERS.map((provider) => <option key={provider} value={provider}>{provider}</option>)}</Select><Input label={index === 0 ? "rclone remote and destination" : undefined} value={target.destination} onChange={(event) => setTargets((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, destination: event.target.value } : item))} placeholder="remote-name:bucket-or-folder/readypackets" /><Button className="self-end" variant="ghost" aria-label={`Remove ${target.provider}`} onClick={() => setTargets((items) => items.filter((_, itemIndex) => itemIndex !== index))}><X className="size-4" /></Button></div>)}<div className="flex flex-wrap gap-3"><Button variant="outline" leadingIcon={<Plus className="size-4" />} onClick={() => setTargets((items) => [...items, { provider: "Amazon S3", destination: "" }])}>Add cloud destination</Button><Button variant="primary" busy={saveCloudTargets.isPending} disabled={targets.some((target) => !target.destination)} leadingIcon={<Cloud className="size-4" />} onClick={() => saveCloudTargets.mutate({ targets })}>Save cloud destinations</Button></div><p className="text-xs text-muted">Supported labels include Amazon S3, Wasabi S3, Backblaze B2, Azure Blob Storage, SharePoint, Google Drive, OneDrive, and Dropbox. Credentials stay in the server’s root-owned rclone configuration; the portal stores only the remote name and destination.</p></div></Card>
+    <Card className="mt-6"><CardHeader title="Backup activity records" description="Application-recorded backup history is retained for operational audit." />{records.length ? <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="border-b border-line text-xs uppercase tracking-wide text-muted"><tr><th className="px-3 py-2">Filename</th><th className="px-3 py-2">Size</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Created</th><th className="px-3 py-2" /></tr></thead><tbody>{records.map((record) => <tr key={record.id} className="border-b border-line/70"><td className="px-3 py-3 font-mono text-xs text-ink">{record.filename}</td><td className="px-3 py-3">{bytes(record.sizeBytes ?? 0)}</td><td className="px-3 py-3"><Badge tone={STATUS_TONES[record.status] ?? "neutral"}>{record.status}</Badge></td><td className="px-3 py-3 text-muted">{new Date(record.createdAt).toLocaleString()}</td><td className="px-3 py-3 text-right"><Button size="sm" variant="ghost" leadingIcon={<Trash2 className="size-3.5" />} onClick={() => setDeleteId(record.id)}>Remove record</Button></td></tr>)}</tbody></table></div> : <EmptyState icon={Database} title="No activity records" description="Backup records will appear after a completed scheduled or manual run." />}</Card>
+    <Modal open={exportOpen} onClose={() => setExportOpen(false)} title="Export encrypted configuration" footer={<><Button variant="outline" onClick={() => setExportOpen(false)}>Cancel</Button><Button variant="primary" busy={exportConfig.isPending} disabled={passphrase.length < 16 || passphrase !== confirmation} onClick={() => exportConfig.mutate({ passphrase })}>Create encrypted export</Button></>}><div className="space-y-4"><p className="text-sm text-body">Set a new export passphrase with at least 16 characters. The browser will download the encrypted <code>.rpconfig</code> bundle once created.</p><Input label="Export passphrase" type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} required /><Input label="Confirm export passphrase" type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} required />{passphrase && confirmation && passphrase !== confirmation ? <p className="text-sm text-danger">Passphrases do not match.</p> : null}</div></Modal>
+    <ConfirmDialog open={deleteId !== null} onClose={() => setDeleteId(null)} onConfirm={() => { if (deleteId !== null) markDeleted.mutate({ id: deleteId }); }} title="Remove backup record" message="This removes the activity record only. It does not delete the protected backup archive from disk or cloud storage." confirmLabel="Remove record" variant="danger" busy={markDeleted.isPending} />
+  </>;
 }

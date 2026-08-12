@@ -22,6 +22,10 @@ function StripeSettingsTab() {
   const { data, refetch } = trpc.stripe.config.useQuery();
   const save = trpc.stripe.saveStripeConfig.useMutation({ onSuccess: () => { refetch(); toast.success("Stripe settings saved."); } });
   const toast = useToast();
+  const testConnection = trpc.stripe.testConnection.useMutation({
+    onSuccess: (result) => toast.success("Stripe connection verified", `${result.mode === "live" ? "Live" : "Test"} mode · authenticated balance API reachable${result.availableBalanceCurrencies.length ? ` · ${result.availableBalanceCurrencies.join(", ")}` : ""}`),
+    onError: (error) => toast.error("Stripe connection test failed", error.message),
+  });
   const [form, setForm] = useState({ secretKey: "", publishableKey: "", webhookSecret: "" });
   const [showSecret, setShowSecret] = useState(false);
 
@@ -75,6 +79,12 @@ function StripeSettingsTab() {
             </div>
           </div>
         )}
+        <div className="mt-4">
+          <Button variant="outline" busy={testConnection.isPending} disabled={!data?.enabled} onClick={() => testConnection.mutate()}>
+            Test Stripe connection
+          </Button>
+          {!data?.enabled ? <p className="mt-2 text-xs text-gray-500">Save a Stripe secret key before testing the connection.</p> : null}
+        </div>
       </Card>
 
       {/* Configuration form */}

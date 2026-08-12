@@ -14,6 +14,7 @@ import {
   contactMessages,
   emailTemplates,
   emailLog,
+  emailQueue,
   files,
   forumPosts,
   forumTopics,
@@ -39,6 +40,7 @@ import {
   ticketReplies,
   tickets,
   users,
+  webhookEndpoints,
 } from "../db/schema.js";
 import { decryptField, encryptField, hashPassword, randomToken } from "../security/crypto.js";
 import { getSetting, getSettingNumber, setSetting } from "../services/settings.js";
@@ -545,7 +547,7 @@ export const adminRouter = router({
       id: z.number().int().positive().optional(),
       name: z.string().trim().min(2).max(190),
       question: z.string().trim().min(5).max(2_000),
-      phase: z.enum(["phase_1", "phase_2"]).default("phase_1"),
+      phase: z.enum(["phase_1", "phase_2", "both", "unassigned"]).default("unassigned"),
       required: z.boolean().default(true),
       sortOrder: z.number().int().min(0).default(0),
       isActive: z.boolean().default(true),
@@ -562,10 +564,15 @@ export const adminRouter = router({
     .mutation(async ({ ctx, input }) => {
       const template = (await db.select().from(orderQuestionTemplates).where(and(eq(orderQuestionTemplates.id, input.templateId), eq(orderQuestionTemplates.isActive, true))).limit(1))[0];
       if (!template) throw new TRPCError({ code: "NOT_FOUND", message: "Question template not found." });
-      const inserted = await db.insert(orderQuestions).values({ orderId: input.orderId, askedByUserId: ctx.session.user.id, questionEnc: encryptField(template.question, "order_question:pending") ?? "", phase: template.phase, required: template.required, sortOrder: template.sortOrder });
-      const questionId = insertedId(inserted);
-      await db.update(orderQuestions).set({ questionEnc: encryptField(template.question, `order_question:${questionId}`) ?? "" }).where(eq(orderQuestions.id, questionId));
-      return { ok: true as const, questionId };
+      const phases = template.phase === "both" ? ["phase_1", "phase_2"] : [template.phase || "unassigned"];
+      const questionIds: number[] = [];
+      for (const phase of phases) {
+        const inserted = await db.insert(orderQuestions).values({ orderId: input.orderId, askedByUserId: ctx.session.user.id, questionEnc: encryptField(template.question, "order_question:pending") ?? "", phase, required: template.required, sortOrder: template.sortOrder });
+        const questionId = insertedId(inserted);
+        await db.update(orderQuestions).set({ questionEnc: encryptField(template.question, `order_question:${questionId}`) ?? "" }).where(eq(orderQuestions.id, questionId));
+        questionIds.push(questionId);
+      }
+      return { ok: true as const, questionId: questionIds[0]!, questionIds };
     }),
 
   answerOrderQuestionAsAdmin: staffProcedure
@@ -1574,6 +1581,59 @@ export const adminRouter = router({
       }));
     }),
 
+  queuedEmails: adminProcedure
+    .input(z.object({ limit: z.number().int().min(1).max(200).default(100) }))
+    .query(async ({ input }) => {
+      const rows = await db.select().from(emailQueue).orderBy(desc(emailQueue.createdAt)).limit(input.limit);
+      return rows.map((row) => ({
+        ...row,
+        to: decryptField(row.toAddressEnc, "email:queue"),
+      }));
+    }),
+
+  stopQueuedEmail: adminProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const [message] = await db.select().from(emailQueue).where(eq(emailQueue.id, input.id)).limit(1);
+      if (!message) throw new TRPCError({ code: "NOT_FOUND", message: "Queued email not found." });
+      if (message.status !== "pending") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Only an active queued delivery can be stopped." });
+      await db.update(emailQueue).set({ status: "cancelled", cancelledAt: new Date() }).where(eq(emailQueue.id, input.id));
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "email.queue_stop", entityType: "email_queue", entityId: input.id, summary: `Stopped queued email ${input.id}`, ipAddress: ctx.clientIp });
+      return { ok: true as const };
+    }),
+
+  retryQueuedEmail: adminProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const [message] = await db.select().from(emailQueue).where(eq(emailQueue.id, input.id)).limit(1);
+      if (!message) throw new TRPCError({ code: "NOT_FOUND", message: "Queued email not found." });
+      if (message.status === "sent") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "A delivered email cannot be retried. Use resend instead." });
+      await db.update(emailQueue).set({ status: "pending", attempts: 0, lastError: null, runAfter: new Date(), cancelledAt: null }).where(eq(emailQueue.id, input.id));
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "email.queue_retry", entityType: "email_queue", entityId: input.id, summary: `Retried queued email ${input.id}`, ipAddress: ctx.clientIp });
+      return { ok: true as const };
+    }),
+
+  resendQueuedEmail: adminProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const [message] = await db.select().from(emailQueue).where(eq(emailQueue.id, input.id)).limit(1);
+      if (!message) throw new TRPCError({ code: "NOT_FOUND", message: "Queued email not found." });
+      const inserted = await db.insert(emailQueue).values({
+        toAddressEnc: message.toAddressEnc,
+        templateKey: message.templateKey,
+        subject: message.subject,
+        bodyHtml: message.bodyHtml,
+        bodyText: message.bodyText,
+        status: "pending",
+        attempts: 0,
+        runAfter: new Date(),
+        sourceQueueId: message.id,
+      });
+      const id = insertedId(inserted);
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "email.queue_resend", entityType: "email_queue", entityId: id, summary: `Resent email ${message.id} as queue item ${id}`, ipAddress: ctx.clientIp });
+      return { ok: true as const, id };
+    }),
+
   purgeEmailDeliveryHistory: adminProcedure
     .mutation(async ({ ctx }) => {
       const retentionDays = await getSettingNumber("email.retention_days", 365);
@@ -1848,17 +1908,33 @@ export const adminRouter = router({
       name: z.string().trim().min(2).max(190),
       triggerType: z.enum(["order_status", "payment_status", "intake_submitted", "phase_started"]),
       triggerValue: z.string().trim().max(64).optional(),
-      completionPercent: z.number().int().min(0).max(100),
+      actionType: z.enum(["set_completion_percent", "send_email", "send_webhook"]).default("set_completion_percent"),
+      completionPercent: z.number().int().min(0).max(100).optional(),
+      emailTemplateKey: z.string().trim().min(1).max(64).optional(),
+      webhookEndpointId: z.number().int().positive().optional(),
       isActive: z.boolean().default(true),
       sortOrder: z.number().int().min(0).default(0),
     }))
     .mutation(async ({ ctx, input }) => {
+      if (input.actionType === "set_completion_percent" && input.completionPercent === undefined) throw new TRPCError({ code: "BAD_REQUEST", message: "Choose a completion percentage for this automation." });
+      if (input.actionType === "send_email") {
+        if (!input.emailTemplateKey) throw new TRPCError({ code: "BAD_REQUEST", message: "Choose an email template for this automation." });
+        const [template] = await db.select({ templateKey: emailTemplates.templateKey }).from(emailTemplates).where(eq(emailTemplates.templateKey, input.emailTemplateKey)).limit(1);
+        if (!template) throw new TRPCError({ code: "BAD_REQUEST", message: "Choose an email template from the Email Template Center." });
+      }
+      if (input.actionType === "send_webhook") {
+        if (!input.webhookEndpointId) throw new TRPCError({ code: "BAD_REQUEST", message: "Choose an enabled webhook endpoint for this automation." });
+        const [endpoint] = await db.select({ id: webhookEndpoints.id }).from(webhookEndpoints).where(and(eq(webhookEndpoints.id, input.webhookEndpointId), eq(webhookEndpoints.enabled, true))).limit(1);
+        if (!endpoint) throw new TRPCError({ code: "BAD_REQUEST", message: "The selected webhook endpoint is unavailable." });
+      }
       const values = {
         name: input.name,
         triggerType: input.triggerType,
         triggerValue: input.triggerValue || null,
-        actionType: "set_completion_percent",
-        completionPercent: input.completionPercent,
+        actionType: input.actionType,
+        completionPercent: input.actionType === "set_completion_percent" ? input.completionPercent ?? null : null,
+        emailTemplateKey: input.actionType === "send_email" ? input.emailTemplateKey ?? null : null,
+        webhookEndpointId: input.actionType === "send_webhook" ? input.webhookEndpointId ?? null : null,
         isActive: input.isActive,
         sortOrder: input.sortOrder,
       };

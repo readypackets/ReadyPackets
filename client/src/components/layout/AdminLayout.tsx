@@ -78,6 +78,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { href: "/admin/content", label: "Site content", icon: ScrollText, adminOnly: true },
       { href: "/admin/changelog", label: "Changelog", icon: Newspaper, adminOnly: true },
       { href: "/admin/policy-center", label: "Policy center", icon: Shield, adminOnly: true },
+      { href: "/admin/knowledge-base", label: "Knowledge base", icon: FileText, adminOnly: true },
     ],
   },
   {

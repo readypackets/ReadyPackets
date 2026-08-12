@@ -25,6 +25,8 @@ RETENTION_DAYS=30
 DB_ONLY="false"
 ENCRYPT="false"
 GPG_RECIPIENT="${RP_GPG_RECIPIENT:-}"
+SYNC_TARGETS_FILE="${RP_BACKUP_SYNC_TARGETS_FILE:-/etc/readypackets/backup-sync-targets.conf}"
+SKIP_SYNC="false"
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m warn\033[0m %s\n' "$*" >&2; }
@@ -38,6 +40,7 @@ while [[ $# -gt 0 ]]; do
     --encrypt)   ENCRYPT="true"; shift ;;
     --recipient) GPG_RECIPIENT="${2:?}"; ENCRYPT="true"; shift 2 ;;
     --env-file)  ENV_FILE="${2:?}"; shift 2 ;;
+    --skip-sync) SKIP_SYNC="true"; shift ;;
     -h|--help)   sed -n '2,18p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *)           die "Unknown option: $1" ;;
   esac
@@ -59,7 +62,7 @@ chmod 0700 "$STAGING"
 # The staging directory holds plaintext secrets; remove it whatever happens.
 trap 'rm -rf "$STAGING"' EXIT INT TERM
 
-install -d -m 0700 "$OUTPUT_DIR"
+install -d -m 0750 -o root -g readypackets "$OUTPUT_DIR"
 
 # ---------------------------------------------------------------------------
 # Database
@@ -148,6 +151,29 @@ if [[ "$ENCRYPT" == "true" ]]; then
 fi
 
 chmod 0600 "$ARCHIVE"
+
+# ---------------------------------------------------------------------------
+# Optional multi-cloud synchronization
+# ---------------------------------------------------------------------------
+# Each non-comment line in the root-owned targets file has this form:
+# Provider label|rclone-remote:destination/path
+# The rclone remote must be provisioned by an administrator outside the web app,
+# keeping cloud credentials out of application pages and browser storage.
+if [[ "$SKIP_SYNC" == "false" && -r "$SYNC_TARGETS_FILE" ]]; then
+  if command -v rclone >/dev/null 2>&1; then
+    while IFS='|' read -r provider destination; do
+      provider="${provider#${provider%%[![:space:]]*}}"; provider="${provider%${provider##*[![:space:]]}}"
+      destination="${destination#${destination%%[![:space:]]*}}"; destination="${destination%${destination##*[![:space:]]}}"
+      [[ -n "$provider" && -n "$destination" && "${provider:0:1}" != "#" ]] || continue
+      log "Syncing backup to ${provider}"
+      if ! rclone copyto "$ARCHIVE" "${destination%/}/$(basename "$ARCHIVE")" --checksum --retries 3 --low-level-retries 3; then
+        warn "Cloud sync failed for ${provider}; local archive remains available."
+      fi
+    done < "$SYNC_TARGETS_FILE"
+  else
+    warn "Cloud backup targets are configured but rclone is not installed; skipped remote sync."
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # Retention

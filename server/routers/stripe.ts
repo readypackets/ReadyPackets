@@ -24,6 +24,7 @@ import {
   getEffectiveStripeKey,
   getEffectivePublishableKey,
   getEffectiveWebhookSecret,
+  testStripeConnection,
 } from "../services/stripe.js";
 import { setSetting } from "../services/settings.js";
 import { siteSettings } from "../db/schema.js";
@@ -155,6 +156,21 @@ export const stripeRouter = router({
 
       return orderRows[0]!;
     }),
+
+  // -------------------------------------------------------------------------
+  // Admin: verify stored Stripe credentials without exposing any secret values
+  // -------------------------------------------------------------------------
+  testConnection: adminProcedure.mutation(async ({ ctx }) => {
+    try {
+      const result = await testStripeConnection();
+      return { ok: true as const, ...result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message.slice(0, 300) : "Stripe connection test failed.";
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Stripe connection test failed: ${message}` });
+    } finally {
+      void ctx;
+    }
+  }),
 
   // -------------------------------------------------------------------------
   // Admin: list all payments
