@@ -1925,3 +1925,8 @@ The final-deliverables separation, configurable phase workspaces, custom workflo
 ### Post-deployment historical material alignment
 
 After deployment, the stage-workspace review identified that historical standard-workflow materials retained their legacy `phase_1` and `phase_2` keys while the explicit standard workflow uses `phase_1_intake` and `phase_2_synthesis`. Migration 0026 was extended and reapplied safely to map historical files and questions for orders on the standard workflow into their matching new stage keys. Production verification found 8 active `phase_1_intake` files, 1 active `phase_2_synthesis` file, and 1 `phase_2_synthesis` question. The health endpoint remained healthy.
+
+
+### Historical alignment publication outcome
+
+The historical workflow-stage alignment migration and session update were published to the private `main` branch as `db88bb474e43f569d9dd355381a7b4d2aca1d30a` (`fix: align historical files with workflow stages`).
