@@ -126,6 +126,22 @@ function AvatarSection() {
   );
 }
 
+function AccountReferenceSection() {
+  const session = useSession();
+  const toast = useToast();
+  const publicId = session.user?.publicId;
+
+  return (
+    <Card>
+      <CardHeader title="Account reference" description="Use this opaque reference when contacting ReadyPackets support. It does not reveal your internal account record." />
+      <div className="mt-4 flex items-center gap-2">
+        <code className="flex-1 rounded-lg border border-line bg-surface-sunken px-3 py-2 font-mono text-sm font-semibold text-ink">{publicId ?? "Preparing reference…"}</code>
+        <Button size="sm" variant="outline" disabled={!publicId} onClick={() => publicId ? navigator.clipboard.writeText(publicId).then(() => toast.success("Copied", "Account reference copied to clipboard.")) : undefined} leadingIcon={<Copy className="size-3.5" aria-hidden="true" />}>Copy</Button>
+      </div>
+    </Card>
+  );
+}
+
 function ReferralCodeSection() {
   const toast = useToast();
   const myCode = trpc.tier4.referral.myCode.useQuery();
@@ -464,8 +480,9 @@ export function ProfilePage() {
         </div>
 
         <div className="space-y-6">
-          <AvatarSection />
-          <ReferralCodeSection />
+      <AvatarSection />
+      <AccountReferenceSection />
+      <ReferralCodeSection />
           <Card>
             <CardHeader
               title="Notifications"

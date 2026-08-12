@@ -1296,3 +1296,33 @@ Microsoft Graph discovery requires an application permission that can read the s
 ### Validation and deployment
 
 TypeScript completed with zero errors, all 143 tests passed, production readiness succeeded after deployment, and the live security verification suite passed 46/46 checks.
+
+## 2026-08-12 — Credential protection, opaque account references, and Security Centre release
+
+### User request
+
+The user requested verified protection for Microsoft Graph/SharePoint credentials and customer data, opaque alphanumeric user IDs for current and future accounts, and an expanded Security Centre log workspace with detailed review, blocking, banning, and advanced search capabilities.
+
+### Delivered changes
+
+- Audited SharePoint configuration handling. The Graph client secret is encrypted with AES-256-GCM before being persisted as the `sharepoint.client_secret_enc` secret setting, is not returned by Graph configuration status APIs, and is decrypted only server-side for an authenticated Microsoft Graph operation.
+- Hardened `deploy/config-migration.sh` so administrator-triggered configuration exports are secret-free by default. Default bundles exclude application keys, database credentials, encrypted secret settings, and Microsoft Graph/SharePoint credentials. Standard imports preserve the target host environment and secret settings. The `--include-secrets --apply-env` mode is documented as root-console-only break-glass recovery and is not available from the portal.
+- Added MySQL-compatible migration `0017_public_user_identifiers.sql` and applied it to production. It reconciles the missing legacy `customer_number` column, adds `public_id`, backfills all existing accounts, and enforces uniqueness indexes.
+- Added opaque public account references in `RP-U-<12 uppercase hexadecimal>` form for every new account. Existing production accounts were backfilled and verified to have unique public IDs. Internal numeric database keys remain relational-only.
+- Added the public account reference to authenticated session state and Customer Portal → Settings with a copy control. Security-log results and review screens now display the opaque reference instead of showing a sequential user number.
+- Expanded Security Centre → Logs with advanced security search by severity, outcome, event type, message, source address, linked account, and date range; matching-result totals; an audited detailed event view; confirmation-based IP block actions; and confirmation-based account ban actions that deactivate the account and revoke active sessions. The server validates all transitions and records audit/security events.
+- Verified live schema state after migration: 5 accounts, 0 missing public IDs, 5 distinct public IDs, and 0 missing customer numbers.
+- Updated the production VPS operating record with the new secret-free export and public-ID safeguards.
+
+### Validation and deployment
+
+- `pnpm test`: 143 tests passed.
+- `pnpm run typecheck`: 0 TypeScript errors.
+- `bash -n deploy/config-migration.sh`: passed.
+- Built the client and server artifacts, deployed them to `/opt/readypackets`, restarted `readypackets.service`, and confirmed public health `{"status":"ok"}`.
+- Live security verification passed 46/46 checks after deployment.
+
+### Security posture note
+
+The platform enforces TLS for public transit through nginx and Cloudflare and uses strict security headers. Sensitive application fields—including customer PII and saved Graph secrets—are application-encrypted with AES-256-GCM; email lookup uses a keyed blind index. Application code and protected backups still require privileged host/database access controls, so no system can truthfully claim that every operational metadata field or root-access backup is mathematically unreadable. The release narrows export exposure and preserves strict privilege boundaries rather than making that false claim.
+

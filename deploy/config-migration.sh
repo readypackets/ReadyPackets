@@ -19,13 +19,17 @@ FORMAT_VERSION="1"
 PBKDF2_ITERATIONS="600000"
 
 # Only platform configuration. Operational, customer, order, file, session, and
-# log tables are deliberately excluded from configuration migrations.
+# log tables are deliberately excluded from configuration migrations. Secret
+# site-settings are exported only with --include-secrets, which is intentionally
+# unavailable through the administrator-facing export control.
 CONFIG_TABLES=(
-  site_settings feature_flags rate_limit_configs registration_fields
+  feature_flags rate_limit_configs registration_fields
   email_templates email_automations webhook_endpoints phase_kickoff_configs
   saml_configs outbound_connections subscription_plans products product_addons
   home_content_blocks policy_documents policy_versions
 )
+SECRET_ENV_PATTERN='^(DATABASE_URL|SESSION_SECRET|DATA_ENCRYPTION_KEY|EMAIL_INDEX_KEY|SMTP_PASS|S3_SECRET_ACCESS_KEY|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET|GRAPH_CLIENT_SECRET|SAML_IDP_CERT)='
+
 
 log() { printf '[config-migration] %s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
@@ -44,16 +48,19 @@ Commands:
 
 Examples:
   sudo bash deploy/config-migration.sh export --output /secure/config.rpconfig
-  sudo bash deploy/config-migration.sh import --input /secure/config.rpconfig --replace-config --apply-env
+  sudo bash deploy/config-migration.sh import --input /secure/config.rpconfig --replace-config
 
 Optional: --passphrase-file /root/readypackets-migration.pass (must be mode 600)
-Safety:  --replace-config and --apply-env are both mandatory for import.
+Safety:  --replace-config is mandatory for import.
+         --include-secrets --apply-env together enable root-console-only
+         break-glass secret restoration; they are never used by the
+         administrator-facing export control.
          --dry-run validates a bundle without changing the system.
          --force skips the explicit import confirmation for controlled automation.
 
-The bundle contains database credentials, encryption keys, and integration
-secrets. Store it offline or in encrypted secret storage; never email, commit,
-or place it in a shared directory.
+Default bundles deliberately omit application keys, database credentials, and
+integration secrets—including Microsoft Graph/SharePoint client secrets. Store
+all bundles offline; never email, commit, or place them in a shared directory.
 USAGE
 }
 
@@ -145,11 +152,20 @@ export_bundle() {
   mapfile -t EXPORT_TABLES < <(existing_tables)
   [[ "${#EXPORT_TABLES[@]}" -gt 0 ]] || die "No known configuration tables found in ${DB_NAME}."
 
-  log "Exporting ${#EXPORT_TABLES[@]} configuration tables and the protected environment."
-  cp --preserve=mode "$ENV_FILE" "$staging/portal.env"
+  log "Exporting ${#EXPORT_TABLES[@]} non-secret configuration tables."
+  if [[ "$INCLUDE_SECRETS" == "true" ]]; then
+    cp --preserve=mode "$ENV_FILE" "$staging/portal.env"
+  else
+    grep -Ev "$SECRET_ENV_PATTERN" "$ENV_FILE" > "$staging/portal.env"
+  fi
   chmod 600 "$staging/portal.env"
-  make_manifest "$staging/manifest.json" "${EXPORT_TABLES[@]}"
+  make_manifest "$staging/manifest.json" "site_settings" "${EXPORT_TABLES[@]}"
   "$MYSQLDUMP_BIN" --single-transaction --skip-comments --skip-triggers --no-create-info --complete-insert --replace "$DB_NAME" "${EXPORT_TABLES[@]}" > "$staging/configuration.sql"
+  if [[ "$INCLUDE_SECRETS" == "true" ]]; then
+    "$MYSQLDUMP_BIN" --single-transaction --skip-comments --skip-triggers --no-create-info --complete-insert --replace "$DB_NAME" site_settings >> "$staging/configuration.sql"
+  else
+    "$MYSQLDUMP_BIN" --single-transaction --skip-comments --skip-triggers --no-create-info --complete-insert --replace --skip-extended-insert --where="is_secret = 0" "$DB_NAME" site_settings >> "$staging/configuration.sql"
+  fi
   chmod 600 "$staging/configuration.sql"
   (cd "$staging" && sha256sum portal.env configuration.sql manifest.json > contents.sha256)
 
@@ -205,9 +221,11 @@ inspect_bundle() { open_bundle "$INPUT"; log "Bundle integrity verified. Non-sec
 
 import_bundle() {
   [[ "$REPLACE_CONFIG" == "true" ]] || die "Import requires --replace-config."
-  [[ "$APPLY_ENV" == "true" ]] || die "Import requires --apply-env because encrypted settings require the original application keys."
+  if [[ "$INCLUDE_SECRETS" == "true" && "$APPLY_ENV" != "true" ]]; then
+    die "Break-glass secret import requires --include-secrets --apply-env."
+  fi
   open_bundle "$INPUT"
-  log "Bundle verified. It includes the original portal.env and database-backed configuration."
+  log "Bundle verified. Secret-free imports preserve the target server environment and omit secret settings."
   if [[ "$DRY_RUN" == "true" ]]; then
     log "Dry run only: no files, database settings, or service state were changed."
     cat "$EXTRACTED_DIR/manifest.json"
@@ -228,13 +246,18 @@ import_bundle() {
     chmod 600 "$previous_env"
     log "Saved current environment backup: $previous_env"
   fi
-  # Environment is restored first because database rows contain ciphertext that
-  # must continue to use the original DATA_ENCRYPTION_KEY.
-  cp "$EXTRACTED_DIR/portal.env" "$ENV_FILE"
-  chmod 640 "$ENV_FILE"
-  if getent group readypackets >/dev/null 2>&1; then chown root:readypackets "$ENV_FILE"; else chown root:root "$ENV_FILE"; fi
+  if [[ "$INCLUDE_SECRETS" == "true" ]]; then
+    # Environment is restored first because encrypted DB rows depend on the original key.
+    cp "$EXTRACTED_DIR/portal.env" "$ENV_FILE"
+    chmod 640 "$ENV_FILE"
+    if getent group readypackets >/dev/null 2>&1; then chown root:readypackets "$ENV_FILE"; else chown root:root "$ENV_FILE"; fi
+  fi
   "$MYSQL_BIN" "$DB_NAME" < "$EXTRACTED_DIR/configuration.sql"
-  log "Configuration tables and application environment restored."
+  if [[ "$INCLUDE_SECRETS" == "true" ]]; then
+    log "Configuration tables and protected environment restored under break-glass mode."
+  else
+    log "Non-secret configuration restored; target environment and secret settings were preserved."
+  fi
   log "Review target-specific public URLs and network destinations before use."
   if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files readypackets.service >/dev/null 2>&1; then
     systemctl restart readypackets
@@ -243,7 +266,7 @@ import_bundle() {
 }
 
 ACTION="${1:-}"; shift || true
-OUTPUT=""; INPUT=""; PASSPHRASE_FILE=""; REPLACE_CONFIG="false"; APPLY_ENV="false"; DRY_RUN="false"; FORCE="false"
+OUTPUT=""; INPUT=""; PASSPHRASE_FILE=""; REPLACE_CONFIG="false"; APPLY_ENV="false"; DRY_RUN="false"; FORCE="false"; INCLUDE_SECRETS="false"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --output) OUTPUT="${2:-}"; shift 2 ;;
@@ -253,6 +276,7 @@ while [[ $# -gt 0 ]]; do
     --apply-env) APPLY_ENV="true"; shift ;;
     --dry-run) DRY_RUN="true"; shift ;;
     --force) FORCE="true"; shift ;;
+    --include-secrets) INCLUDE_SECRETS="true"; shift ;;
     -h|--help|help) usage; exit 0 ;;
     *) die "Unknown option: $1" ;;
   esac

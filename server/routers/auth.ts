@@ -179,6 +179,7 @@ export const authRouter = router({
             company: user.company,
             onboardingCompleted: user.onboardingCompletedAt !== null,
             timezone: user.timezone,
+            publicId: user.publicId,
           }
         : null,
       mfaPending: ctx.session.mfaPending,

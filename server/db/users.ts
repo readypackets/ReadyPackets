@@ -9,7 +9,7 @@
 import { and, desc, eq, isNull, like, or, sql } from "drizzle-orm";
 import { db } from "./client.js";
 import { users, userProfileValues } from "./schema.js";
-import { blindIndex, decryptField, encryptField } from "../security/crypto.js";
+import { blindIndex, decryptField, encryptField, generatePublicUserId } from "../security/crypto.js";
 import type { UserRole } from "../../shared/domain.js";
 import { insertedId } from "./result.js";
 
@@ -40,6 +40,7 @@ export interface DecryptedUser {
   avatarStorageKey: string | null;
   referralCode: string | null;
   customerNumber: string | null;
+  publicId: string | null;
 }
 
 type UserRow = typeof users.$inferSelect;
@@ -86,6 +87,7 @@ export function decryptUser(row: UserRow): DecryptedUser {
     avatarStorageKey: row.avatarStorageKey ?? null,
     referralCode: row.referralCode ?? null,
     customerNumber: row.customerNumber ?? null,
+    publicId: row.publicId ?? null,
   };
 }
 
@@ -129,6 +131,7 @@ export async function createUser(input: CreateUserInput): Promise<DecryptedUser>
   const userId = insertedId(inserted);
   const aad = `user:${userId}`;
   const customerNumber = `RP-CUST-${String(userId).padStart(6, '0')}`;
+  const publicId = generatePublicUserId();
 
   await db
     .update(users)
@@ -144,6 +147,7 @@ export async function createUser(input: CreateUserInput): Promise<DecryptedUser>
       addressEnc: encryptField(input.address ?? null, aad),
       notesEnc: encryptField(input.notes ?? null, aad),
       customerNumber,
+      publicId,
     })
     .where(eq(users.id, userId));
 

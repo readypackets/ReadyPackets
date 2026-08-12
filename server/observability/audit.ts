@@ -48,6 +48,7 @@ export type SecurityEventType =
   | "apikey.created"
   | "apikey.revoked"
   | "settings.changed"
+  | "account.banned"
   | "encryption.failure";
 
 interface SecurityEventInput {

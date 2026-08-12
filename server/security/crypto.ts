@@ -135,6 +135,11 @@ export function randomToken(bytes = 32): string {
   return randomBytes(bytes).toString("base64url");
 }
 
+/** Opaque, non-sequential customer-facing account reference, e.g. RP-U-7F3A9D2C8B1E. */
+export function generatePublicUserId(): string {
+  return `RP-U-${randomBytes(6).toString("hex").toUpperCase()}`;
+}
+
 /** Tokens are persisted only as SHA-256 digests so a database leak is inert. */
 export function hashToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");

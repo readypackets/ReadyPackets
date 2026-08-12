@@ -37,6 +37,8 @@ export interface SessionUser {
   mustChangePassword: boolean;
   onboardingCompleted: boolean;
   timezone: string | null;
+  /** Opaque, non-sequential account reference for display and support. */
+  publicId: string | null;
 }
 
 interface SessionContextValue {

@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   Ban,
   CheckCircle2,
+  Eye,
   Filter,
   Gauge,
   Plus,
@@ -474,176 +475,77 @@ function NetworkPanel() {
 }
 
 function LogsPanel() {
+  const toast = useToast();
   const [stream, setStream] = useState("security");
   const [severity, setSeverity] = useState("");
   const [eventType, setEventType] = useState("");
+  const [outcome, setOutcome] = useState("");
+  const [ipAddress, setIpAddress] = useState("");
+  const [userId, setUserId] = useState("");
+  const [query, setQuery] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [selected, setSelected] = useState<Record<string, unknown> | null>(null);
+  const [blocking, setBlocking] = useState<{ ipAddress: string } | null>(null);
+  const [banning, setBanning] = useState<{ userId: number } | null>(null);
 
-  const securityLogs = trpc.adminSecurity.securityLogs.useQuery(
+  const securityLogs = trpc.adminSecurity.securityLogSearch.useQuery(
     {
       severity: (severity || undefined) as never,
       eventType: eventType.trim() || undefined,
+      outcome: outcome.trim() || undefined,
+      ipAddress: ipAddress.trim() || undefined,
+      userId: userId ? Number(userId) : undefined,
+      query: query.trim() || undefined,
+      from: from || undefined,
+      to: to || undefined,
       limit: 200,
       offset: 0,
     },
     { enabled: stream === "security" },
   );
-  const activityLogs = trpc.adminSecurity.activityLogs.useQuery(
-    { limit: 200, offset: 0 },
-    { enabled: stream === "activity" },
-  );
-  const emailLog = trpc.adminSecurity.emailLog.useQuery(
-    { limit: 200 },
-    { enabled: stream === "email" },
-  );
+  const activityLogs = trpc.adminSecurity.activityLogs.useQuery({ limit: 200, offset: 0 }, { enabled: stream === "activity" });
+  const emailLog = trpc.adminSecurity.emailLog.useQuery({ limit: 200 }, { enabled: stream === "email" });
+  const review = trpc.adminSecurity.reviewSecurityLog.useMutation({ onSuccess: (entry) => setSelected(entry as unknown as Record<string, unknown>), onError: (error) => toast.error("Could not open event", errorMessage(error)) });
+  const block = trpc.adminSecurity.blockLogIp.useMutation({ onSuccess: () => { setBlocking(null); toast.success("Address blocked", "The source address has been added to the network blocklist."); }, onError: (error) => toast.error("Could not block address", errorMessage(error)) });
+  const ban = trpc.adminSecurity.banLogUser.useMutation({ onSuccess: () => { setBanning(null); void securityLogs.refetch(); toast.success("Account banned", "The account has been deactivated and all active sessions were revoked."); }, onError: (error) => toast.error("Could not ban account", errorMessage(error)) });
+
+  const resetFilters = () => { setSeverity(""); setEventType(""); setOutcome(""); setIpAddress(""); setUserId(""); setQuery(""); setFrom(""); setTo(""); };
 
   return (
     <>
       <Card className="mb-5">
         <div className="grid gap-4 sm:grid-cols-3">
-          <Select
-            label="Stream"
-            value={stream}
-            onChange={(event) => setStream(event.target.value)}
-            options={[
-              { value: "security", label: "Security events" },
-              { value: "activity", label: "Activity trail" },
-              { value: "email", label: "Email delivery" },
-            ]}
-          />
-          {stream === "security" ? (
-            <>
-              <Select
-                label="Severity"
-                value={severity}
-                onChange={(event) => setSeverity(event.target.value)}
-                options={[
-                  { value: "", label: "All severities" },
-                  { value: "debug", label: "Debug" },
-                  { value: "info", label: "Info" },
-                  { value: "notice", label: "Notice" },
-                  { value: "warning", label: "Warning" },
-                  { value: "error", label: "Error" },
-                  { value: "critical", label: "Critical" },
-                ]}
-              />
-              <Input
-                label="Event type"
-                placeholder="login.failure"
-                value={eventType}
-                onChange={(event) => setEventType(event.target.value)}
-                leadingIcon={<Filter className="size-4" aria-hidden="true" />}
-              />
-            </>
-          ) : null}
+          <Select label="Stream" value={stream} onChange={(event) => setStream(event.target.value)} options={[{ value: "security", label: "Security events" }, { value: "activity", label: "Activity trail" }, { value: "email", label: "Email delivery" }]} />
+          {stream === "security" ? <>
+            <Select label="Severity" value={severity} onChange={(event) => setSeverity(event.target.value)} options={[{ value: "", label: "All severities" }, { value: "debug", label: "Debug" }, { value: "info", label: "Info" }, { value: "notice", label: "Notice" }, { value: "warning", label: "Warning" }, { value: "error", label: "Error" }, { value: "critical", label: "Critical" }]} />
+            <Select label="Outcome" value={outcome} onChange={(event) => setOutcome(event.target.value)} options={[{ value: "", label: "All outcomes" }, { value: "success", label: "Success" }, { value: "failure", label: "Failure" }, { value: "blocked", label: "Blocked" }]} />
+            <Input label="Search message or event" placeholder="login failure" value={query} onChange={(event) => setQuery(event.target.value)} leadingIcon={<Filter className="size-4" aria-hidden="true" />} />
+            <Input label="Event type" placeholder="login.failure" value={eventType} onChange={(event) => setEventType(event.target.value)} />
+            <Input label="Source address" placeholder="203.0.113.8" value={ipAddress} onChange={(event) => setIpAddress(event.target.value)} />
+            <Input label="Internal user ID" inputMode="numeric" placeholder="123" value={userId} onChange={(event) => setUserId(event.target.value.replace(/\D/g, ""))} />
+            <Input label="From date" type="date" value={from} onChange={(event) => setFrom(event.target.value)} />
+            <Input label="To date" type="date" value={to} onChange={(event) => setTo(event.target.value)} />
+          </> : null}
         </div>
+        {stream === "security" ? <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4"><p className="text-xs text-muted">{securityLogs.data?.total ?? 0} matching event(s). Open an event to inspect its metadata or take a contained response action.</p><Button size="sm" variant="ghost" onClick={resetFilters}>Clear search</Button></div> : null}
       </Card>
 
-      {stream === "security" ? (
-        securityLogs.isLoading ? (
-          <Skeleton className="h-64 w-full" />
-        ) : (securityLogs.data ?? []).length === 0 ? (
-          <EmptyState
-            icon={ShieldCheck}
-            title="No matching security events"
-            description="Either nothing has happened, or your filter is too narrow."
-          />
-        ) : (
-          <Card padded={false}>
-            <ul className="divide-y divide-line">
-              {(securityLogs.data ?? []).map((entry) => (
-                <li key={entry.id} className="px-4 py-3">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge tone={SEVERITY_TONES[entry.severity] ?? "neutral"}>
-                          {entry.severity}
-                        </Badge>
-                        <code className="text-xs text-muted">{entry.eventType}</code>
-                        {entry.outcome ? <Badge tone="neutral">{entry.outcome}</Badge> : null}
-                      </div>
-                      <p className="mt-1.5 text-sm text-ink">{entry.message}</p>
-                      <p className="mt-0.5 font-mono text-xs text-muted">
-                        {entry.ipAddress ?? "no address"}
-                        {entry.userId ? ` · user ${entry.userId}` : ""}
-                      </p>
-                    </div>
-                    <span className="shrink-0 text-xs text-muted">
-                      {formatDateTime(entry.createdAt)}
-                    </span>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        )
-      ) : null}
+      {stream === "security" ? (securityLogs.isLoading ? <Skeleton className="h-64 w-full" /> : (securityLogs.data?.rows ?? []).length === 0 ? <EmptyState icon={ShieldCheck} title="No matching security events" description="Either nothing has happened, or your filters are too narrow." /> : (
+        <Card padded={false}><ul className="divide-y divide-line">{(securityLogs.data?.rows ?? []).map((entry) => (
+          <li key={entry.id} className="px-4 py-3"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Badge tone={SEVERITY_TONES[entry.severity] ?? "neutral"}>{entry.severity}</Badge><code className="text-xs text-muted">{entry.eventType}</code>{entry.outcome ? <Badge tone="neutral">{entry.outcome}</Badge> : null}</div><p className="mt-1.5 text-sm text-ink">{entry.message}</p><p className="mt-0.5 font-mono text-xs text-muted">{entry.ipAddress ?? "no address"}{entry.userPublicId ? ` · account ${entry.userPublicId}` : entry.userId ? " · linked account" : ""}</p></div><div className="flex shrink-0 flex-wrap items-center gap-2"><span className="text-xs text-muted">{formatDateTime(entry.createdAt)}</span><Button size="sm" variant="outline" busy={review.isPending} onClick={() => review.mutate({ id: entry.id })} leadingIcon={<Eye className="size-3.5" aria-hidden="true" />}>View</Button>{entry.ipAddress ? <Button size="sm" variant="danger" onClick={() => setBlocking({ ipAddress: entry.ipAddress! })}>Block IP</Button> : null}{entry.userId ? <Button size="sm" variant="danger" onClick={() => setBanning({ userId: entry.userId! })}>Ban account</Button> : null}</div></div></li>
+        ))}</ul></Card>
+      )) : null}
 
-      {stream === "activity" ? (
-        activityLogs.isLoading ? (
-          <Skeleton className="h-64 w-full" />
-        ) : (
-          <Card padded={false}>
-            <ul className="divide-y divide-line">
-              {(activityLogs.data ?? []).map((entry) => (
-                <li key={entry.id} className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <code className="text-xs text-muted">{entry.action}</code>
-                      {entry.actorRole ? <Badge tone="neutral">{entry.actorRole}</Badge> : null}
-                    </div>
-                    <p className="mt-1.5 text-sm text-ink">{entry.summary}</p>
-                    <p className="mt-0.5 font-mono text-xs text-muted">
-                      {entry.ipAddress ?? "no address"}
-                      {entry.entityType ? ` · ${entry.entityType} ${entry.entityId ?? ""}` : ""}
-                    </p>
-                  </div>
-                  <span className="shrink-0 text-xs text-muted">
-                    {formatDateTime(entry.createdAt)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        )
-      ) : null}
+      {stream === "activity" ? (activityLogs.isLoading ? <Skeleton className="h-64 w-full" /> : <Card padded={false}><ul className="divide-y divide-line">{(activityLogs.data ?? []).map((entry) => <li key={entry.id} className="flex flex-wrap items-start justify-between gap-3 px-4 py-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><code className="text-xs text-muted">{entry.action}</code>{entry.actorRole ? <Badge tone="neutral">{entry.actorRole}</Badge> : null}</div><p className="mt-1.5 text-sm text-ink">{entry.summary}</p><p className="mt-0.5 font-mono text-xs text-muted">{entry.ipAddress ?? "no address"}{entry.entityType ? ` · ${entry.entityType} ${entry.entityId ?? ""}` : ""}</p></div><span className="shrink-0 text-xs text-muted">{formatDateTime(entry.createdAt)}</span></li>)}</ul></Card>) : null}
 
-      {stream === "email" ? (
-        emailLog.isLoading ? (
-          <Skeleton className="h-64 w-full" />
-        ) : (
-          <Card padded={false}>
-            <ul className="divide-y divide-line">
-              {(emailLog.data ?? []).map((entry) => (
-                <li key={entry.id} className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge
-                        tone={
-                          entry.status === "sent"
-                            ? "success"
-                            : entry.status === "failed"
-                              ? "danger"
-                              : "warning"
-                        }
-                      >
-                        {entry.status}
-                      </Badge>
-                      <code className="text-xs text-muted">{entry.templateKey ?? "ad-hoc"}</code>
-                    </div>
-                    <p className="mt-1.5 truncate text-sm text-ink">{entry.subject}</p>
-                    {entry.detail ? (
-                      <p className="mt-0.5 text-xs text-danger">{entry.detail}</p>
-                    ) : null}
-                  </div>
-                  <span className="shrink-0 text-xs text-muted">
-                    {formatDateTime(entry.createdAt)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        )
-      ) : null}
+      {stream === "email" ? (emailLog.isLoading ? <Skeleton className="h-64 w-full" /> : <Card padded={false}><ul className="divide-y divide-line">{(emailLog.data ?? []).map((entry) => <li key={entry.id} className="flex flex-wrap items-start justify-between gap-3 px-4 py-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Badge tone={entry.status === "sent" ? "success" : entry.status === "failed" ? "danger" : "warning"}>{entry.status}</Badge><code className="text-xs text-muted">{entry.templateKey ?? "ad-hoc"}</code></div><p className="mt-1.5 truncate text-sm text-ink">{entry.subject}</p>{entry.detail ? <p className="mt-0.5 text-xs text-danger">{entry.detail}</p> : null}</div><span className="shrink-0 text-xs text-muted">{formatDateTime(entry.createdAt)}</span></li>)}</ul></Card>) : null}
+
+      <Modal open={Boolean(selected)} onClose={() => setSelected(null)} title="Security event review" footer={<Button variant="outline" onClick={() => setSelected(null)}>Close</Button>}>
+        {selected ? <div className="space-y-4"><div className="grid gap-3 sm:grid-cols-2"><p><span className="text-xs text-muted">Event</span><br /><code>{String(selected.eventType ?? "—")}</code></p><p><span className="text-xs text-muted">Recorded</span><br />{selected.createdAt ? formatDateTime(selected.createdAt as Date) : "—"}</p><p><span className="text-xs text-muted">Source</span><br /><code>{String(selected.ipAddress ?? "no address")}</code></p><p><span className="text-xs text-muted">Account</span><br />{selected.userPublicId ? String(selected.userPublicId) : selected.userId ? "Linked account" : "No linked account"}</p></div><div><p className="text-xs text-muted">Message</p><p className="mt-1 text-sm text-ink">{String(selected.message ?? "—")}</p></div><div><p className="text-xs text-muted">Metadata</p><pre className="mt-1 max-h-48 overflow-auto rounded-lg bg-surface-sunken p-3 text-xs text-ink">{JSON.stringify(selected.metadata ?? {}, null, 2)}</pre></div></div> : null}
+      </Modal>
+      <ConfirmDialog open={Boolean(blocking)} onClose={() => setBlocking(null)} onConfirm={() => { if (blocking) block.mutate({ ipAddress: blocking.ipAddress, reason: "Blocked from Security Centre log review." }); }} title="Block this source address?" message={`Block ${blocking?.ipAddress ?? "this address"} from the platform? This is an immediate network control and can be removed later from IP policy.`} confirmLabel="Block address" cancelLabel="Cancel" variant="danger" busy={block.isPending} />
+      <ConfirmDialog open={Boolean(banning)} onClose={() => setBanning(null)} onConfirm={() => { if (banning) ban.mutate({ userId: banning.userId, reason: "Banned from Security Centre log review." }); }} title="Ban this account?" message={`Deactivate internal account ${banning?.userId ?? ""} and revoke all active sessions? This can be reversed from customer management by restoring the account to Active.`} confirmLabel="Ban account" cancelLabel="Cancel" variant="danger" busy={ban.isPending} />
     </>
   );
 }

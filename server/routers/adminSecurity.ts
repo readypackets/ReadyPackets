@@ -11,7 +11,7 @@
  */
 import { TRPCError } from "@trpc/server";
 import { notifyMaintenanceStart, notifyMaintenanceEnd } from "../services/maintenanceNotify.js";
-import { and, count, desc, eq, gte, isNull, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, like, lte, or, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { env } from "../config/env.js";
 import { db } from "../db/client.js";
@@ -271,6 +271,70 @@ export const adminSecurityRouter = router({
         metadata: row.metadata,
         createdAt: row.createdAt,
       }));
+    }),
+
+  /** Advanced searchable security-log stream for incident review. */
+  securityLogSearch: adminProcedure
+    .input(z.object({
+      severity: z.enum(["debug", "info", "notice", "warning", "error", "critical"]).optional(),
+      eventType: z.string().trim().max(64).optional(),
+      outcome: z.string().trim().max(32).optional(),
+      ipAddress: z.string().trim().max(64).optional(),
+      userId: z.number().int().positive().optional(),
+      query: z.string().trim().max(160).optional(),
+      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      limit: z.number().int().min(1).max(500).default(100),
+      offset: z.number().int().min(0).max(50_000).default(0),
+    }))
+    .query(async ({ input }) => {
+      const conditions = [];
+      if (input.severity) conditions.push(eq(securityLogs.severity, input.severity));
+      if (input.eventType) conditions.push(like(securityLogs.eventType, `%${input.eventType}%`));
+      if (input.outcome) conditions.push(eq(securityLogs.outcome, input.outcome));
+      if (input.ipAddress) conditions.push(like(securityLogs.ipAddress, `%${input.ipAddress}%`));
+      if (input.userId) conditions.push(eq(securityLogs.userId, input.userId));
+      if (input.query) conditions.push(or(like(securityLogs.message, `%${input.query}%`), like(securityLogs.eventType, `%${input.query}%`)));
+      if (input.from) conditions.push(gte(securityLogs.createdAt, new Date(`${input.from}T00:00:00.000Z`)));
+      if (input.to) conditions.push(lte(securityLogs.createdAt, new Date(`${input.to}T23:59:59.999Z`)));
+      const where = conditions.length > 0 ? and(...conditions) : undefined;
+      const [rows, totals] = await Promise.all([
+        db.select({ entry: securityLogs, userPublicId: users.publicId }).from(securityLogs).leftJoin(users, eq(users.id, securityLogs.userId)).where(where).orderBy(desc(securityLogs.createdAt)).limit(input.limit).offset(input.offset),
+        db.select({ total: count() }).from(securityLogs).where(where),
+      ]);
+      return { rows: rows.map((row) => ({ ...row.entry, userPublicId: row.userPublicId ?? null })), total: Number(totals[0]?.total ?? 0) };
+    }),
+
+  reviewSecurityLog: adminProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const rows = await db.select({ entry: securityLogs, userPublicId: users.publicId }).from(securityLogs).leftJoin(users, eq(users.id, securityLogs.userId)).where(eq(securityLogs.id, input.id)).limit(1);
+      const result = rows[0];
+      if (!result) throw new TRPCError({ code: "NOT_FOUND", message: "Security event not found." });
+      const entry = result.entry;
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "security.log_reviewed", entityType: "security_log", entityId: entry.id, severity: "notice", summary: `Reviewed security event ${entry.eventType}`, ipAddress: ctx.clientIp });
+      return { ...entry, userPublicId: result.userPublicId ?? null };
+    }),
+
+  blockLogIp: adminProcedure
+    .input(z.object({ ipAddress: ipPatternSchema, reason: z.string().trim().min(3).max(255) }))
+    .mutation(async ({ ctx, input }) => {
+      if (input.ipAddress === ctx.clientIp) throw new TRPCError({ code: "BAD_REQUEST", message: "You cannot block your own current address." });
+      await blacklistIp({ pattern: input.ipAddress, reason: input.reason, source: "security_log", expiresAt: null, createdByUserId: ctx.session.user.id });
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "security.log_ip_blocked", entityType: "ip_blacklist", entityId: input.ipAddress, severity: "warning", summary: `Blocked ${input.ipAddress} from security log review`, ipAddress: ctx.clientIp });
+      return { ok: true as const };
+    }),
+
+  banLogUser: adminProcedure
+    .input(z.object({ userId: z.number().int().positive(), reason: z.string().trim().min(3).max(255) }))
+    .mutation(async ({ ctx, input }) => {
+      if (input.userId === ctx.session.user.id) throw new TRPCError({ code: "BAD_REQUEST", message: "You cannot ban your own account from the log centre." });
+      const affected = await db.update(users).set({ status: "deactivated", lockedUntil: null }).where(eq(users.id, input.userId));
+      if (affectedRows(affected) === 0) throw new TRPCError({ code: "NOT_FOUND", message: "User account not found." });
+      await revokeAllUserSessions(input.userId, "security_log_ban");
+      void recordSecurityEvent({ eventType: "account.banned", severity: "warning", outcome: "blocked", message: "Account banned from security log review", userId: input.userId, ipAddress: ctx.clientIp, metadata: { actorUserId: ctx.session.user.id, reason: input.reason } });
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "security.log_user_banned", entityType: "user", entityId: input.userId, severity: "warning", summary: `Banned account ${input.userId} from security log review`, changes: { reason: input.reason }, ipAddress: ctx.clientIp });
+      return { ok: true as const };
     }),
 
   activityLogs: adminProcedure
