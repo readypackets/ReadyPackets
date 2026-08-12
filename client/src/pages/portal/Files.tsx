@@ -92,7 +92,7 @@ export function FilesPage() {
     <>
       <PageHeader
         title="My Business Packets"
-        description="Files you uploaded to your orders. Documents published by your project team are available inside the relevant order workspace."
+        description="Your final deliverables. Phase materials, questions, recordings, and working documents stay inside the relevant order workspace."
         actions={
           selected.size > 0 ? (
             <Button
@@ -143,7 +143,7 @@ export function FilesPage() {
         <EmptyState
           icon={FileText}
           title="No Business Packets yet"
-          description="Your uploaded files appear here. Open an individual order to view documents published to you by your project team."
+          description="Final deliverables published by your project team will appear here. Open an individual order to view phase materials, questions, recordings, and working documents."
         />
       ) : rows.length === 0 ? (
         <EmptyState
@@ -230,8 +230,7 @@ export function FilesPage() {
       )}
 
       <Alert tone="info" className="mt-6" title="About your files">
-        Download links are generated on request, expire within minutes, and can be used once. This
-        prevents a copied link from granting anyone else access to your material.
+        This area contains only final deliverables. Phase materials remain inside their authorized order workspace. Download links are generated on request, expire within minutes, and can be used once.
       </Alert>
     </>
   );

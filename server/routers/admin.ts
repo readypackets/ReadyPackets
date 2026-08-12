@@ -491,7 +491,7 @@ export const adminRouter = router({
       z.object({
         orderId: z.number().int().positive(),
         question: z.string().trim().min(5).max(2000),
-        phase: z.enum(["phase_1", "phase_2"]).default("phase_1"),
+        phase: z.string().trim().regex(/^[a-z0-9_]+$/).max(64).default("phase_1"),
         required: z.boolean().default(true),
       }),
     )
@@ -1043,7 +1043,7 @@ export const adminRouter = router({
       id: z.number().int().positive().optional(),
       name: z.string().trim().min(2).max(120),
       description: z.string().trim().max(4_000).optional(),
-      stages: z.array(z.object({ key: z.string().trim().regex(/^[a-z0-9_]+$/).max(48), label: z.string().trim().min(2).max(120), order: z.number().int().min(1).max(50) })).min(1).max(20),
+      stages: z.array(z.object({ key: z.string().trim().regex(/^[a-z0-9_]+$/).max(48), label: z.string().trim().min(2).max(120), order: z.number().int().min(1).max(50), capabilities: z.array(z.enum(["documents", "questions", "recording"])).max(3).default([]) })).min(1).max(20),
       isDefault: z.boolean().default(false),
       active: z.boolean().default(true),
     }))

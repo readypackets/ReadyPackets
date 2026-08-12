@@ -170,7 +170,7 @@ export const filesRouter = router({
         and(
           inArray(files.orderId, orderIds),
           eq(files.visibleToCustomer, true),
-          eq(files.uploadedByUserId, ctx.session.user.id),
+          eq(files.category, "deliverable"),
           eq(files.isPlaceholder, false),
           isNull(files.deletedAt),
         ),

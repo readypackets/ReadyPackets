@@ -486,7 +486,7 @@ export const orderQuestions = mysqlTable(
     orderId: int("order_id").notNull(),
     askedByUserId: int("asked_by_user_id").notNull(),
     questionEnc: text("question_enc").notNull(),
-    phase: varchar("phase", { length: 16 }).notNull().default("phase_1"),
+    phase: varchar("phase", { length: 64 }).notNull().default("phase_1"),
     required: boolean("required").notNull().default(true),
     status: varchar("status", { length: 16 }).notNull().default("open"),
     sortOrder: int("sort_order").notNull().default(0),
@@ -684,7 +684,7 @@ export const files = mysqlTable(
     sha256: varchar("sha256", { length: 64 }).notNull(),
     category: varchar("category", { length: 32 }).notNull().default("deliverable"),
     /** Lifecycle phase assigned by the intake or staff workflow. */
-    phase: varchar("phase", { length: 16 }).notNull().default("unassigned"),
+    phase: varchar("phase", { length: 64 }).notNull().default("unassigned"),
     /** Customer visibility. Hidden files exist only in the admin workspace. */
     visibleToCustomer: boolean("visible_to_customer").notNull().default(false),
     isPlaceholder: boolean("is_placeholder").notNull().default(false),
@@ -1862,7 +1862,7 @@ export const orderQuestionTemplates = mysqlTable(
     id: id(),
     name: varchar("name", { length: 190 }).notNull(),
     question: text("question").notNull(),
-    phase: varchar("phase", { length: 16 }).notNull().default("unassigned"),
+    phase: varchar("phase", { length: 64 }).notNull().default("unassigned"),
     required: boolean("required").notNull().default(true),
     sortOrder: int("sort_order").notNull().default(0),
     isActive: boolean("is_active").notNull().default(true),

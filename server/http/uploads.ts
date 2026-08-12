@@ -12,7 +12,7 @@ import multer from "multer";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { env } from "../config/env.js";
 import { db } from "../db/client.js";
-import { fileVersions, files, intakeAnswers, intakeSubmissions, orders } from "../db/schema.js";
+import { fileVersions, files, intakeAnswers, intakeSubmissions, orders, orderWorkflows } from "../db/schema.js";
 import { getSetting, getSettingNumber } from "../services/settings.js";
 import { resolveSession } from "../auth/session.js";
 import { CSRF_COOKIE, CSRF_HEADER } from "../security/csrf.js";
@@ -101,8 +101,8 @@ export function createUploadRouter(): Router {
       const category = UPLOAD_CATEGORIES.has(requestedCategory)
         ? requestedCategory
         : "intake_attachment";
-      const requestedPhase = typeof req.body.phase === "string" ? req.body.phase : null;
-      const phase = requestedPhase === "phase_1" || requestedPhase === "phase_2" || requestedPhase === "unassigned"
+      const requestedPhase = typeof req.body.phase === "string" ? req.body.phase.trim().toLowerCase() : null;
+      const phase = requestedPhase && /^[a-z0-9_]{2,64}$/.test(requestedPhase)
         ? requestedPhase
         : category === "intake_attachment" ? "phase_1" : "unassigned";
       const replaceFileId =
@@ -120,9 +120,33 @@ export function createUploadRouter(): Router {
           return;
         }
       }
+      let stageCapabilities: string[] | null = null;
+      if (orderId !== null && requestedPhase && !["phase_1", "phase_2", "unassigned"].includes(phase)) {
+        const orderRows = await db.select({ workflowId: orders.workflowId }).from(orders).where(and(eq(orders.id, orderId), isNull(orders.deletedAt))).limit(1);
+        const workflowId = orderRows[0]?.workflowId;
+        const workflowRows = workflowId
+          ? await db.select({ stages: orderWorkflows.stages }).from(orderWorkflows).where(eq(orderWorkflows.id, workflowId)).limit(1)
+          : [];
+        const stages = Array.isArray(workflowRows[0]?.stages) ? workflowRows[0]?.stages as { key?: unknown; capabilities?: unknown }[] : [];
+        const stage = stages.find((item) => item.key === phase);
+        if (!stage) {
+          res.status(400).json({ error: "The selected workflow phase is not available for this order." });
+          return;
+        }
+        stageCapabilities = Array.isArray(stage.capabilities)
+          ? stage.capabilities.filter((capability): capability is string => typeof capability === "string")
+          : ["documents", "questions", "recording"];
+      }
       if (!isStaff && (category === "deliverable" || category === "internal")) {
         res.status(403).json({ error: "You cannot upload files of that type." });
         return;
+      }
+      if (!isStaff && stageCapabilities) {
+        const requiredCapability = recordedPitch ? "recording" : "documents";
+        if (!stageCapabilities.includes(requiredCapability)) {
+          res.status(403).json({ error: `This workflow phase does not accept customer ${requiredCapability === "recording" ? "recordings" : "document uploads"}.` });
+          return;
+        }
       }
       if (!isStaff && replaceFileId) {
         res.status(403).json({ error: "Only staff can replace an existing file." });

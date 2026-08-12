@@ -1902,3 +1902,16 @@ Pending source-control publication after this entry.
 ### Publication outcome
 
 The configurable microphone preflight diagnostic, administrator toggle, private reference comparison, and session record were published to the private `main` branch as `2a077b95e40698ed9075ed1194016a71d957d2d1` (`feat: add configurable microphone preflight diagnostic`).
+
+
+## 2026-08-12 — Final Deliverables and Configurable Phase Workspaces
+
+The customer portal file model was restructured at the user’s request. **My Business Packets** now lists only customer-visible files categorized as final `deliverable` items. Customer intake attachments, working documents, questions, phase recordings, and staff-published phase materials no longer appear in that portal-wide final-deliverables library.
+
+A reusable customer workflow-stage workspace was added at `/portal/orders/:id/workflow/:phaseKey`. An assigned order workflow now exposes each stage as an individually labeled workspace in the customer order overview. Each configured stage can enable documents, questions, and in-browser WebM recording independently. The workspace shows only the matching phase’s non-deliverable materials and questions, supports a CSRF-refreshed customer document upload when the stage permits documents, and supports browser-only audio recording when the stage permits recording. Team files remain authorized to the specific order and phase; final deliverables remain in My Business Packets.
+
+The administrator Order workflows workspace now stores per-stage capabilities using `stage_key | Stage label | documents,questions,recording`. New stages can be added in the ordered workflow definition, custom workflows can be saved and marked default, and workflow stages can be assigned to individual orders. Administrator order file uploads and direct order questions now accept any stage defined by the order’s assigned workflow. Existing workflows without capability metadata retain compatible document/question/recording defaults until edited. The standard workflow was migrated to explicit capabilities.
+
+Migration `0026_custom_workflow_phase_keys.sql` widened `files.phase`, `order_questions.phase`, and `order_question_templates.phase` to 64 characters and updated the default workflow capability metadata. TypeScript validation passed. All 150 automated tests passed. Production client and server builds passed. The migration and server/client assets were deployed with timestamped rollback copies; the health endpoint returned `{"status":"ok"}`.
+
+Pending source-control publication after this entry.

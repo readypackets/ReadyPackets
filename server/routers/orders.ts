@@ -18,6 +18,7 @@ import {
   orderItems,
   orderNotes,
   orderQuestions,
+  orderWorkflows,
   orderShares,
   orders,
   users,
@@ -93,6 +94,14 @@ export const ordersRouter = router({
         await assertOrderAccess(input.orderId, ctx.session.user.id, ctx.session.user.role);
         const detail = await getOrderDetail(input.orderId);
 
+        const workflowRows = detail.order.workflowId
+          ? await db
+              .select({ id: orderWorkflows.id, name: orderWorkflows.name, description: orderWorkflows.description, stages: orderWorkflows.stages })
+              .from(orderWorkflows)
+              .where(eq(orderWorkflows.id, detail.order.workflowId))
+              .limit(1)
+          : [];
+
         const deliverables = await db
           .select({
             id: files.id,
@@ -109,6 +118,7 @@ export const ordersRouter = router({
             and(
               eq(files.orderId, input.orderId),
               eq(files.visibleToCustomer, true),
+              eq(files.category, "deliverable"),
               isNull(files.deletedAt),
             ),
           )
@@ -144,6 +154,7 @@ export const ordersRouter = router({
             dueAt: detail.order.dueAt,
             deliveredAt: detail.order.deliveredAt,
           },
+          workflow: workflowRows[0] ?? null,
           items: detail.items.map((item) => ({
             id: item.id,
             sku: item.sku,

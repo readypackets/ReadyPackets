@@ -729,9 +729,22 @@ export function AdminOrderDetailPage() {
   const [deleteReason, setDeleteReason] = useState("");
   const [workflowId, setWorkflowId] = useState("");
   const [phaseUploadOpen, setPhaseUploadOpen] = useState(false);
-  const [phaseUpload, setPhaseUpload] = useState<"phase_1" | "phase_2">("phase_1");
+  const [phaseUpload, setPhaseUpload] = useState("phase_1");
   const [phaseUploading, setPhaseUploading] = useState(false);
   const phaseFileInput = useRef<HTMLInputElement>(null);
+
+  const assignedWorkflow = (workflows.data ?? []).find((workflow) => String(workflow.id) === (workflowId || String(detail.data?.order.workflowId ?? "")));
+  const workflowStageOptions = Array.isArray(assignedWorkflow?.stages)
+    ? (assignedWorkflow.stages as { key?: unknown; label?: unknown; order?: unknown }[])
+        .filter((stage) => typeof stage.key === "string" && typeof stage.label === "string")
+        .sort((left, right) => (typeof left.order === "number" ? left.order : 0) - (typeof right.order === "number" ? right.order : 0))
+        .map((stage) => ({ value: stage.key as string, label: stage.label as string }))
+    : [];
+  const phaseUploadOptions = [
+    { value: "phase_1", label: "Phase 1" },
+    { value: "phase_2", label: "Phase 2" },
+    ...workflowStageOptions.filter((stage) => stage.value !== "phase_1" && stage.value !== "phase_2"),
+  ];
 
   const refetchAll = async () => {
     await Promise.all([detail.refetch(), files.refetch()]);
@@ -779,7 +792,7 @@ export function AdminOrderDetailPage() {
 
   const questionTemplates = trpc.admin.questionTemplates.useQuery();
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
-  const [questionPhase, setQuestionPhase] = useState<"phase_1" | "phase_2">("phase_1");
+  const [questionPhase, setQuestionPhase] = useState("phase_1");
   const [adminAnswerByQuestion, setAdminAnswerByQuestion] = useState<Record<number, string>>({});
   const applyTemplate = trpc.admin.applyQuestionTemplate.useMutation({
     async onSuccess() { setSelectedTemplateId(""); await refetchAll(); toast.success("Template question added to this order"); },
@@ -842,7 +855,7 @@ export function AdminOrderDetailPage() {
       if (!result.response.ok) { toast.error("Upload rejected", result.payload.error ?? "The documents could not be uploaded."); return; }
       await files.refetch();
       setPhaseUploadOpen(false);
-      toast.success("Phase documents uploaded", `${result.payload.files?.length ?? 0} file(s) were added to ${phaseUpload === "phase_1" ? "Phase 1" : "Phase 2"}.`);
+      toast.success("Phase documents uploaded", `${result.payload.files?.length ?? 0} file(s) were added to ${phaseUploadOptions.find((option) => option.value === phaseUpload)?.label ?? "the selected phase"}.`);
     } catch {
       toast.error("Upload failed", "A network error occurred. Please try again.");
     } finally {
@@ -1294,7 +1307,7 @@ export function AdminOrderDetailPage() {
                 <Select label="Order Question Bank" value={selectedTemplateId} onChange={(event) => setSelectedTemplateId(event.target.value)} options={[{ value: "", label: "Choose a reusable question…" }, ...(questionTemplates.data ?? []).map((template) => ({ value: String(template.id), label: `${template.phase === "phase_2" ? "Phase 2" : "Phase 1"} — ${template.name}` }))]} />
                 <div className="flex items-end"><Button variant="outline" busy={applyTemplate.isPending} disabled={!selectedTemplateId} onClick={() => applyTemplate.mutate({ orderId, templateId: Number(selectedTemplateId) })}>Apply to order</Button></div>
               </div>
-              <Select className="mt-4" label="Order phase" value={questionPhase} onChange={(event) => setQuestionPhase(event.target.value as "phase_1" | "phase_2")} options={[{ value: "phase_1", label: "Phase 1" }, { value: "phase_2", label: "Phase 2" }]} />
+              <Select className="mt-4" label="Workflow phase" value={questionPhase} onChange={(event) => setQuestionPhase(event.target.value)} options={phaseUploadOptions} />
               <Textarea
                 label="Question"
                 className="mt-4"
@@ -1407,7 +1420,7 @@ export function AdminOrderDetailPage() {
         ) : null}
       </div>
 
-      <Modal open={phaseUploadOpen} onClose={() => setPhaseUploadOpen(false)} title="Upload phase documents" description="Attach administrator documents to this order and assign them to the correct workflow phase." footer={<><Button variant="outline" onClick={() => setPhaseUploadOpen(false)}>Cancel</Button><Button busy={phaseUploading} leadingIcon={<Upload className="size-4" />} onClick={() => phaseFileInput.current?.click()}>Choose documents</Button></>}><div className="space-y-4"><Select label="Order phase" value={phaseUpload} onChange={(event) => setPhaseUpload(event.target.value as "phase_1" | "phase_2")} options={[{ value: "phase_1", label: "Phase 1" }, { value: "phase_2", label: "Phase 2" }]} /><Alert tone="info">Uploaded administrator documents are initially internal. Use the visibility control in the Files tab to publish a file to the customer.</Alert><input ref={phaseFileInput} className="hidden" type="file" multiple onChange={(event) => void uploadPhaseDocuments(event.target.files)} /></div></Modal>
+      <Modal open={phaseUploadOpen} onClose={() => setPhaseUploadOpen(false)} title="Upload phase documents" description="Attach administrator documents to this order and assign them to the correct workflow phase." footer={<><Button variant="outline" onClick={() => setPhaseUploadOpen(false)}>Cancel</Button><Button busy={phaseUploading} leadingIcon={<Upload className="size-4" />} onClick={() => phaseFileInput.current?.click()}>Choose documents</Button></>}><div className="space-y-4"><Select label="Order phase" value={phaseUpload} onChange={(event) => setPhaseUpload(event.target.value)} options={phaseUploadOptions} /><Alert tone="info">Uploaded administrator documents are initially internal. Use the visibility control in the Files tab to publish a file to the customer inside this order’s matching phase workspace.</Alert><input ref={phaseFileInput} className="hidden" type="file" multiple onChange={(event) => void uploadPhaseDocuments(event.target.files)} /></div></Modal>
 
       <ConfirmDialog
         open={deleteOpen}

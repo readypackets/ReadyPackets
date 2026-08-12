@@ -37,6 +37,24 @@ import { Modal } from "@/components/ui/Modal";
 import { ProgressBar } from "@/components/ui/DataDisplay";
 import { useToast } from "@/components/ui/Toast";
 import { PageHeader } from "@/components/layout/PortalLayout";
+type WorkflowStage = { key: string; label: string; order: number; capabilities?: ("documents" | "questions" | "recording")[] };
+
+function workflowStages(value: unknown): WorkflowStage[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is { key?: unknown; label?: unknown; order?: unknown; capabilities?: unknown } => Boolean(item) && typeof item === "object")
+    .filter((item) => typeof item.key === "string" && typeof item.label === "string")
+    .map((item, index) => ({
+      key: item.key as string,
+      label: item.label as string,
+      order: typeof item.order === "number" ? item.order : index + 1,
+      capabilities: Array.isArray(item.capabilities)
+        ? item.capabilities.filter((capability): capability is "documents" | "questions" | "recording" => capability === "documents" || capability === "questions" || capability === "recording")
+        : ["documents", "questions", "recording"] as ("documents" | "questions" | "recording")[],
+    }))
+    .sort((left, right) => left.order - right.order);
+}
+
 import {
   PAYMENT_LABELS,
   PAYMENT_TONES,
@@ -178,7 +196,7 @@ export function OrderDetailPage() {
   const intakeStatus = intake.data?.status ?? "draft";
   const needsIntake = intakeStatus !== "submitted";
   const canCancel = !terminated && order.status !== "closed" && order.status !== "delivered";
-  const teamDocuments = (orderFiles.data ?? []).filter((file) => file.visibleToCustomer && file.uploadedByStaff);
+  const configuredWorkflowStages = workflowStages(detail.data.workflow?.stages).filter((stage) => (stage.capabilities ?? []).length > 0);
 
   return (
     <>
@@ -274,21 +292,22 @@ export function OrderDetailPage() {
         </Card>
       ) : null}
 
-      {teamDocuments.length > 0 ? (
+      {configuredWorkflowStages.length > 0 ? (
         <Card className="mb-6 border-teal/30 bg-teal/5">
-          <CardHeader title="Documents from your project team" description="Documents published for this specific order. They are available only in this order workspace." />
-          <ul className="mt-4 space-y-2">
-            {teamDocuments.map((file) => (
-              <li key={file.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-white px-3 py-2.5">
-                <div className="min-w-0"><p className="truncate text-sm font-medium text-ink">{file.originalName}</p><p className="mt-0.5 text-xs text-muted">{formatBytes(file.sizeBytes)} · {formatDate(file.createdAt)}</p></div>
-                <Button size="sm" variant="outline" busy={downloading === file.id} onClick={() => { setDownloading(file.id); requestDownload.mutate({ fileId: file.id }); }} leadingIcon={<Download className="size-3.5" aria-hidden="true" />}>Download</Button>
-              </li>
+          <CardHeader title="Order workspace" description="Each workflow phase has its own files, questions, recordings, and customer actions. Final deliverables remain in My Business Packets." />
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {configuredWorkflowStages.map((stage) => (
+              <div key={stage.key} className="rounded-lg border border-line bg-white p-4">
+                <p className="text-sm font-semibold text-ink">{stage.order}. {stage.label}</p>
+                <p className="mt-1 text-xs text-muted">{(stage.capabilities ?? []).map((capability) => capability === "recording" ? "Audio recording" : capability === "documents" ? "Documents" : "Questions").join(" · ")}</p>
+                <LinkButton className="mt-3" size="sm" variant="outline" href={`/portal/orders/${order.id}/workflow/${stage.key}`}>Open {stage.label}</LinkButton>
+              </div>
             ))}
-          </ul>
+          </div>
         </Card>
       ) : null}
 
-      {currentPhase >= 1 && !terminated ? (
+      {configuredWorkflowStages.length === 0 && currentPhase >= 1 && !terminated ? (
         <Card className="mb-6 border-teal/30 bg-teal/5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div><h2 className="text-base font-semibold text-ink">Phase 2 materials</h2><p className="mt-1 text-sm text-body">Add documents and record an audio update requested during Phase 2.</p></div>

@@ -11,19 +11,26 @@ import { PageHeader } from "@/components/layout/PortalLayout";
 
 type Workflow = { id: number; name: string; description: string | null; stages: unknown[]; isDefault: boolean; active: boolean; createdAt: Date | string };
 
-type Stage = { key: string; label: string; order: number };
+type StageCapability = "documents" | "questions" | "recording";
+type Stage = { key: string; label: string; order: number; capabilities: StageCapability[] };
+const STAGE_CAPABILITIES: StageCapability[] = ["documents", "questions", "recording"];
+
+function normalizeCapabilities(value: string | undefined): StageCapability[] {
+  const requested = (value ?? "").split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
+  return STAGE_CAPABILITIES.filter((capability) => requested.includes(capability));
+}
 
 function stageLines(stages: unknown[]): string {
-  return (stages as Stage[]).map((stage) => `${stage.key} | ${stage.label}`).join("\n");
+  return (stages as Stage[]).map((stage) => `${stage.key} | ${stage.label} | ${(stage.capabilities?.length ? stage.capabilities : STAGE_CAPABILITIES).join(",")}`).join("\n");
 }
 
 function parseStages(value: string): Stage[] {
   const parsed = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line, index) => {
-    const [firstPart = "", ...labelParts] = line.split("|");
+    const [firstPart = "", labelPart = "", capabilityPart = ""] = line.split("|");
     const rawKey = firstPart;
-    const label = labelParts.join("|").trim() || rawKey.trim();
+    const label = labelPart.trim() || rawKey.trim();
     const key = rawKey.trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
-    return { key, label, order: index + 1 };
+    return { key, label, order: index + 1, capabilities: normalizeCapabilities(capabilityPart) };
   });
   return parsed.filter((stage) => stage.key && stage.label.length >= 2);
 }
@@ -46,7 +53,7 @@ export function AdminOrderWorkflowsPage() {
   });
 
   function create() {
-    setEditing(null); setName(""); setDescription(""); setStages("new | Payment confirmed\nphase_1_intake | Phase 1 intake\nphase_2_synthesis | Phase 2 synthesis\nphase_3_review | Phase 3 review\nphase_4_delivery | Phase 4 delivery\ndelivered | Delivered\nclosed | Closed"); setIsDefault(false); setActive(true); setOpen(true);
+    setEditing(null); setName(""); setDescription(""); setStages("new | Payment confirmed | questions\nphase_1_intake | Phase 1 intake | documents,questions,recording\nphase_2_synthesis | Phase 2 synthesis | documents,questions,recording\nphase_3_review | Phase 3 review | documents,questions\nphase_4_delivery | Phase 4 delivery | documents\ndelivered | Delivered | documents\nclosed | Closed |"); setIsDefault(false); setActive(true); setOpen(true);
   }
   function edit(workflow: Workflow) {
     setEditing(workflow); setName(workflow.name); setDescription(workflow.description ?? ""); setStages(stageLines(workflow.stages)); setIsDefault(workflow.isDefault); setActive(workflow.active); setOpen(true);
@@ -62,6 +69,8 @@ export function AdminOrderWorkflowsPage() {
   return <><PageHeader title="Order workflows" description="Create and manage the ordered stages used by administrators to organize individual orders." actions={<Button leadingIcon={<Plus className="size-4" />} onClick={create}>New workflow</Button>} />
     <Alert tone="info" className="mb-5">The standard workflow remains available. Custom workflows organize order stages and are assigned per order; existing status, payment, and automation safeguards remain enforced by the platform.</Alert>
     {workflows.isLoading ? <div className="space-y-3">{Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-16 w-full" />)}</div> : (workflows.data ?? []).length ? <DataTable caption="Order workflows" columns={columns} rows={(workflows.data ?? []) as Workflow[]} rowKey={(row) => row.id} /> : <EmptyState icon={ClipboardList} title="No workflows" description="Create a workflow before assigning one to an order." action={<Button onClick={create}>New workflow</Button>} />}
-    <Modal open={open} onClose={() => setOpen(false)} title={editing ? "Edit order workflow" : "New order workflow"} description="Enter one ordered stage per line as stage_key | Stage label." footer={<><Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button busy={save.isPending} disabled={name.trim().length < 2 || parsed.length === 0 || new Set(parsed.map((stage) => stage.key)).size !== parsed.length} leadingIcon={<Save className="size-4" />} onClick={() => save.mutate({ id: editing?.id, name: name.trim(), description: description.trim() || undefined, stages: parsed, isDefault, active })}>Save workflow</Button></>}><div className="space-y-4"><Input label="Workflow name" value={name} onChange={(event) => setName(event.target.value)} required /><Textarea label="Description" rows={3} value={description} onChange={(event) => setDescription(event.target.value)} /><Textarea label="Stages — one per line" help="Use a stable lowercase key, a vertical bar, and a readable label. For example: phase_2_synthesis | Phase 2 synthesis." rows={10} value={stages} onChange={(event) => setStages(event.target.value)} required /><Checkbox label="Use as the default workflow for new orders" checked={isDefault} onChange={(event) => setIsDefault(event.target.checked)} /><Checkbox label="Active and available for assignment" checked={active} onChange={(event) => setActive(event.target.checked)} /></div></Modal>
+    <Modal open={open} onClose={() => setOpen(false)} title={editing ? "Edit order workflow" : "New order workflow"} description="Enter one ordered stage per line as stage_key | Stage label | documents,questions,recording. Omit a capability to disable it for that phase."
+ footer={<><Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button busy={save.isPending} disabled={name.trim().length < 2 || parsed.length === 0 || new Set(parsed.map((stage) => stage.key)).size !== parsed.length} leadingIcon={<Save className="size-4" />} onClick={() => save.mutate({ id: editing?.id, name: name.trim(), description: description.trim() || undefined, stages: parsed, isDefault, active })}>Save workflow</Button></>}><div className="space-y-4"><Input label="Workflow name" value={name} onChange={(event) => setName(event.target.value)} required /><Textarea label="Description" rows={3} value={description} onChange={(event) => setDescription(event.target.value)} /><Textarea label="Stages — one per line" help="Use stage_key | readable label | comma-separated capabilities. Capabilities are documents, questions, and recording. Example: discovery | Discovery | documents,questions,recording."
+ rows={10} value={stages} onChange={(event) => setStages(event.target.value)} required /><Checkbox label="Use as the default workflow for new orders" checked={isDefault} onChange={(event) => setIsDefault(event.target.checked)} /><Checkbox label="Active and available for assignment" checked={active} onChange={(event) => setActive(event.target.checked)} /></div></Modal>
   </>;
 }

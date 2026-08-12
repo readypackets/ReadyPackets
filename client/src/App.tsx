@@ -60,6 +60,7 @@ import { NewOrderPage, OrdersListPage } from "@/pages/portal/Orders";
 import { OrderDetailPage } from "@/pages/portal/OrderDetail";
 import { IntakePage, MndaPage } from "@/pages/portal/Intake";
 import { Phase2ArtifactsPage } from "@/pages/portal/Phase2Artifacts";
+import { WorkflowStagePage } from "@/pages/portal/WorkflowStage";
 import { FilesPage } from "@/pages/portal/Files";
 import { NewTicketPage, TicketDetailPage, TicketsListPage } from "@/pages/portal/Tickets";
 import { CommunityPage, NewTopicPage, TopicDetailPage } from "@/pages/portal/Community";
@@ -301,6 +302,7 @@ function PortalRoutes() {
         <Route path="/portal/orders/:id" component={OrderDetailPage} />
         <Route path="/portal/orders/:id/intake" component={IntakePage} />
         <Route path="/portal/orders/:id/phase-2" component={Phase2ArtifactsPage} />
+        <Route path="/portal/orders/:id/workflow/:phaseKey" component={WorkflowStagePage} />
         <Route path="/portal/orders/:id/mnda" component={MndaPage} />
         {/* Backward-compatible alias for links issued before the route was renamed. */}
         <Route path="/portal/orders/:id/nda" component={MndaPage} />
