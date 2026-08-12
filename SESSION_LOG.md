@@ -1156,3 +1156,23 @@ Applied to production:
 ### Notes
 
 The first post-restart local health probe occurred during the service's normal several-second startup window and was retried after log confirmation. The service listener and both local/public readiness checks succeeded afterward. The `build:cli` alias is not present in the repository, so the documented separate `build:client` and `build:server` commands were used instead.
+
+
+## Continuation session — 2026-08-12: Modal input reliability and public-site enhancement roadmap
+
+### New requested roadmap items
+
+The customer added the following future work to the ReadyPackets enhancement roadmap:
+
+1. An administrator-managed FAQ system with per-item controls for publishing selected FAQs on the public website.
+2. A public-site accessibility program targeting WCAG 2.2 AA conformance, including keyboard, focus, semantic, form-label, contrast, and reduced-motion review.
+3. Public-site SEO, GEO, and AEO improvements, including canonical metadata, structured data, sitemap/robots review, answer-first content, and crawlable public pages.
+4. An administrative marketing system for campaign planning, public promotion content, channel-ready copy, and measurable campaign status tracking.
+
+### Reported security-modal defect and correction
+
+The customer reported that the **Block an address** form accepted one character, then moved the cursor out of the text field. Code review traced this to the shared modal focus-trap effect depending on the `onClose` callback. Pages commonly provide an inline callback, so each controlled-input change generated a new callback identity. React therefore cleaned up the open-modal effect on every keystroke, restoring focus to the original trigger and then reinitialising the dialog.
+
+The shared modal now keeps the latest close callback in a ref while the focus-trap effect depends only on its open state. This preserves correct Escape handling and focus restoration when the dialog closes, but prevents cleanup/remount behavior while a user types. The correction benefits every controlled form rendered inside the shared modal component, including the address block and allowlist forms.
+
+The change was type-checked successfully, built, and deployed to production. Browser verification reached the sign-in boundary because the sandbox session has no active administrator MFA session; no credential or MFA challenge was entered automatically. The deployed behavior is supported by the corrected focus lifecycle and successful production readiness check.
