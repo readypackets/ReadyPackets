@@ -1872,3 +1872,12 @@ Pending source-control publication after this entry.
 ### Publication outcome
 
 The final customer file-library scoping clarification and session record were published to the private `main` branch as `8460b73d2056af5df4a2c694b20a3b696b6623f3` (`fix: scope staff documents to customer order workspace`).
+
+
+## 2026-08-12 — Final Staff Document Order-Workspace Correction
+
+A final implementation review confirmed that excluding staff-published files from the portal-wide customer library must be paired with a customer-visible, order-specific location for those documents. The file router now joins the uploader role only within the authorized per-order listing and returns a safe `uploadedByStaff` boolean rather than exposing uploader identifiers or roles. The customer order workspace now displays a **Documents from your project team** panel for published staff/admin files, with scoped secure download controls. The portal-wide file library continues to contain customer-uploaded files only. Thus, administrator-submitted documents are neither exposed in the general library nor omitted from the customer experience: they appear only in their intended order workspace.
+
+TypeScript passed, all 150 automated tests passed, production client/server builds passed, the corrected server/client artifacts were deployed with timestamped rollback copies, and the production health endpoint returned `{"status":"ok"}`.
+
+Pending source-control publication after this entry.

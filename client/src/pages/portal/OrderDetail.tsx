@@ -61,6 +61,7 @@ export function OrderDetailPage() {
   );
   const mnda = trpc.intake.mndaStatus.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
   const intake = trpc.intake.get.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
+  const orderFiles = trpc.files.listForOrder.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
   const shares = trpc.orders.shares.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
   const workspaces = trpc.orders.workspaces.useQuery();
   const paymentStatus = trpc.stripe.paymentStatus.useQuery(
@@ -177,6 +178,7 @@ export function OrderDetailPage() {
   const intakeStatus = intake.data?.status ?? "draft";
   const needsIntake = intakeStatus !== "submitted";
   const canCancel = !terminated && order.status !== "closed" && order.status !== "delivered";
+  const teamDocuments = (orderFiles.data ?? []).filter((file) => file.visibleToCustomer && file.uploadedByStaff);
 
   return (
     <>
@@ -268,6 +270,20 @@ export function OrderDetailPage() {
                 {openQuestions.length === 1 ? "question" : "questions"} from the project team, below.
               </li>
             ) : null}
+          </ul>
+        </Card>
+      ) : null}
+
+      {teamDocuments.length > 0 ? (
+        <Card className="mb-6 border-teal/30 bg-teal/5">
+          <CardHeader title="Documents from your project team" description="Documents published for this specific order. They are available only in this order workspace." />
+          <ul className="mt-4 space-y-2">
+            {teamDocuments.map((file) => (
+              <li key={file.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-white px-3 py-2.5">
+                <div className="min-w-0"><p className="truncate text-sm font-medium text-ink">{file.originalName}</p><p className="mt-0.5 text-xs text-muted">{formatBytes(file.sizeBytes)} · {formatDate(file.createdAt)}</p></div>
+                <Button size="sm" variant="outline" busy={downloading === file.id} onClick={() => { setDownloading(file.id); requestDownload.mutate({ fileId: file.id }); }} leadingIcon={<Download className="size-3.5" aria-hidden="true" />}>Download</Button>
+              </li>
+            ))}
           </ul>
         </Card>
       ) : null}

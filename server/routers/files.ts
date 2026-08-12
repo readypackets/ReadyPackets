@@ -11,7 +11,7 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
-import { fileAccessLog, files, orders, intakeSubmissions } from "../db/schema.js";
+import { fileAccessLog, files, orders, intakeSubmissions, users } from "../db/schema.js";
 import { recordSecurityEvent, recordActivity } from "../observability/audit.js";
 import { OrderStateError, assertOrderAccess } from "../services/orders.js";
 import { allowedExtensions } from "../services/storage.js";
@@ -200,7 +200,7 @@ export const filesRouter = router({
       const conditions = [eq(files.orderId, input.orderId), isNull(files.deletedAt)];
       if (!isStaff) conditions.push(eq(files.visibleToCustomer, true));
 
-      return db
+      const rows = await db
         .select({
           id: files.id,
           originalName: files.originalName,
@@ -208,15 +208,21 @@ export const filesRouter = router({
           sizeBytes: files.sizeBytes,
           category: files.category,
           phase: files.phase,
-          uploadedByUserId: files.uploadedByUserId,
           visibleToCustomer: files.visibleToCustomer,
           isPlaceholder: files.isPlaceholder,
           version: files.version,
           createdAt: files.createdAt,
+          uploaderRole: users.role,
         })
         .from(files)
+        .leftJoin(users, eq(files.uploadedByUserId, users.id))
         .where(and(...conditions))
         .orderBy(desc(files.createdAt));
+
+      return rows.map(({ uploaderRole, ...row }) => ({
+        ...row,
+        uploadedByStaff: uploaderRole === "admin" || uploaderRole === "staff",
+      }));
     }),
 
   delete: protectedProcedure
