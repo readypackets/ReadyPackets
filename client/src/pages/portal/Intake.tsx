@@ -58,9 +58,23 @@ export function IntakePage() {
   const [recording, setRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [microphonePromptOpen, setMicrophonePromptOpen] = useState(false);
+  const [microphonePermission, setMicrophonePermission] = useState<PermissionState | "unknown">("unknown");
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const audioChunks = useRef<Blob[]>([]);
   const recordingInterval = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    let permissionStatus: PermissionStatus | undefined;
+    let cancelled = false;
+    if (!navigator.permissions?.query) return;
+    void navigator.permissions.query({ name: "microphone" as PermissionName }).then((status) => {
+      if (cancelled) return;
+      permissionStatus = status;
+      setMicrophonePermission(status.state);
+      status.onchange = () => setMicrophonePermission(status.state);
+    }).catch(() => setMicrophonePermission("unknown"));
+    return () => { cancelled = true; if (permissionStatus) permissionStatus.onchange = null; };
+  }, []);
 
   // Hydrate the form once from the saved draft.
   useEffect(() => {
@@ -183,6 +197,18 @@ export function IntakePage() {
   const requestMicrophone = () => {
     setMicrophonePromptOpen(false);
     void startRecording();
+  };
+
+  const beginPitchRecording = () => {
+    if (microphonePermission === "granted") {
+      void startRecording();
+      return;
+    }
+    if (microphonePermission === "denied") {
+      toast.error("Microphone is blocked", "Allow microphone access for myportal.readypackets.com in your browser site settings, then try again.");
+      return;
+    }
+    setMicrophonePromptOpen(true);
   };
 
   const startRecording = async () => {
@@ -483,14 +509,14 @@ export function IntakePage() {
               <p className="text-sm font-medium text-ink">Business Pitch Idea</p>
               <p className="mt-1 text-xs text-muted">Record directly from your microphone in WebM format. Up to {limits?.maxPitchRecordings ?? 1} recording{(limits?.maxPitchRecordings ?? 1) === 1 ? "" : "s"}, maximum {Math.ceil((limits?.maxPitchLengthSeconds ?? 300) / 60)} minutes each.</p>
               {!readOnly && pitches.length < (limits?.maxPitchRecordings ?? 1) ? (
-                <div className="mt-3 flex items-center gap-2"><Button variant={recording ? "danger" : "primary"} onClick={() => recording ? stopRecording() : setMicrophonePromptOpen(true)} disabled={uploading}>{recording ? `Stop recording (${recordingTime}s)` : "Record Business Pitch Idea"}</Button></div>
+                <div className="mt-3 flex items-center gap-2"><Button variant={recording ? "danger" : "primary"} onClick={() => recording ? stopRecording() : beginPitchRecording()} disabled={uploading}>{recording ? `Stop recording (${recordingTime}s)` : "Record Business Pitch Idea"}</Button></div>
               ) : null}
               <ul className="mt-3 space-y-2 text-sm">{pitches.map((file) => <li key={file.id} className="flex items-center justify-between gap-2 rounded border border-line px-3 py-2"><span className="truncate">{file.originalName} <Badge tone="teal">WebM recording</Badge></span>{!readOnly && <Button size="sm" variant="ghost" onClick={() => deleteFileMut.mutate({ fileId: file.id })}>Remove</Button>}</li>)}</ul>
             </div>
           </div>
         </Card>
 
-        <Modal open={microphonePromptOpen} onClose={() => setMicrophonePromptOpen(false)} title="Allow microphone access" description="ReadyPackets needs microphone access only while you record this Business Pitch Idea. Your browser will show its own permission prompt next."><div className="space-y-4"><Alert tone="info">Select <strong>Allow microphone</strong> in the browser prompt. The recording stays in your browser until you stop it, then it is uploaded as a WebM recording for this order.</Alert><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setMicrophonePromptOpen(false)}>Cancel</Button><Button onClick={requestMicrophone}>Allow microphone and record</Button></div></div></Modal>
+        <Modal open={microphonePromptOpen} onClose={() => setMicrophonePromptOpen(false)} title="Allow microphone access" description="ReadyPackets needs microphone access only while you record this Business Pitch Idea. Your browser will show its own permission prompt next. This step is skipped automatically once access is already granted."><div className="space-y-4"><Alert tone="info">Select <strong>Allow microphone</strong> in the browser prompt. The recording stays in your browser until you stop it, then it is uploaded as a WebM recording for this order.</Alert><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setMicrophonePromptOpen(false)}>Cancel</Button><Button onClick={requestMicrophone}>Allow microphone and record</Button></div></div></Modal>
 
         <Card id="intake-desiredOutcomes" className="hidden">
           <CardHeader

@@ -1813,3 +1813,12 @@ Pending source-control publication after this entry.
 ### Publication outcome
 
 The microphone diagnostic repair and this session record were published to the private `main` branch as `d89d47378d0a717664e4f4bb3f2bb956957977ef` (`fix: clarify business pitch microphone startup failures`).
+
+
+## 2026-08-12 — Granted-Microphone Permission Refinement
+
+A follow-up customer report clarified that the browser had already granted microphone permission but the Business Pitch flow still appeared to ask for it. The recording page now reads the browser Permissions API state when available and tracks changes. When the state is `granted`, clicking **Record Business Pitch Idea** starts recording directly without showing the ReadyPackets explanatory permission dialog again. When the state is `prompt` or unavailable, the customer receives the explanatory dialog and then the browser’s native prompt. When the state is `denied`, the portal immediately provides browser-site-settings recovery instructions instead of presenting a non-actionable repeat prompt.
+
+This refinement preserves the browser’s authority over actual microphone permission while preventing redundant application-level prompts after approval. TypeScript validation and the full 150-test suite passed, the production client build passed, the client assets were deployed with a timestamped rollback copy, and the six-second post-restart production health check returned `{"status":"ok"}`.
+
+Pending source-control publication after this entry.
