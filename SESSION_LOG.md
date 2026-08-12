@@ -1855,3 +1855,8 @@ Administrators requested configurable payment requirements and pricing when crea
 - The post-restart production health endpoint returned `{"status":"ok"}`.
 
 Pending source-control publication after this entry.
+
+
+### Publication outcome
+
+The administrator payment controls, test-order safeguards, Business Pitch status indicators, order-scoped document visibility changes, migration, and session record were published to the private `main` branch as `8773f8c0057bd54a690dde1f4e0f1991e21abb3a` (`feat: add administrator payment and test order controls`).
