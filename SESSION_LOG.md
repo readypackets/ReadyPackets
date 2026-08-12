@@ -1258,3 +1258,20 @@ Stripe represents discounts only as percentage or amount-off coupons. For a fixe
 ### Validation and deployment
 
 No database migration was required because the existing coupon method storage is a varchar field. TypeScript passed with zero errors, all 143 tests passed, the production service returned ready after deployment, and the live security verification suite passed 46/46 checks.
+
+
+## 2026-08-12 — Coupon Deletion Controls
+
+### User request
+
+The user reported that the Finance → Coupons table exposed editing and enable/disable actions but no deletion option for old coupons.
+
+### Implemented behavior
+
+Both coupon administration surfaces now expose a **Delete** action for coupons that are already inactive and have zero redemptions. Selecting Delete opens an explicit irreversible confirmation dialog. The server repeats all protections: the caller must be an administrator, the coupon must exist, it must be inactive, and its redemption count must be zero.
+
+Coupons with a redemption history are retained rather than deleted. The interface labels those inactive records **Retained**, and the server rejects deletion so financial history remains auditable. Active coupons must first be disabled; this adds a deliberate pause before a permanent removal. Successful deletion writes a warning-level administrative activity record with coupon ID and code, without adding sensitive information to audit logs.
+
+### Validation and deployment
+
+TypeScript completed with zero errors, all 143 tests passed, the production service returned ready after deployment, and the live security verification suite passed 46/46 checks.

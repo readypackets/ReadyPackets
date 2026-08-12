@@ -31,6 +31,7 @@ import { siteSettings } from "../db/schema.js";
 import { protectedProcedure, adminProcedure, staffProcedure, router } from "../trpc/trpc.js";
 import { getUserById } from "../db/users.js";
 import { TRPCError } from "@trpc/server";
+import { recordActivity } from "../observability/audit.js";
 
 const couponInput = z
   .object({
@@ -259,6 +260,42 @@ export const stripeRouter = router({
     .input(z.object({ id: z.number().int().positive(), active: z.boolean() }))
     .mutation(async ({ input }) => {
       await db.update(coupons).set({ active: input.active }).where(eq(coupons.id, input.id));
+    }),
+
+  // -------------------------------------------------------------------------
+  // Admin: permanently delete an unused, inactive coupon
+  // -------------------------------------------------------------------------
+  deleteCoupon: adminProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      const rows = await db
+        .select({ id: coupons.id, code: coupons.code, active: coupons.active, redemptionCount: coupons.redemptionCount })
+        .from(coupons)
+        .where(eq(coupons.id, input.id))
+        .limit(1);
+      const coupon = rows[0];
+      if (!coupon) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Coupon not found." });
+      }
+      if (coupon.active) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Disable this coupon before deleting it." });
+      }
+      if (coupon.redemptionCount > 0) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Coupons with redemption history are retained for audit purposes and cannot be deleted." });
+      }
+
+      await db.delete(coupons).where(eq(coupons.id, coupon.id));
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: "admin",
+        action: "coupon.deleted",
+        entityType: "coupon",
+        entityId: coupon.id,
+        severity: "warning",
+        summary: `Permanently deleted unused coupon ${coupon.code}`,
+        ipAddress: ctx.clientIp,
+      });
+      return { deleted: true };
     }),
 
   // -------------------------------------------------------------------------

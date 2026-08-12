@@ -45,6 +45,7 @@ export function AdminCouponsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState({ ...emptyForm });
   const [deactivateId, setDeactivateId] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState<CouponRow | null>(null);
 
   const list = trpc.stripe.coupons.useQuery();
   const upsertMut = trpc.stripe.upsertCoupon.useMutation({
@@ -66,6 +67,16 @@ export function AdminCouponsPage() {
     },
     onError(error) {
       toast.error("Could not deactivate coupon", errorMessage(error));
+    },
+  });
+  const deleteMut = trpc.stripe.deleteCoupon.useMutation({
+    async onSuccess() {
+      toast.success("Coupon deleted");
+      setDeleting(null);
+      await utils.stripe.coupons.invalidate();
+    },
+    onError(error) {
+      toast.error("Could not delete coupon", errorMessage(error));
     },
   });
 
@@ -180,7 +191,13 @@ export function AdminCouponsPage() {
             >
               Deactivate
             </Button>
-          ) : null}
+          ) : row.redemptionCount === 0 ? (
+            <Button variant="link" size="sm" className="text-danger" onClick={() => setDeleting(row)}>
+              Delete
+            </Button>
+          ) : (
+            <span className="text-xs text-muted" title="Coupons with redemption history are retained for audit purposes">Retained</span>
+          )}
         </div>
       ),
     },
@@ -282,6 +299,20 @@ export function AdminCouponsPage() {
         confirmLabel="Deactivate"
         variant="danger"
         busy={deactivateMut.isPending}
+      />
+
+      <ConfirmDialog
+        open={deleting !== null}
+        onClose={() => setDeleting(null)}
+        onConfirm={() => {
+          if (deleting) deleteMut.mutate({ id: deleting.id });
+        }}
+        title="Delete coupon permanently?"
+        message={`Delete ${deleting?.code ?? "this coupon"}? This cannot be undone. Only inactive coupons with no redemption history can be deleted.`}
+        confirmLabel="Delete coupon"
+        cancelLabel="Keep coupon"
+        variant="danger"
+        busy={deleteMut.isPending}
       />
 
       <PageHeader

@@ -10,7 +10,7 @@ import { Card } from "../../components/ui/Surface";
 import { Button } from "../../components/ui/Button";
 import { FieldShell as Field, Input, Select } from "../../components/ui/Field";
 import { Tabs } from "../../components/ui/DataDisplay";
-import { Modal } from "../../components/ui/Modal";
+import { ConfirmDialog, Modal } from "../../components/ui/Modal";
 import { useToast } from "../../components/ui/Toast";
 import { formatCents } from "@shared/domain";
 
@@ -240,8 +240,17 @@ function CouponsTab() {
   const upsert = trpc.stripe.upsertCoupon.useMutation({ onSuccess: () => { refetch(); setOpen(false); } });
   const setActive = trpc.stripe.setCouponActive.useMutation({ onSuccess: () => refetch() });
   const toast = useToast();
+  const deleteCoupon = trpc.stripe.deleteCoupon.useMutation({
+    onSuccess: () => {
+      void refetch();
+      setDeleting(null);
+      toast.success("Coupon deleted.");
+    },
+    onError: (error) => toast.error("Could not delete coupon.", error.message),
+  });
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<NonNullable<typeof data>[0] | null>(null);
+  const [deleting, setDeleting] = useState<{ id: number; code: string } | null>(null);
   const [form, setForm] = useState({
     code: "", description: "", discountType: "percent" as "percent" | "fixed" | "cart_price",
     discountValue: 10, maxRedemptions: "", expiresAt: "", active: true,
@@ -328,6 +337,16 @@ function CouponsTab() {
                   >
                     {c.active ? "Disable" : "Enable"}
                   </button>
+                  {!c.active && c.redemptionCount === 0 ? (
+                    <button
+                      onClick={() => setDeleting({ id: c.id, code: c.code })}
+                      className="text-red-600 text-xs hover:underline"
+                    >
+                      Delete
+                    </button>
+                  ) : !c.active ? (
+                    <span className="text-xs text-gray-400" title="Coupons with redemption history are retained for audit purposes">Retained</span>
+                  ) : null}
                 </td>
               </tr>
             ))}
@@ -376,6 +395,18 @@ function CouponsTab() {
           <Button onClick={save} busy={upsert.isPending}>Save</Button>
         </div>
       </Modal>
+
+      <ConfirmDialog
+        open={Boolean(deleting)}
+        onClose={() => setDeleting(null)}
+        onConfirm={() => deleteCoupon.mutate({ id: deleting!.id })}
+        title="Delete coupon permanently?"
+        message={`Delete ${deleting?.code ?? "this coupon"}? This cannot be undone. Only inactive coupons with no redemption history can be deleted.`}
+        confirmLabel="Delete coupon"
+        cancelLabel="Keep coupon"
+        variant="danger"
+        busy={deleteCoupon.isPending}
+      />
     </div>
   );
 }
