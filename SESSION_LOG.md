@@ -1792,3 +1792,8 @@ Customers need to reload once to receive the corrected upload header code. After
 ### Source-control publication
 
 Pending commit and GitHub publication after this log entry.
+
+
+### Publication outcome
+
+The combined release was committed and published to the private `main` branch as `317f08772920ac445d917f08e249ad2fb43c7a1d` (`feat: policy ledger, phase artifacts, custom order workflows`). The working tree was confirmed clean before this closing publication note.
