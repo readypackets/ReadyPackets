@@ -61,6 +61,8 @@ function CreateOrderModal({ open, onClose }: { open: boolean; onClose: () => voi
   const [releaseStatus, setReleaseStatus] = useState("");
   const [orderScopeMode, setOrderScopeMode] = useState("");
   const [bundleScopeManifest, setBundleScopeManifest] = useState("");
+  const [paymentRequirement, setPaymentRequirement] = useState<"required" | "waived" | "test">("required");
+  const [manualPrice, setManualPrice] = useState("");
   const [selectedProducts, setSelectedProducts] = useState<number[]>([]);
 
   const customers = trpc.admin.customers.useQuery(
@@ -77,6 +79,8 @@ function CreateOrderModal({ open, onClose }: { open: boolean; onClose: () => voi
       setUserId("");
       setCustomerSearch("");
       setProjectName("");
+      setPaymentRequirement("required");
+      setManualPrice("");
       setSelectedProducts([]);
     },
     onError(error) {
@@ -94,6 +98,12 @@ function CreateOrderModal({ open, onClose }: { open: boolean; onClose: () => voi
 
   function handleSubmit() {
     if (!userId || selectedProducts.length === 0) return;
+    const normalizedPrice = manualPrice.trim();
+    const manualPriceCents: number | undefined = normalizedPrice ? Math.round(Number(normalizedPrice) * 100) : undefined;
+    if (manualPriceCents !== undefined && (!Number.isFinite(manualPriceCents) || manualPriceCents < 0 || manualPriceCents > 100_000_000)) {
+      toast.error("Invalid administrator price", "Enter a price between $0.00 and $1,000,000.00.");
+      return;
+    }
     createMut.mutate({
       userId: Number(userId),
       selections: selectedProducts.map((productId) => ({ productId, quantity: 1 })),
@@ -103,6 +113,8 @@ function CreateOrderModal({ open, onClose }: { open: boolean; onClose: () => voi
       releaseStatus: releaseStatus.trim() || undefined,
       orderScopeMode: orderScopeMode.trim() || undefined,
       bundleScopeManifest: bundleScopeManifest.trim() || undefined,
+      paymentRequirement,
+      manualPriceCents,
     });
   }
 
@@ -140,6 +152,32 @@ function CreateOrderModal({ open, onClose }: { open: boolean; onClose: () => voi
           value={projectName}
           onChange={(e) => setProjectName(e.target.value)}
         />
+        <div className="grid gap-4 rounded-xl border border-line bg-surface-soft p-4 md:grid-cols-2">
+          <Select
+            label="Payment requirement"
+            value={paymentRequirement}
+            onChange={(event) => setPaymentRequirement(event.target.value as "required" | "waived" | "test")}
+            options={[
+              { value: "required", label: "Require verified Stripe payment" },
+              { value: "waived", label: "No payment required — administrator waiver" },
+              { value: "test", label: "Test order — no payment or external automations" },
+            ]}
+            help="Only a verified Stripe webhook activates required-payment orders. Waived and test orders are marked paid by the administrator-created order policy."
+          />
+          <Input
+            label="Administrator price (USD)"
+            type="number"
+            min="0"
+            max="1000000"
+            step="0.01"
+            placeholder="Use packet pricing when blank"
+            value={manualPrice}
+            onChange={(event) => setManualPrice(event.target.value)}
+            help="Optional fixed total. When payment is required, Stripe charges this exact amount instead of the packet-price total."
+          />
+          {paymentRequirement === "test" ? <Alert tone="warning" className="md:col-span-2">Test orders are usable without payment, but never create Stripe charges, SharePoint folders, or payment/order automation messages.</Alert> : null}
+          {paymentRequirement === "waived" ? <Alert tone="warning" className="md:col-span-2">This creates an auditable administrator payment waiver and immediately activates the order without Stripe checkout.</Alert> : null}
+        </div>
         <div className="border-t border-line pt-4 mt-2">
           <p className="mb-3 text-sm font-semibold text-ink">Webhook payload fields</p>
           <div className="grid grid-cols-2 gap-4">
@@ -848,6 +886,7 @@ export function AdminOrderDetailPage() {
   }
 
   const { order, customer, notes, questions, attachments, intakeSubmission } = detail.data;
+  const businessPitchSubmitted = attachments.some((file) => file.category === "intake_attachment" && (file.detectedMime?.startsWith("audio/") || ["webm", "wav", "mp3", "m4a", "ogg"].includes((file.extension ?? "").toLowerCase())));
   const allowedNext = ORDER_TRANSITIONS[order.status as keyof typeof ORDER_TRANSITIONS] ?? [];
 
   return (
@@ -877,6 +916,8 @@ export function AdminOrderDetailPage() {
           {PAYMENT_LABELS[order.paymentStatus] ?? order.paymentStatus}
         </Badge>
         {order.bundleApplied ? <Badge tone="gold">All-In bundle</Badge> : null}
+        {order.isTestOrder ? <Badge tone="warning">Test order</Badge> : null}
+        {businessPitchSubmitted ? <Badge tone="success">Business Pitch submitted</Badge> : <Badge tone="neutral">No Business Pitch submitted</Badge>}
         <span className="text-sm font-semibold tabular-nums text-ink">
           {formatMoney(order.totalCents)}
         </span>
@@ -1134,6 +1175,7 @@ export function AdminOrderDetailPage() {
                       {outcome}
                     </Badge>
                   ))}
+                  {businessPitchSubmitted ? <Badge tone="success">Business Pitch submitted</Badge> : <Badge tone="neutral">No Business Pitch submitted</Badge>}
                   {intakeSubmission.integrityChoice ? (
                     <Badge tone="gold">
                       {INTEGRITY_CHOICE_LABELS[

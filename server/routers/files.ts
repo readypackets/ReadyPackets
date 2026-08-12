@@ -170,6 +170,7 @@ export const filesRouter = router({
         and(
           inArray(files.orderId, orderIds),
           eq(files.visibleToCustomer, true),
+          eq(files.uploadedByUserId, ctx.session.user.id),
           eq(files.isPlaceholder, false),
           isNull(files.deletedAt),
         ),
@@ -206,6 +207,8 @@ export const filesRouter = router({
           extension: files.extension,
           sizeBytes: files.sizeBytes,
           category: files.category,
+          phase: files.phase,
+          uploadedByUserId: files.uploadedByUserId,
           visibleToCustomer: files.visibleToCustomer,
           isPlaceholder: files.isPlaceholder,
           version: files.version,

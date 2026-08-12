@@ -129,11 +129,24 @@ export const stripeRouter = router({
           message: "This order has already been paid.",
         });
       }
+      if (order.paymentRequirement !== "required" || order.isTestOrder) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "This administrator-created order does not require online payment.",
+        });
+      }
 
       if (order.paymentStatus === "processing") {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
           message: "A checkout session is already in progress for this order.",
+        });
+      }
+
+      if (order.priceSource === "admin_manual" && input.couponCode) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "A coupon cannot be applied because this order uses an administrator-set fixed price.",
         });
       }
 
@@ -150,11 +163,13 @@ export const stripeRouter = router({
         });
       }
 
-      const lineItems = items.map((item) => ({
-        name: item.name,
-        amountCents: item.unitPriceCents,
-        quantity: item.quantity,
-      }));
+      const lineItems = order.priceSource === "admin_manual"
+        ? [{ name: `Administrator-set price — Order ${order.orderNumber}`, amountCents: order.totalCents, quantity: 1 }]
+        : items.map((item) => ({
+            name: item.name,
+            amountCents: item.unitPriceCents,
+            quantity: item.quantity,
+          }));
 
       const result = await createCheckoutSession({
         orderId: order.id,

@@ -40,7 +40,7 @@ export function IntakePage() {
   const outcomes = trpc.intake.outcomes.useQuery();
   const existing = trpc.intake.get.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
     const mnda = trpc.intake.mndaStatus.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
-  const orderFiles = trpc.files.listForUser.useQuery(undefined, { enabled: Number.isFinite(orderId) });
+  const orderFiles = trpc.files.listForOrder.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [projectName, setProjectName] = useState("");
   const [desiredOutcomes, setDesiredOutcomes] = useState<string[]>([]);
@@ -275,7 +275,7 @@ export function IntakePage() {
     if (recordingInterval.current) clearInterval(recordingInterval.current);
   };
 
-  const files = orderFiles.data?.filter(f => f.orderId === orderId && f.category === "intake_attachment") ?? [];
+  const files = orderFiles.data?.filter(f => f.category === "intake_attachment") ?? [];
   // listForUser doesn't return detectedMime, so we infer from extension
   const isAudio = (f: any) => f.extension && ["mp3", "wav", "webm", "ogg", "m4a", "aac", "flac"].includes(f.extension.toLowerCase());
   const documents = files.filter(f => !isAudio(f));

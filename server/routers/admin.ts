@@ -244,7 +244,7 @@ export const adminRouter = router({
     }),
 
   /** Create an order on behalf of a customer (admin/staff initiated). */
-  createOrderForCustomer: staffProcedure
+  createOrderForCustomer: adminProcedure
     .input(
       z.object({
         userId: z.number().int().positive(),
@@ -258,6 +258,8 @@ export const adminRouter = router({
         releaseStatus: z.string().trim().max(128).optional(),
         orderScopeMode: z.string().trim().max(64).optional(),
         bundleScopeManifest: z.string().max(10000).optional(),
+        paymentRequirement: z.enum(["required", "waived", "test"]).default("required"),
+        manualPriceCents: z.number().int().min(0).max(100_000_000).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -272,6 +274,8 @@ export const adminRouter = router({
           releaseStatus: input.releaseStatus ?? null,
           orderScopeMode: input.orderScopeMode ?? null,
           bundleScopeManifest: input.bundleScopeManifest ?? null,
+          paymentRequirement: input.paymentRequirement,
+          manualPriceCents: input.manualPriceCents ?? null,
           actorUserId: ctx.session.user.id,
           actorRole: ctx.session.user.role,
           ipAddress: ctx.clientIp,
@@ -282,7 +286,7 @@ export const adminRouter = router({
           action: "order.admin_created",
           entityType: "order",
           entityId: result.orderId,
-          summary: `Admin created order ${result.orderNumber} for user ${input.userId}`,
+          summary: `Admin created ${input.paymentRequirement === "test" ? "test " : ""}order ${result.orderNumber} for user ${input.userId}`,
           ipAddress: ctx.clientIp,
         });
         return result;

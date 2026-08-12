@@ -1827,3 +1827,31 @@ Pending source-control publication after this entry.
 ### Publication outcome
 
 The granted-permission microphone refinement and session record were published to the private `main` branch as `d67b9dc63575caf5f3d9f2d6474b05ad4fa90c0b` (`fix: skip redundant microphone prompt after permission grant`).
+
+
+## 2026-08-12 — Administrator Order Controls and Customer Document Scoping Release
+
+### Requests completed
+
+Administrators requested configurable payment requirements and pricing when creating orders, the ability to create no-payment test orders, an administrator-visible Business Pitch submission indicator, and assurance that documents submitted by staff to a customer are available only in the intended customer order workspace.
+
+### Delivered controls
+
+- Added migration `0025_admin_order_controls.sql` and typed `orders` fields for `payment_requirement`, `price_source`, `manual_price_cents`, and `is_test_order`. Existing orders retain catalog pricing and the normal required-payment policy.
+- **Administration → Orders → Create order for customer** now offers three explicit payment policies: **Require verified Stripe payment**, **No payment required — administrator waiver**, and **Test order — no payment or external automations**.
+- Administrators may enter an optional fixed total price from $0.00 to $1,000,000.00. For required-payment orders, Stripe charges a single administrator-set fixed-price line item. Coupon codes are rejected for a fixed-price order so the approved administrator price remains exact.
+- Required-payment orders remain inaccessible until a signed Stripe confirmation activates them. Waived orders activate immediately with an auditable administrator payment-waiver source. Test orders activate without Stripe and deliberately skip SharePoint provisioning, payment/order emails, and order automation to avoid external side effects during testing.
+- Restricted `createOrderForCustomer` to administrator authorization. This prevents staff from creating payment-waived or test orders.
+- The administrator order header and Phase I intake tab now display **Business Pitch submitted** or **No Business Pitch submitted**, derived from actual stored audio/WebM intake attachments.
+- The customer portal-wide **My Business Packets** file library now lists only customer-uploaded files. Staff-published documents no longer appear in the portal-wide library; they remain accessible to the authorized customer only inside the correct order workspace through the per-order file query. Phase I intake and Phase 2 materials now use that per-order query, so visible staff documents remain available in their intended order context.
+
+### Validation and deployment
+
+- Applied production migration `0025_admin_order_controls.sql`.
+- TypeScript validation passed with 0 errors.
+- `pnpm test` passed: 150 tests.
+- Production client and server builds passed.
+- The release was deployed with timestamped server/client rollback copies.
+- The post-restart production health endpoint returned `{"status":"ok"}`.
+
+Pending source-control publication after this entry.

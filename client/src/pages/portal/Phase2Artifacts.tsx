@@ -18,7 +18,7 @@ export function Phase2ArtifactsPage() {
   const toast = useToast();
   const utils = trpc.useUtils();
   const detail = trpc.orders.detail.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
-  const filesQuery = trpc.files.listForUser.useQuery(undefined, { enabled: Number.isFinite(orderId) });
+  const filesQuery = trpc.files.listForOrder.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
   const fileInput = useRef<HTMLInputElement>(null);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const audioChunks = useRef<Blob[]>([]);
@@ -34,7 +34,7 @@ export function Phase2ArtifactsPage() {
   });
 
   const phase2Ready = Boolean(detail.data && PHASE_2_STATUSES.has(detail.data.order.status));
-  const phaseFiles = (filesQuery.data ?? []).filter((file) => file.orderId === orderId && file.phase === "phase_2");
+  const phaseFiles = (filesQuery.data ?? []).filter((file) => file.phase === "phase_2");
   const audioFiles = phaseFiles.filter((file) => ["webm", "wav", "mp3", "m4a", "ogg"].includes((file.extension ?? "").toLowerCase()));
   const documentFiles = phaseFiles.filter((file) => !audioFiles.includes(file));
 

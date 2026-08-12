@@ -47,12 +47,14 @@ export interface CreateOrderInput {
   releaseStatus?: string | null;
   orderScopeMode?: string | null;
   bundleScopeManifest?: string | null;
+  paymentRequirement?: "required" | "waived" | "test";
+  manualPriceCents?: number | null;
   actorUserId: number;
   actorRole: string;
   ipAddress?: string | null;
 }
 
-export async function activatePaidOrder(orderId: number): Promise<void> {
+export async function activatePaidOrder(orderId: number, activationSource: "stripe" | "admin_waiver" | "test" = "stripe"): Promise<void> {
   const rows = await db
     .select({ id: orders.id, userId: orders.userId, orderNumber: orders.orderNumber, paymentStatus: orders.paymentStatus })
     .from(orders)
@@ -61,22 +63,26 @@ export async function activatePaidOrder(orderId: number): Promise<void> {
   const order = rows[0];
   if (!order || order.paymentStatus !== "paid") return;
 
-  void queueFullOrderFolderProvisioning(orderId).catch((error) =>
-    logger.warn("sharepoint.full_order_provisioning.queue_failed", { orderId, error: String(error) }),
-  );
-  void fireAutomations("order.created", { userId: order.userId });
-  void fireAutomations("payment.succeeded", { userId: order.userId });
-  void applyOrderAutomationRules(orderId, "payment_status", "paid").catch((error) =>
-    logger.warn("order.payment_activation.automation_failed", { orderId, error: String(error) }),
-  );
+  // Test orders are intentionally usable without creating external side effects.
+  // They never provision SharePoint or send payment/order automation messages.
+  if (activationSource !== "test") {
+    void queueFullOrderFolderProvisioning(orderId).catch((error) =>
+      logger.warn("sharepoint.full_order_provisioning.queue_failed", { orderId, error: String(error) }),
+    );
+    void fireAutomations("order.created", { userId: order.userId });
+    void fireAutomations("payment.succeeded", { userId: order.userId });
+    void applyOrderAutomationRules(orderId, "payment_status", "paid").catch((error) =>
+      logger.warn("order.payment_activation.automation_failed", { orderId, error: String(error) }),
+    );
+  }
   void recordActivity({
     actorUserId: null,
     actorRole: "system",
     action: "order.activated_after_payment",
     entityType: "order",
     entityId: orderId,
-    summary: `Order ${order.orderNumber} activated after Stripe-confirmed payment`,
-    changes: { paymentStatus: "paid" },
+    summary: `Order ${order.orderNumber} activated after ${activationSource === "stripe" ? "Stripe-confirmed payment" : activationSource === "test" ? "administrator test-order approval" : "administrator payment waiver"}`,
+    changes: { paymentStatus: "paid", activationSource },
   });
 }
 
@@ -86,6 +92,11 @@ export async function createOrder(input: CreateOrderInput) {
   }
 
   const quote = await priceSelection(input.selections);
+  const paymentRequirement = input.paymentRequirement ?? "required";
+  const manualPriceCents = input.manualPriceCents ?? null;
+  if (manualPriceCents !== null && (!Number.isInteger(manualPriceCents) || manualPriceCents < 0 || manualPriceCents > 100_000_000)) {
+    throw new OrderStateError("The administrator price must be a whole number of cents between $0.00 and $1,000,000.00.");
+  }
   if (quote.lines.length === 0) {
     throw new OrderStateError("None of the selected packets are currently available.");
   }
@@ -108,10 +119,14 @@ export async function createOrder(input: CreateOrderInput) {
     userId: input.userId,
     projectNameEnc: encryptField(input.projectName ?? null, "order:pending"),
     status: "new",
-    paymentStatus: quote.requiresCustomQuote ? "awaiting_invoice" : "unpaid",
-    subtotalCents: quote.subtotalCents,
-    discountCents: quote.discountCents,
-    totalCents: quote.totalCents,
+    paymentStatus: paymentRequirement === "required" ? (quote.requiresCustomQuote ? "awaiting_invoice" : "unpaid") : "paid",
+    paymentRequirement,
+    subtotalCents: manualPriceCents ?? quote.subtotalCents,
+    discountCents: manualPriceCents === null ? quote.discountCents : 0,
+    totalCents: manualPriceCents ?? quote.totalCents,
+    priceSource: manualPriceCents === null ? "catalog" : "admin_manual",
+    manualPriceCents,
+    isTestOrder: paymentRequirement === "test",
     bundleApplied: quote.bundleApplied,
     integrityChoice: input.integrityChoice ?? null,
     canonVersion: input.canonVersion ?? null,
@@ -170,11 +185,14 @@ export async function createOrder(input: CreateOrderInput) {
     ipAddress: input.ipAddress ?? null,
   });
 
-  // A pre-payment order is a checkout record, not an active engagement. Folder
-  // provisioning and order-created automations are deferred until the signed
-  // Stripe webhook confirms settlement.
+  // Required-payment orders are checkout records, not active engagements. A
+  // deliberate administrator waiver activates the order immediately; test orders
+  // activate without any external provisioning or notification side effects.
+  if (paymentRequirement !== "required") {
+    void activatePaidOrder(orderId, paymentRequirement === "test" ? "test" : "admin_waiver");
+  }
 
-  return { orderId, orderNumber, quote };
+  return { orderId, orderNumber, quote: { ...quote, totalCents: manualPriceCents ?? quote.totalCents } };
 }
 
 /** Apply active admin-configured order actions for a lifecycle event. */

@@ -381,9 +381,13 @@ export const orders = mysqlTable(
     projectNameEnc: text("project_name_enc"),
     status: varchar("status", { length: 32 }).notNull().default("new"),
     paymentStatus: varchar("payment_status", { length: 32 }).notNull().default("unpaid"),
+    paymentRequirement: varchar("payment_requirement", { length: 20 }).notNull().default("required"),
     subtotalCents: int("subtotal_cents").notNull().default(0),
     discountCents: int("discount_cents").notNull().default(0),
     totalCents: int("total_cents").notNull().default(0),
+    priceSource: varchar("price_source", { length: 20 }).notNull().default("catalog"),
+    manualPriceCents: int("manual_price_cents"),
+    isTestOrder: boolean("is_test_order").notNull().default(false),
     currency: varchar("currency", { length: 3 }).notNull().default("USD"),
     couponId: int("coupon_id"),
     bundleApplied: boolean("bundle_applied").notNull().default(false),
@@ -414,6 +418,8 @@ export const orders = mysqlTable(
     createdIdx: index("orders_created_idx").on(table.createdAt),
     deletedIdx: index("orders_deleted_idx").on(table.deletedAt),
     workflowIdx: index("orders_workflow_idx").on(table.workflowId),
+    testOrderIdx: index("orders_test_order_idx").on(table.isTestOrder),
+    paymentRequirementIdx: index("orders_payment_requirement_idx").on(table.paymentRequirement),
   }),
 );
 
