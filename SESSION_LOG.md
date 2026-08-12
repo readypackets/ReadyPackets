@@ -1683,3 +1683,8 @@ TypeScript passed with zero errors. The full automated suite passed with **150 t
 ### Publication pending
 
 The client source and complete session record are ready for final integrity review and publication to the private repository. A final session-log publication entry will be appended after the commit is pushed.
+
+
+### Publication outcome
+
+The intake upload CSRF refresh and one-time retry repair, validation record, and complete session log were committed and pushed to the private `readypackets/ReadyPackets` `main` branch as `d055df4106c3247643b2896d231d8c7312015896` with the message `fix: retry intake upload after CSRF refresh`. A final log-only publication commit follows so GitHub contains this outcome as well as the implementation. The production release marker is updated after that closing commit is pushed.
