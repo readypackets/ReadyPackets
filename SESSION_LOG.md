@@ -1797,3 +1797,14 @@ Pending commit and GitHub publication after this log entry.
 ### Publication outcome
 
 The combined release was committed and published to the private `main` branch as `317f08772920ac445d917f08e249ad2fb43c7a1d` (`feat: policy ledger, phase artifacts, custom order workflows`). The working tree was confirmed clean before this closing publication note.
+
+
+## 2026-08-12 — Business Pitch Microphone Diagnostic and Repair
+
+A customer reported that the Phase 1 Business Pitch Idea control showed a generic “Microphone access denied” message even after the browser site permission was allowed. Review found that the recording path treated every `getUserMedia` failure as a permission denial, obscuring distinct browser/device failures such as an unavailable input device, another application holding the microphone, unsupported recording, or operating-system privacy restrictions.
+
+The customer-side recording flow now checks for `mediaDevices.getUserMedia`, requests a live, enabled audio track with echo cancellation and noise suppression, selects Opus WebM when supported, and reports a specific recovery message for `NotAllowedError`/`SecurityError`, `NotFoundError`/`NotReadableError`, `NotSupportedError`, and other startup failures. It retains the explicit pre-recording explanation and browser permission prompt. No microphone data leaves the browser until the user stops recording and accepts the documented upload path.
+
+Validation completed with TypeScript passing, 150 automated tests passing, and successful production client/server builds. The client assets were deployed with a timestamped rollback copy. The initial three-second probe ran before Node finished its normal delayed startup and returned connection refused; the service log confirmed it began listening approximately five seconds after restart. A follow-up production health check returned `{"status":"ok"}` and `readypackets.service` is active.
+
+Pending source-control publication after this entry.

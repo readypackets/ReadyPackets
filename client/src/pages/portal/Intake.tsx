@@ -186,9 +186,18 @@ export function IntakePage() {
   };
 
   const startRecording = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      toast.error("Recording is not supported", "Use a current browser with microphone recording support.");
+      return;
+    }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      if (!stream.getAudioTracks().some((track) => track.readyState === "live" && track.enabled)) {
+        stream.getTracks().forEach((track) => track.stop());
+        toast.error("Microphone unavailable", "No enabled microphone was found. Choose an input device in your browser or operating-system settings and try again.");
+        return;
+      }
+      const recorder = new MediaRecorder(stream, MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? { mimeType: "audio/webm;codecs=opus" } : undefined);
       mediaRecorder.current = recorder;
       audioChunks.current = [];
 
@@ -219,7 +228,16 @@ export function IntakePage() {
         });
       }, 1000);
     } catch (err) {
-      toast.error("Microphone access denied", "Please allow microphone access to record a pitch.");
+      const name = err instanceof DOMException ? err.name : "";
+      if (name === "NotAllowedError" || name === "SecurityError") {
+        toast.error("Microphone access was not available", "Confirm that microphone access is allowed for myportal.readypackets.com and that no operating-system privacy control is blocking your browser.");
+      } else if (name === "NotFoundError" || name === "NotReadableError") {
+        toast.error("Microphone device unavailable", "Connect or select a working microphone, and close any other application that is using it before trying again.");
+      } else if (name === "NotSupportedError") {
+        toast.error("Recording is not supported", "Use a current Chrome, Edge, Firefox, or Safari browser to record this Business Pitch Idea.");
+      } else {
+        toast.error("Could not start recording", "Please try again. If the problem continues, verify your browser microphone and device settings.");
+      }
     }
   };
 
