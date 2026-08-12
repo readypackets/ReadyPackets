@@ -1589,3 +1589,8 @@ The user should reload the Integrations page, enter the tenant ID, client ID, cl
 ### Publication pending
 
 The SharePoint repair, regression test, documentation, research basis, and this session-log addition are ready for integrity review, private GitHub publication, and final production release-marker update.
+
+
+### Publication outcome
+
+The SharePoint tenant-root discovery repair, configuration-flow improvements, regression tests, documentation, research basis, and session record were committed and pushed to the private `readypackets/ReadyPackets` `main` branch as `239b721abf0403b7eee499dc0a2dfe9a8b185822` with the message `fix: discover SharePoint tenant-root sites`. A final log-only publication commit follows so that GitHub contains this outcome as well as the implementation. The production release marker is updated after that closing commit is pushed.
