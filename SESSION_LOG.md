@@ -1915,3 +1915,8 @@ The administrator Order workflows workspace now stores per-stage capabilities us
 Migration `0026_custom_workflow_phase_keys.sql` widened `files.phase`, `order_questions.phase`, and `order_question_templates.phase` to 64 characters and updated the default workflow capability metadata. TypeScript validation passed. All 150 automated tests passed. Production client and server builds passed. The migration and server/client assets were deployed with timestamped rollback copies; the health endpoint returned `{"status":"ok"}`.
 
 Pending source-control publication after this entry.
+
+
+### Publication outcome
+
+The final-deliverables separation, configurable phase workspaces, custom workflow stage capabilities, and complete session record were published to the private `main` branch as `6475fb81b9c16e5e41ab8b081a8dc15c112050f2` (`feat: add configurable phase workspaces and final deliverables`).
