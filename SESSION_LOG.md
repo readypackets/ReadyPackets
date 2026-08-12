@@ -1176,3 +1176,20 @@ The customer reported that the **Block an address** form accepted one character,
 The shared modal now keeps the latest close callback in a ref while the focus-trap effect depends only on its open state. This preserves correct Escape handling and focus restoration when the dialog closes, but prevents cleanup/remount behavior while a user types. The correction benefits every controlled form rendered inside the shared modal component, including the address block and allowlist forms.
 
 The change was type-checked successfully, built, and deployed to production. Browser verification reached the sign-in boundary because the sandbox session has no active administrator MFA session; no credential or MFA challenge was entered automatically. The deployed behavior is supported by the corrected focus lifecycle and successful production readiness check.
+
+
+## Continuation session — 2026-08-12: Shared modal and controlled-field focus audit
+
+### Request
+
+> can you check all the other code and fields to make sure its not happening on any other windows
+
+### Audit coverage and result
+
+A client-wide inventory located the shared `Modal`/`ConfirmDialog` primitive plus **30 administrative and portal page call sites** that render it. The scan also checked for independent portal/dialog implementations, volatile dialog keys, and focus effects whose lifecycle depends on callback identities. No other independently implemented dialog primitive or volatile form key was found.
+
+The reported defect originated in the one shared focus-trap effect. The original effect depended on both `open` and the `onClose` function prop. Many callers use inline close callbacks; each controlled input update therefore changed `onClose`, ran cleanup, restored focus to the triggering button, and reinitialised the dialog. The deployed shared fix holds the latest close callback in a ref while the focus-trap lifecycle depends solely on `open`.
+
+Because every client modal and confirmation dialog uses that shared primitive, the fix covers all existing modal form surfaces rather than only the address-block dialog. A regression test, `tests/modal-focus.test.ts`, now prevents reintroducing the unstable `[open, onClose]` focus lifecycle. The complete suite passed with **143 tests**, including the new modal-focus test, and TypeScript passed with zero errors.
+
+No new production bundle was required during this audit because the shared modal correction was already deployed in the immediately preceding release. This continuation adds regression coverage and the completed audit record.
