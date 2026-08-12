@@ -23,10 +23,14 @@ Use the customer-portal switch only for testing the experience assigned to your 
 | **Marketing** | Plan campaigns, set audience/message/channel/status/schedule, configure a local or HTTPS destination and UTM tags, copy a controlled promotion link, and record confirmed conversions. Promotion links log aggregate clicks only; they do not record visitor identities. Activate only reviewed campaigns and pause a link immediately if its destination or offer changes. |
 | **Announcements** | Publish to all customers, staff, or selected accounts. Review audience selection before publishing. |
 | **Changelog** | Maintain release drafts, immutable revision history, and selected public feature updates. Publish only reviewed entries. |
-| **Integrations** | Configure Microsoft Graph/SharePoint, outbound webhooks, SAML, and delivery control. Graph secrets are encrypted and never displayed after saving. |
+| **Integrations** | Configure Microsoft Graph/SharePoint, outbound webhooks, SAML, and delivery control. For SharePoint, enter the tenant ID, client ID, client secret, and either a tenant-root URL or site URL; select **Discover site & library**; review the discovered library; then save. The Graph site and drive IDs are populated by discovery and are required before saving. Graph secrets are encrypted and never displayed after saving. |
 | **Backups** | Run/schedule backup jobs, configure multiple cloud destination names, download protected archives, and create encrypted configuration exports. Regularly perform an authorized restore drill. |
 | **Platform updates** | Connect a private GitHub repository using an encrypted fine-grained token, scan a release, review changed paths/risk indicators, approve, upgrade, and roll back. |
 | **Security Centre and Activity Replay** | Investigate logs using date, severity, event, account, source, text, action, and entity filters. Review individual event records. Block abusive source addresses or ban compromised accounts only after confirming the evidence. |
+
+## SharePoint connection requirements
+
+The SharePoint application registration needs tenant-admin consent for the appropriate Microsoft Graph application permissions. `Sites.Read.All` is sufficient for site/library discovery; order-folder creation and file synchronization require the least additional write permission appropriate to the deployment, typically `Sites.ReadWrite.All` or a more tightly scoped approved alternative. Do not paste a document-sharing link: use the tenant root, such as `https://contoso.sharepoint.com/`, or the actual site URL, such as `https://contoso.sharepoint.com/sites/Operations`. The discovery flow removes copied query/hash fragments and never returns the client secret to the browser.
 
 ## Identity and maintenance controls
 

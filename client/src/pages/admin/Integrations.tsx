@@ -464,9 +464,9 @@ function SharePointTab() {
           <Input label="Tenant ID" value={form.tenantId} onChange={(e) => setForm({ ...form, tenantId: e.target.value })} placeholder="Azure AD tenant ID" />
           <Input label="Client ID" value={form.clientId} onChange={(e) => setForm({ ...form, clientId: e.target.value })} placeholder="App registration client ID" />
           <Input label={data?.hasSecret ? "Client secret (leave blank to keep existing)" : "Client secret"} type="password" value={form.clientSecret} onChange={(e) => setForm({ ...form, clientSecret: e.target.value })} placeholder={data?.hasSecret ? "Saved securely" : "Azure app client secret"} />
-          <Input label="SharePoint site ID" value={form.siteId} onChange={(e) => setForm({ ...form, siteId: e.target.value })} placeholder="Microsoft Graph site ID" />
-          <Input label="Drive ID" value={form.driveId} onChange={(e) => setForm({ ...form, driveId: e.target.value })} placeholder="Document library drive ID" />
-          <Input label="SharePoint site URL" type="url" value={form.siteUrl} onChange={(e) => setForm({ ...form, siteUrl: e.target.value })} placeholder="https://contoso.sharepoint.com/sites/ReadyPackets" />
+          <Input label="SharePoint site ID" value={form.siteId} onChange={(e) => setForm({ ...form, siteId: e.target.value })} placeholder="Filled automatically after discovery" help="Use Discover site & library to obtain this Microsoft Graph identifier." />
+          <Input label="Drive ID" value={form.driveId} onChange={(e) => setForm({ ...form, driveId: e.target.value })} placeholder="Filled automatically after discovery" help="The default document library is selected automatically; you may choose another discovered library." />
+          <Input label="SharePoint site URL" type="url" value={form.siteUrl} onChange={(e) => setForm({ ...form, siteUrl: e.target.value })} placeholder="https://contoso.sharepoint.com/sites/ReadyPackets" help="Enter the tenant root or a site URL, then use Discover site & library before saving." />
           {discoveredDrives.length > 0 ? (
             <div className="md:col-span-2">
               <Field label="Discovered document library">
@@ -495,9 +495,24 @@ function SharePointTab() {
           >
             Discover site & library
           </Button>
-          <Button busy={save.isPending} onClick={() => save.mutate(form)}>Save SharePoint settings</Button>
+          <Button
+            busy={save.isPending}
+            disabled={!form.tenantId.trim() || !form.clientId.trim() || !form.siteId.trim() || !form.driveId.trim() || !form.rootFolderPath.trim() || (!form.clientSecret.trim() && !data?.hasSecret)}
+            onClick={() => save.mutate({
+              ...form,
+              tenantId: form.tenantId.trim(),
+              clientId: form.clientId.trim(),
+              clientSecret: form.clientSecret.trim(),
+              siteId: form.siteId.trim(),
+              driveId: form.driveId.trim(),
+              siteUrl: form.siteUrl.trim(),
+              rootFolderPath: form.rootFolderPath.trim(),
+            })}
+          >
+            Save SharePoint settings
+          </Button>
           {data?.siteUrl ? <a className="text-sm font-medium text-teal-700 hover:underline" href={data.siteUrl} target="_blank" rel="noreferrer">Open SharePoint site</a> : null}
-          <p className="basis-full text-xs text-gray-500">Discovery uses your credentials once, populates the Graph site and document-library IDs, and never displays the client secret.</p>
+          <p className="basis-full text-xs text-gray-500">Step 1: enter the tenant, client, secret, and SharePoint URL. Step 2: use discovery to populate the site and document-library IDs. Step 3: review the selected library and save. Discovery uses the credentials only on the server and never displays the client secret.</p>
         </div>
       </Card>
 

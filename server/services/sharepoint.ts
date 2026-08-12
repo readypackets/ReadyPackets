@@ -176,31 +176,61 @@ export interface SharePointDiscoveryResult {
   drives: Array<{ id: string; name: string; webUrl: string | null; isDefault: boolean }>;
 }
 
+interface NormalizedSharePointSiteUrl {
+  hostname: string;
+  sitePath: string;
+  canonicalUrl: string;
+}
+
+/**
+ * Canonicalise a copied SharePoint site URL before it is passed to Graph. The
+ * browser field may contain invisible copy/paste characters or a sharing query;
+ * neither changes the site identity and both should not block discovery.
+ */
+export function normalizeSharePointSiteUrl(value: string): NormalizedSharePointSiteUrl {
+  const normalized = value.trim().replace(/[\u200B-\u200D\uFEFF]/g, "");
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new Error("Enter a valid HTTPS SharePoint site URL.");
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  const isSharePointTenant = hostname.endsWith(".sharepoint.com") && hostname.length > ".sharepoint.com".length;
+  if (parsed.protocol !== "https:" || !isSharePointTenant || parsed.username || parsed.password || parsed.port) {
+    throw new Error("The SharePoint site URL must be an HTTPS *.sharepoint.com address.");
+  }
+
+  const sitePath = parsed.pathname.replace(/\/+$/, "") || "/";
+  return {
+    hostname,
+    sitePath,
+    canonicalUrl: `https://${hostname}${sitePath}`,
+  };
+}
+
 /**
  * Discover the Graph site ID and document-library drive IDs from a SharePoint URL.
  * Credentials are used only for this server-side request and are never returned or logged.
  */
 export async function discoverSharePointConfig(input: SharePointDiscoveryInput): Promise<SharePointDiscoveryResult> {
-  let parsed: URL;
-  try {
-    parsed = new URL(input.siteUrl);
-  } catch {
-    throw new Error("Enter a valid HTTPS SharePoint site URL.");
-  }
-  if (parsed.protocol !== "https:" || !/(^|\\.)sharepoint\\.com$/i.test(parsed.hostname)) {
-    throw new Error("The SharePoint site URL must be an HTTPS *.sharepoint.com address.");
-  }
+  const { hostname, sitePath, canonicalUrl } = normalizeSharePointSiteUrl(input.siteUrl);
 
   const token = (await requestGraphToken({
     tenantId: input.tenantId,
     clientId: input.clientId,
     clientSecret: input.clientSecret,
   })).token;
-  const sitePath = parsed.pathname.replace(/\/+$/, "") || "/";
+  // Microsoft Graph uses `/sites/{hostname}` for a tenant root and the
+  // hostname-plus-relative-path form only for a non-root site.
+  const siteLookupPath = sitePath === "/"
+    ? `/sites/${encodeURIComponent(hostname)}`
+    : `/sites/${encodeURIComponent(hostname)}:${encodeURI(sitePath)}`;
   const site = (await graphRequestWithToken(
     token,
     "GET",
-    `/sites/${encodeURIComponent(parsed.hostname)}:${encodeURI(sitePath)}`,
+    siteLookupPath,
   )) as { id?: string; displayName?: string; name?: string };
   if (!site.id) throw new Error("Microsoft Graph did not return a SharePoint site ID for this URL.");
 
@@ -223,7 +253,7 @@ export async function discoverSharePointConfig(input: SharePointDiscoveryInput):
   return {
     siteId: site.id,
     driveId: defaultDrive.id,
-    siteUrl: `${parsed.origin}${sitePath}`,
+    siteUrl: canonicalUrl,
     siteName: site.displayName ?? site.name ?? "SharePoint site",
     drives,
   };

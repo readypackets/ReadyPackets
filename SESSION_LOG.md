@@ -1558,3 +1558,34 @@ The backup repair, documentation index, OWASP assessment, research basis, and th
 ### Publication outcome
 
 The backup-control repair, OWASP assessment, research basis, documentation index, and associated session record were committed and pushed to the private `readypackets/ReadyPackets` `main` branch as `55d581781bd62f5af4d0ee26d7b05b7d97dd97a7` with the message `fix: restore secure backup control elevation`. A final log-only publication commit follows so that GitHub includes this publication outcome itself. The production release marker is updated after that closing commit is pushed.
+
+
+---
+
+## 2026-08-12 — SharePoint configuration and discovery repair
+
+### User report
+
+The user could not configure SharePoint order-file synchronization. The administrator page rejected `https://btkeys.sharepoint.com/` as not being an HTTPS `*.sharepoint.com` address during discovery. If the user selected Save first, the server rejected the request because the Graph site ID and document-library drive ID were empty—the same values that discovery is meant to populate.
+
+### Investigation
+
+The current source was inspected along with the deployed validation. The hostname regular expression in `discoverSharePointConfig` had been over-escaped: the literal contained `\\.` rather than `\.` in a regular expression. It therefore required a backslash before the `sharepoint.com` component and rejected normal tenant URLs such as `btkeys.sharepoint.com`.
+
+Microsoft’s current Graph documentation was reviewed. A tenant root is resolved with `GET /sites/{hostname}` (or `/sites/root`), while a non-root site uses `GET /sites/{hostname}:/{server-relative-path}`. The pre-existing implementation used the path form for every URL, including the tenant root. The official sources and resulting design constraints were recorded in `docs/research/sharepoint-graph-site-discovery-basis.md`.
+
+### Repair
+
+`normalizeSharePointSiteUrl` was added to securely canonicalize the administrator’s input. It trims whitespace, removes zero-width copy/paste characters, ignores query/hash fragments, accepts only a real HTTPS `*.sharepoint.com` hostname, rejects embedded credentials and ports, and produces a canonical tenant-root or site path. Discovery now calls Graph’s hostname-root endpoint for `https://tenant.sharepoint.com/` and its documented hostname-plus-path endpoint for non-root sites.
+
+The administrator form now clearly describes the discovery-first sequence, labels Graph site/drive fields as discovery-populated, disables Save until the tenant, client, secret, site ID, drive ID, and root path are available, and trims all saved fields. This prevents the earlier circular validation error. The client secret remains handled server-side and is never returned to the browser.
+
+A focused regression suite was added for tenant-root, server-relative site paths, copied query/hash fragments, and rejected lookalike/credential-bearing hosts. The full suite passed with **146 tests**, TypeScript passed with zero errors, and production client/server builds completed successfully. The repaired client and server artifacts were deployed with timestamped rollback copies and the production health endpoint returned `{"status":"ok"}`.
+
+### Operator action after deployment
+
+The user should reload the Integrations page, enter the tenant ID, client ID, client secret, and `https://btkeys.sharepoint.com/`, choose **Discover site & library**, select the desired discovered document library if more than one is returned, and then choose **Save SharePoint settings**. The required Microsoft Graph application consent is `Sites.Read.All` for discovery and least-privilege write access for folder/file synchronization. Graph will report a clear authentication or permissions error if tenant admin consent or applicable site access is absent.
+
+### Publication pending
+
+The SharePoint repair, regression test, documentation, research basis, and this session-log addition are ready for integrity review, private GitHub publication, and final production release-marker update.
