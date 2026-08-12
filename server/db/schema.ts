@@ -402,6 +402,7 @@ export const orders = mysqlTable(
     releaseStatus: varchar("release_status", { length: 128 }),
     orderScopeMode: varchar("order_scope_mode", { length: 64 }),
     bundleScopeManifest: text("bundle_scope_manifest"),
+    workflowId: int("workflow_id"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: timestamp("deleted_at"),
@@ -412,6 +413,26 @@ export const orders = mysqlTable(
     statusIdx: index("orders_status_idx").on(table.status),
     createdIdx: index("orders_created_idx").on(table.createdAt),
     deletedIdx: index("orders_deleted_idx").on(table.deletedAt),
+    workflowIdx: index("orders_workflow_idx").on(table.workflowId),
+  }),
+);
+
+export const orderWorkflows = mysqlTable(
+  "order_workflows",
+  {
+    id: id(),
+    name: varchar("name", { length: 120 }).notNull(),
+    description: text("description"),
+    stages: json("stages").notNull(),
+    isDefault: boolean("is_default").notNull().default(false),
+    active: boolean("active").notNull().default(true),
+    createdByUserId: int("created_by_user_id"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    nameUnique: uniqueIndex("order_workflows_name_unique").on(table.name),
+    activeIdx: index("order_workflows_active_idx").on(table.active, table.isDefault),
   }),
 );
 

@@ -1754,3 +1754,41 @@ The account lifecycle source changes and this full session record are ready for 
 ### Publication outcome
 
 The account lifecycle safeguards, individual administrator deletion protections, bulk-disable/bulk-trash controls, customer-role creation support, typed permanent purge, test/build results, and full session record were committed and pushed to the private `readypackets/ReadyPackets` `main` branch as `c73b2ca96e65dc6ef4a9037044a9ac52842b306b` with the message `feat: harden account deletion lifecycle`. A final log-only publication commit follows so the repository includes this outcome as well as the feature release. The production release marker is updated after the closing commit is pushed.
+
+
+## 2026-08-12 — Policy Acceptance, Upload Recovery, Phase Artifacts, and Order Workflow Release
+
+### Requests addressed
+
+The administrator requested a searchable Policy Center acceptance grid that identifies customers and exact accepted policy versions; a consistent microphone-permission experience for Business Pitch Idea recordings; a permanent, easy customer remedy for upload token errors; Phase 2 documents and in-browser audio recordings for each order; administrator uploads to each phase with all-order file visibility; and administrator-managed selectable/custom order workflows.
+
+### Delivered functionality
+
+- Added **Policy Center → Acceptance tracker** searchable ledger. It filters by customer name, email, opaque ReadyPackets user ID, policy title/slug, version, and optional policy filter. Each row shows customer identity, policy, accepted version, effective date, acceptance timestamp, and status.
+- Added a same-origin authenticated `GET /api/security/csrf` token-refresh endpoint. It reissues only the session-bound readable CSRF cookie with no-store responses. Every state-changing CSRF and origin check remains enforced.
+- Corrected every custom browser upload path to send the required `X-RP-CSRF` header. The previous `X-CSRF-Token` header mismatch was the root cause of persistent upload-token errors.
+- Customer document and recording uploads now refresh the server-issued token before upload and retry once only for a verified pre-persistence CSRF rejection. This eliminates the need for a full page reload after inactive-tab/session cookie rotation.
+- Added an explicit microphone-permission explanation dialog before Phase 1 Business Pitch recording. Browser permission state remains controlled by the browser.
+- Added `/portal/orders/:id/phase-2` and a visible Phase 2 materials card once an order reaches Phase 2. Customers can add Phase 2 documents and record a WebM audio update directly in the browser.
+- Made file persistence and customer file lists phase-aware. Phase 1 and Phase 2 files are separately labeled and visible.
+- Added direct **Upload phase documents** controls in the administrator order Files tab. Staff select Phase 1 or Phase 2, upload internal files, and explicitly publish only those files that should be customer-visible. The tab supports Phase 1 ZIP, Phase 2 ZIP, and all-file ZIP downloads.
+- Added migration `0024_order_workflows.sql`, `order_workflows` storage, and `orders.workflow_id`. Production has a seeded **ReadyPackets standard workflow**, and all existing orders were backfilled to it.
+- Added **Administration → Order workflows**. Administrators can create/edit custom ordered stages, activate/deactivate workflows, choose the default workflow for future orders, and assign an active workflow to an individual order from its Overview tab. Existing order-status, payment, and automation safeguards remain independently enforced.
+
+### Validation and deployment
+
+- Applied production migration `0024_order_workflows.sql`; default workflow ID 1 is active and 10 existing orders received workflow assignment.
+- `pnpm test`: 150 tests passed.
+- `pnpm run typecheck`: passed with 0 TypeScript errors.
+- Production client/server builds passed.
+- Production health endpoint returned `{"status":"ok"}` after deployment.
+- Live security verification returned 46/46 checks passed, including CSRF/origin boundaries, authenticated API boundaries, response security headers, host validation, and rate-limit `Retry-After` verification.
+- Deployment used timestamped server/client rollback copies.
+
+### Operational notes
+
+Customers need to reload once to receive the corrected upload header code. After that, document and recording uploads refresh their token automatically. If browser microphone access was previously denied, the customer must reset/allow the microphone through browser site permissions; a website cannot override a browser-level denial.
+
+### Source-control publication
+
+Pending commit and GitHub publication after this log entry.

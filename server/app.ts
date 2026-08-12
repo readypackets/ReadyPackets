@@ -39,6 +39,7 @@ import { createAvatarRouter } from "./http/avatar.js";
 import { logger } from "./observability/logger.js";
 import { getMaintenanceState } from "./services/settings.js";
 import { handleStripeWebhook } from "./services/stripe.js";
+import { resolveSession } from "./auth/session.js";
 import { getCatalog } from "./services/catalog.js";
 import {
   handleAcs,
@@ -265,6 +266,21 @@ export function createApp(): Express {
   app.get("/api/saml/login", handleLoginRedirect);
   app.post("/api/saml/acs", express.urlencoded({ extended: false }), handleAcs);
   app.get("/api/saml/logout", handleLogout);
+
+  /**
+   * A same-origin, authenticated CSRF cookie refresh for multipart uploads.
+   * The cookie mirrors the session-bound secret and is no-store; no client token
+   * is trusted or accepted by this route, and every unsafe request remains checked.
+   */
+  app.get("/api/security/csrf", async (req: Request, res: Response) => {
+    const session = await resolveSession(req);
+    if (!session || session.mfaPending || session.restricted) {
+      res.status(401).setHeader("Cache-Control", "no-store").json({ error: "Authentication required." });
+      return;
+    }
+    setCsrfCookie(res, session.csrfSecret);
+    res.status(200).setHeader("Cache-Control", "no-store").json({ csrfToken: session.csrfSecret });
+  });
 
   app.use("/api/files", createDownloadRouter());
   app.use("/api/files", createUploadRouter());

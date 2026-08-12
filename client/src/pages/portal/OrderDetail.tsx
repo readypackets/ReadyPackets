@@ -272,6 +272,15 @@ export function OrderDetailPage() {
         </Card>
       ) : null}
 
+      {currentPhase >= 1 && !terminated ? (
+        <Card className="mb-6 border-teal/30 bg-teal/5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div><h2 className="text-base font-semibold text-ink">Phase 2 materials</h2><p className="mt-1 text-sm text-body">Add documents and record an audio update requested during Phase 2.</p></div>
+            <LinkButton href={`/portal/orders/${order.id}/phase-2`} size="sm">Open Phase 2 materials</LinkButton>
+          </div>
+        </Card>
+      ) : null}
+
       <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr] lg:items-start">
         <div className="space-y-6">
           {/* Phase tracker */}

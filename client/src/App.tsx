@@ -59,6 +59,7 @@ import { PortalDashboard } from "@/pages/portal/Dashboard";
 import { NewOrderPage, OrdersListPage } from "@/pages/portal/Orders";
 import { OrderDetailPage } from "@/pages/portal/OrderDetail";
 import { IntakePage, MndaPage } from "@/pages/portal/Intake";
+import { Phase2ArtifactsPage } from "@/pages/portal/Phase2Artifacts";
 import { FilesPage } from "@/pages/portal/Files";
 import { NewTicketPage, TicketDetailPage, TicketsListPage } from "@/pages/portal/Tickets";
 import { CommunityPage, NewTopicPage, TopicDetailPage } from "@/pages/portal/Community";
@@ -84,6 +85,7 @@ import EmailSettings from "@/pages/admin/EmailSettings";
 import EmailAutomations from "@/pages/admin/EmailAutomations";
 import { EmailCenterPage } from "@/pages/admin/EmailCenter";
 import { AdminOrderAutomations } from "@/pages/admin/OrderAutomations";
+import { AdminOrderWorkflowsPage } from "@/pages/admin/OrderWorkflows";
 import { AdminQuestionTemplates } from "@/pages/admin/QuestionTemplates";
 import Checkout from "@/pages/portal/Checkout";
 import Wizard from "@/pages/portal/Wizard";
@@ -298,6 +300,7 @@ function PortalRoutes() {
         <Route path="/portal/orders/new" component={NewOrderPage} />
         <Route path="/portal/orders/:id" component={OrderDetailPage} />
         <Route path="/portal/orders/:id/intake" component={IntakePage} />
+        <Route path="/portal/orders/:id/phase-2" component={Phase2ArtifactsPage} />
         <Route path="/portal/orders/:id/mnda" component={MndaPage} />
         {/* Backward-compatible alias for links issued before the route was renamed. */}
         <Route path="/portal/orders/:id/nda" component={MndaPage} />
@@ -374,6 +377,7 @@ function AdminRoutes() {
         <Route path="/admin/navigation" component={AdminNavigationPage} />
         <Route path="/admin/email-automations" component={EmailAutomations} />
         <Route path="/admin/order-automations" component={AdminOrderAutomations} />
+        <Route path="/admin/order-workflows" component={AdminOrderWorkflowsPage} />
         <Route path="/admin/question-templates" component={AdminQuestionTemplates} />
         <Route path="/admin/knowledge-base" component={AdminKnowledgeBasePage} />
         <Route path="/admin/crm" component={AdminCRM} />

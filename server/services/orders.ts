@@ -13,12 +13,13 @@ import {
   intakeSubmissions,
   mndaAcceptances,
   orderItems,
+  orderWorkflows,
   orderAutomationRules,
+  orders,
   orderStatusHistory,
   webhookDeliveries,
   webhookEndpoints,
   orderShares,
-  orders,
   phaseJobs,
   phaseKickoffConfigs,
   users,
@@ -101,6 +102,7 @@ export async function createOrder(input: CreateOrderInput) {
     .limit(1);
   const customerNumber = customerRow[0]?.customerNumber ?? null;
   const orderNumber = generateOrderNumber(new Date(), customerNumber);
+  const defaultWorkflow = await db.select({ id: orderWorkflows.id }).from(orderWorkflows).where(and(eq(orderWorkflows.isDefault, true), eq(orderWorkflows.active, true))).limit(1);
   const inserted = await db.insert(orders).values({
     orderNumber,
     userId: input.userId,
@@ -117,6 +119,7 @@ export async function createOrder(input: CreateOrderInput) {
     releaseStatus: input.releaseStatus ?? null,
     orderScopeMode: input.orderScopeMode ?? null,
     bundleScopeManifest: input.bundleScopeManifest ?? null,
+    workflowId: defaultWorkflow[0]?.id ?? null,
   });
 
   const orderId = insertedId(inserted);

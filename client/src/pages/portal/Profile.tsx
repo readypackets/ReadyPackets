@@ -10,7 +10,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, Copy, Download, Gift, Save, Trash2, UserCog } from "lucide-react";
 import { BRAND } from "@shared/brand";
-import { trpc, errorMessage } from "@/lib/trpc";
+import { trpc, errorMessage, csrfToken, refreshCsrfToken } from "@/lib/trpc";
 import { useSession } from "@/lib/session";
 import { Button } from "@/components/ui/Button";
 import { Checkbox, Input, Select, Textarea } from "@/components/ui/Field";
@@ -50,15 +50,17 @@ function AvatarSection() {
     }
     setUploading(true);
     try {
-      const formData = new FormData();
-      formData.append("avatar", file);
-      // Get CSRF token from cookie
-      const csrfToken = document.cookie.split(";").find((c) => c.trim().startsWith("csrf_token="))?.split("=")[1] ?? "";
-      const res = await fetch("/api/avatar", {
-        method: "POST",
-        headers: { "x-csrf-token": csrfToken },
-        body: formData,
-      });
+      const post = async (token: string) => {
+        const formData = new FormData();
+        formData.append("avatar", file);
+        return fetch("/api/avatar", { method: "POST", credentials: "same-origin", headers: { "x-rp-csrf": token }, body: formData });
+      };
+      let token = await refreshCsrfToken();
+      let res = await post(token ?? csrfToken() ?? "");
+      if (res.status === 403) {
+        token = await refreshCsrfToken();
+        if (token) res = await post(token);
+      }
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Upload failed" }));
         toast.error("Upload failed", (err as { error: string }).error);

@@ -15,7 +15,7 @@ import {
   Upload,
   Undo2,
 } from "lucide-react";
-import { trpc, errorMessage, csrfToken } from "@/lib/trpc";
+import { trpc, errorMessage, csrfToken, refreshCsrfToken } from "@/lib/trpc";
 import { formatBytes, formatDateTime } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { Checkbox, Input, Select } from "@/components/ui/Field";
@@ -49,6 +49,7 @@ export function AdminFilesPage() {
   const [orderFilter, setOrderFilter] = useState("");
   const [uploadOrderId, setUploadOrderId] = useState("");
   const [uploadCategory, setUploadCategory] = useState("deliverable");
+  const [uploadPhase, setUploadPhase] = useState("unassigned");
   const [uploading, setUploading] = useState(false);
   const [purgeId, setPurgeId] = useState<number | null>(null);
   const [historyFileId, setHistoryFileId] = useState<number | null>(null);
@@ -118,19 +119,28 @@ export function AdminFilesPage() {
       for (const file of Array.from(selected).slice(0, 5)) body.append("files", file);
       if (uploadOrderId) body.append("orderId", uploadOrderId);
       body.append("category", uploadCategory);
-
-      const response = await fetch("/api/files/upload", {
+      body.append("phase", uploadPhase);
+      const post = async (token: string) => fetch("/api/files/upload", {
         method: "POST",
         credentials: "same-origin",
-        headers: { "x-csrf-token": csrfToken() ?? "" },
+        headers: { "x-rp-csrf": token },
         body,
       });
-      const payload = (await response.json()) as {
+      let token = await refreshCsrfToken();
+      let response = await post(token ?? csrfToken() ?? "");
+      let payload = (await response.json()) as {
         error?: string;
         files?: { originalName: string }[];
         rejected?: { name: string; reason: string }[];
       };
 
+      if (response.status === 403 && /csrf|security token/i.test(payload.error ?? "")) {
+        token = await refreshCsrfToken();
+        if (token) {
+          response = await post(token);
+          payload = await response.json() as typeof payload;
+        }
+      }
       if (!response.ok) {
         toast.error("Upload rejected", payload.error ?? "The upload could not be processed.");
       } else {
@@ -166,7 +176,7 @@ export function AdminFilesPage() {
           title="Upload"
           description="Files are validated by content, not by name. Deliverables stay private until published."
         />
-        <div className="mt-4 grid gap-4 sm:grid-cols-3">
+        <div className="mt-4 grid gap-4 sm:grid-cols-4">
           <Input
             label="Order ID"
             help="Optional; leave blank for unattached files."
@@ -184,6 +194,7 @@ export function AdminFilesPage() {
               label: category.replace(/_/g, " "),
             }))}
           />
+          <Select label="Order phase" value={uploadPhase} onChange={(event) => setUploadPhase(event.target.value)} options={[{ value: "unassigned", label: "General / delivery" }, { value: "phase_1", label: "Phase 1" }, { value: "phase_2", label: "Phase 2" }]} />
           <div className="flex items-end">
             <Button
               fullWidth

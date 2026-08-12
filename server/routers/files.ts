@@ -161,6 +161,7 @@ export const filesRouter = router({
         extension: files.extension,
         sizeBytes: files.sizeBytes,
         category: files.category,
+        phase: files.phase,
         version: files.version,
         createdAt: files.createdAt,
       })

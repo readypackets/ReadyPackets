@@ -24,7 +24,7 @@ import {
   Users,
 } from "lucide-react";
 import { trpc, errorMessage } from "@/lib/trpc";
-import { formatDate } from "@/lib/utils";
+import { formatDate, formatDateTime } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { Input, Select, Textarea } from "@/components/ui/Field";
 import { Alert, Badge, Card, CardHeader, Skeleton } from "@/components/ui/Surface";
@@ -33,6 +33,20 @@ import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { renderMarkdown } from "@/lib/markdown";
 import { PageHeader } from "@/components/layout/PortalLayout";
+
+type AcceptanceRow = {
+  id: number;
+  acceptedAt: Date | string;
+  policyId: number;
+  policyTitle: string;
+  policySlug: string;
+  version: string;
+  effectiveDate: string;
+  userId: number;
+  userPublicId: string | null;
+  userName: string;
+  userEmail: string;
+};
 
 type PolicyDoc = {
   id: number;
@@ -65,7 +79,8 @@ export function PolicyCenterPage() {
   const [showCreateDoc, setShowCreateDoc] = useState(false);
   const [showPublishVersion, setShowPublishVersion] = useState<PolicyDoc | null>(null);
   const [showPreview, setShowPreview] = useState<{ title: string; content: string } | null>(null);
-  const [acceptanceLookupId, setAcceptanceLookupId] = useState("");
+  const [acceptanceSearch, setAcceptanceSearch] = useState("");
+  const [acceptancePolicyFilter, setAcceptancePolicyFilter] = useState("");
 
   // Create document form
   const [newSlug, setNewSlug] = useState("");
@@ -83,10 +98,11 @@ export function PolicyCenterPage() {
   const policies = trpc.admin.policies.useQuery(undefined, { refetchOnMount: "always" });
   const utils = trpc.useUtils();
 
-  const acceptancesQuery = trpc.admin.policyAcceptances.useQuery(
-    { userId: Number(acceptanceLookupId) },
-    { enabled: !!acceptanceLookupId && !isNaN(Number(acceptanceLookupId)) && Number(acceptanceLookupId) > 0 },
-  );
+  const acceptanceGrid = trpc.admin.policyAcceptanceGrid.useQuery({
+    search: acceptanceSearch.trim() || undefined,
+    policyId: acceptancePolicyFilter ? Number(acceptancePolicyFilter) : undefined,
+    limit: 500,
+  }, { enabled: tab === "acceptances" });
 
   const createDoc = trpc.admin.createPolicyDocument.useMutation({
     onSuccess() {
@@ -252,6 +268,14 @@ export function PolicyCenterPage() {
     },
   ];
 
+  const acceptanceColumns: Column<AcceptanceRow>[] = [
+    { key: "customer", header: "Customer", cell: (row) => <div className="min-w-0"><p className="truncate font-medium text-ink">{row.userName}</p><p className="mt-0.5 truncate text-xs text-muted">{row.userEmail}</p><p className="mt-0.5 font-mono text-xs text-muted">{row.userPublicId ?? `internal-${row.userId}`}</p></div> },
+    { key: "policy", header: "Policy", cell: (row) => <div><p className="font-medium text-ink">{row.policyTitle}</p><p className="mt-0.5 text-xs text-muted">{row.policySlug}</p></div> },
+    { key: "version", header: "Accepted version", cell: (row) => <div><Badge tone="teal">v{row.version}</Badge><p className="mt-1 text-xs text-muted">Effective {row.effectiveDate}</p></div> },
+    { key: "acceptedAt", header: "Accepted at", cell: (row) => <span className="text-sm text-body">{formatDateTime(row.acceptedAt)}</span> },
+    { key: "status", header: "Status", cell: () => <Badge tone="success">Accepted</Badge> },
+  ];
+
   return (
     <>
       <PageHeader
@@ -369,51 +393,19 @@ export function PolicyCenterPage() {
       {tab === "acceptances" && (
         <div className="space-y-6">
           <Alert tone="info" title="Acceptance tracker">
-            Enter a customer's numeric user ID to view their policy acceptance history.
-            Customer IDs are shown in the Customers admin page.
+            Search by customer name, email, ReadyPackets user ID, policy title, policy slug, or version. Every row identifies the accepting customer and the exact policy version they accepted.
           </Alert>
           <Card>
-            <CardHeader title="Look up customer acceptances" />
-            <div className="mt-4 flex gap-3">
-              <Input
-                label="Customer user ID"
-                placeholder="e.g. 2"
-                value={acceptanceLookupId}
-                onChange={(e) => setAcceptanceLookupId(e.target.value)}
-                className="max-w-xs"
-              />
+            <CardHeader title="Policy acceptance ledger" description="A searchable, audit-ready record of accepted policy versions." />
+            <div className="mt-4 grid gap-4 sm:grid-cols-[1fr_260px]">
+              <Input label="Search acceptances" placeholder="Customer, email, RP-U ID, policy, or version" value={acceptanceSearch} onChange={(event) => setAcceptanceSearch(event.target.value)} />
+              <Select label="Policy" value={acceptancePolicyFilter} onChange={(event) => setAcceptancePolicyFilter(event.target.value)} options={[{ value: "", label: "All policies" }, ...(policies.data ?? []).map((policy) => ({ value: String(policy.id), label: policy.title }))]} />
             </div>
-            {acceptancesQuery.isLoading && acceptanceLookupId ? (
-              <div className="mt-4 space-y-2">
-                {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-12 w-full" />)}
-              </div>
-            ) : acceptancesQuery.data ? (
-              <div className="mt-4">
-                {acceptancesQuery.data.length === 0 ? (
-                  <p className="text-sm text-muted">No policy acceptances on record for this user.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {acceptancesQuery.data.map((row) => (
-                      <div
-                        key={row.id}
-                        className="flex items-center justify-between gap-4 rounded-lg border border-line p-3"
-                      >
-                        <div className="flex items-center gap-3">
-                          <CheckCircle2 className="size-4 text-success shrink-0" />
-                          <div>
-                            <p className="text-sm font-medium text-ink">{row.policyTitle}</p>
-                            <p className="text-xs text-muted">
-                              v{row.version} · Effective {row.effectiveDate} · Accepted {formatDate(row.acceptedAt)}
-                            </p>
-                          </div>
-                        </div>
-                        <Badge tone="success">Accepted</Badge>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ) : null}
+            {acceptanceGrid.isLoading ? (
+              <div className="mt-4 space-y-2">{Array.from({ length: 5 }, (_, index) => <Skeleton key={index} className="h-14 w-full" />)}</div>
+            ) : (
+              <div className="mt-5"><DataTable caption="Policy acceptance ledger" columns={acceptanceColumns} rows={(acceptanceGrid.data ?? []) as AcceptanceRow[]} rowKey={(row) => row.id} empty={<p className="py-6 text-sm text-muted">No policy acceptance records match the current filters.</p>} /></div>
+            )}
           </Card>
         </div>
       )}

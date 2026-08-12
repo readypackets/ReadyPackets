@@ -101,6 +101,10 @@ export function createUploadRouter(): Router {
       const category = UPLOAD_CATEGORIES.has(requestedCategory)
         ? requestedCategory
         : "intake_attachment";
+      const requestedPhase = typeof req.body.phase === "string" ? req.body.phase : null;
+      const phase = requestedPhase === "phase_1" || requestedPhase === "phase_2" || requestedPhase === "unassigned"
+        ? requestedPhase
+        : category === "intake_attachment" ? "phase_1" : "unassigned";
       const replaceFileId =
         typeof req.body.replaceFileId === "string" ? Number(req.body.replaceFileId) : null;
       const intakeQuestionKey =
@@ -145,7 +149,7 @@ export function createUploadRouter(): Router {
           const existingPitchRows = await db
             .select({ total: sql<number>`COUNT(*)` })
             .from(files)
-            .where(and(eq(files.orderId, orderId), eq(files.category, "intake_attachment"), isNull(files.deletedAt), sql`${files.detectedMime} = 'audio/webm'`));
+            .where(and(eq(files.orderId, orderId), eq(files.category, "intake_attachment"), eq(files.phase, phase), isNull(files.deletedAt), sql`${files.detectedMime} = 'audio/webm'`));
           if (Number(existingPitchRows[0]?.total ?? 0) >= maxPitchRecordings) {
             res.status(400).json({ error: `This intake already has the maximum of ${maxPitchRecordings} Business Pitch recording(s).` });
             return;
@@ -248,7 +252,7 @@ export function createUploadRouter(): Router {
             sizeBytes: stored.sizeBytes,
             sha256: stored.sha256,
             category,
-            phase: category === "intake_attachment" ? "phase_1" : "unassigned",
+            phase,
             // Staff publish deliverables explicitly; customer uploads are theirs by definition.
             visibleToCustomer: !isStaff,
           });
@@ -287,7 +291,7 @@ export function createUploadRouter(): Router {
             entityType: "file",
             entityId: fileId,
             summary: `Uploaded "${file.originalname}" (${category})`,
-            changes: { sizeBytes: stored.sizeBytes, orderId },
+            changes: { sizeBytes: stored.sizeBytes, orderId, phase },
             ipAddress: (res.locals.clientIp as string | undefined) ?? null,
           });
         } catch (error) {

@@ -28,6 +28,7 @@ import {
   orderAnswers,
   orderAnswerHistory,
   orderItems,
+  orderWorkflows,
   orderAutomationRules,
   orders,
   packetGroups,
@@ -1022,6 +1023,50 @@ export const adminRouter = router({
         ipAddress: ctx.clientIp,
       });
       return { ok: true as const };
+    }),
+
+  /* ---------------------------------------------------------------- */
+  /* Order workflows                                                   */
+  /* ---------------------------------------------------------------- */
+
+  orderWorkflows: adminProcedure.query(async () => {
+    const rows = await db.select().from(orderWorkflows).orderBy(desc(orderWorkflows.isDefault), asc(orderWorkflows.name));
+    return rows.map((row) => ({ ...row, stages: Array.isArray(row.stages) ? row.stages : [] }));
+  }),
+
+  upsertOrderWorkflow: adminProcedure
+    .input(z.object({
+      id: z.number().int().positive().optional(),
+      name: z.string().trim().min(2).max(120),
+      description: z.string().trim().max(4_000).optional(),
+      stages: z.array(z.object({ key: z.string().trim().regex(/^[a-z0-9_]+$/).max(48), label: z.string().trim().min(2).max(120), order: z.number().int().min(1).max(50) })).min(1).max(20),
+      isDefault: z.boolean().default(false),
+      active: z.boolean().default(true),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const stages = [...input.stages].sort((a, b) => a.order - b.order);
+      if (new Set(stages.map((stage) => stage.key)).size !== stages.length) throw new TRPCError({ code: "BAD_REQUEST", message: "Workflow stages must have unique keys." });
+      if (input.isDefault) await db.update(orderWorkflows).set({ isDefault: false });
+      if (input.id) {
+        await db.update(orderWorkflows).set({ name: input.name, description: input.description ?? null, stages, isDefault: input.isDefault, active: input.active }).where(eq(orderWorkflows.id, input.id));
+        void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "workflow.updated", entityType: "order_workflow", entityId: input.id, summary: `Administrator updated workflow ${input.name}`, ipAddress: ctx.clientIp });
+        return { ok: true as const, id: input.id };
+      }
+      const result = await db.insert(orderWorkflows).values({ name: input.name, description: input.description ?? null, stages, isDefault: input.isDefault, active: input.active, createdByUserId: ctx.session.user.id });
+      const id = insertedId(result);
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "workflow.created", entityType: "order_workflow", entityId: id, summary: `Administrator created workflow ${input.name}`, ipAddress: ctx.clientIp });
+      return { ok: true as const, id };
+    }),
+
+  assignOrderWorkflow: adminProcedure
+    .input(z.object({ orderId: z.number().int().positive(), workflowId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const workflow = await db.select({ id: orderWorkflows.id, name: orderWorkflows.name, active: orderWorkflows.active }).from(orderWorkflows).where(eq(orderWorkflows.id, input.workflowId)).limit(1);
+      if (!workflow[0] || !workflow[0].active) throw new TRPCError({ code: "BAD_REQUEST", message: "Select an active workflow." });
+      const result = await db.update(orders).set({ workflowId: workflow[0].id }).where(and(eq(orders.id, input.orderId), isNull(orders.deletedAt)));
+      if (Number((result as { affectedRows?: number }).affectedRows ?? 0) === 0) throw new TRPCError({ code: "NOT_FOUND", message: "Order not found." });
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "order.workflow_assigned", entityType: "order", entityId: input.orderId, summary: `Administrator assigned workflow ${workflow[0].name}`, changes: { workflowId: workflow[0].id }, ipAddress: ctx.clientIp });
+      return { ok: true as const, workflow: workflow[0] };
     }),
 
   /* ---------------------------------------------------------------- */
@@ -2124,6 +2169,51 @@ export const adminRouter = router({
         .where(eq(policyAcceptances.userId, input.userId))
         .orderBy(desc(policyAcceptances.acceptedAt));
       return rows;
+    }),
+
+  /** Searchable acceptance ledger for policy-audit operations. */
+  policyAcceptanceGrid: adminProcedure
+    .input(z.object({ search: z.string().trim().max(160).optional(), policyId: z.number().int().positive().optional(), limit: z.number().int().min(1).max(500).default(250) }).optional())
+    .query(async ({ input }) => {
+      const conditions = input?.policyId ? [eq(policyDocuments.id, input.policyId)] : [];
+      const rows = await db
+        .select({
+          id: policyAcceptances.id,
+          acceptedAt: policyAcceptances.acceptedAt,
+          ipAddress: policyAcceptances.ipAddress,
+          policyId: policyDocuments.id,
+          policyTitle: policyDocuments.title,
+          policySlug: policyDocuments.slug,
+          version: policyVersions.version,
+          effectiveDate: policyVersions.effectiveDate,
+          user: users,
+        })
+        .from(policyAcceptances)
+        .innerJoin(policyVersions, eq(policyAcceptances.policyVersionId, policyVersions.id))
+        .innerJoin(policyDocuments, eq(policyVersions.policyId, policyDocuments.id))
+        .innerJoin(users, eq(policyAcceptances.userId, users.id))
+        .where(conditions.length ? and(...conditions) : undefined)
+        .orderBy(desc(policyAcceptances.acceptedAt))
+        .limit(input?.limit ?? 250);
+      const needle = input?.search?.trim().toLowerCase() ?? "";
+      return rows
+        .map((row) => {
+          const user = decryptUser(row.user);
+          return {
+            id: row.id,
+            acceptedAt: row.acceptedAt,
+            policyId: row.policyId,
+            policyTitle: row.policyTitle,
+            policySlug: row.policySlug,
+            version: row.version,
+            effectiveDate: row.effectiveDate,
+            userId: user.id,
+            userPublicId: user.publicId,
+            userName: displayNameOf(user),
+            userEmail: user.email,
+          };
+        })
+        .filter((row) => !needle || [row.userName, row.userEmail, row.userPublicId ?? "", row.policyTitle, row.policySlug, row.version].some((value) => value.toLowerCase().includes(needle)));
     }),
 
   /** Domain-level signup analytics; no addresses are exposed. */

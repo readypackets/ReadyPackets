@@ -6,7 +6,7 @@
  * notes are visually separated from shared notes to make an accidental disclosure
  * to the customer difficult.
  */
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "wouter";
 import {
   ArrowRight,
@@ -22,9 +22,10 @@ import {
   Send,
   Trash2,
   Unlock,
+  Upload,
 } from "lucide-react";
 import { ORDER_TRANSITIONS, INTEGRITY_CHOICE_LABELS } from "@shared/domain";
-import { trpc, errorMessage } from "@/lib/trpc";
+import { trpc, errorMessage, csrfToken, refreshCsrfToken } from "@/lib/trpc";
 import { useSession } from "@/lib/session";
 import { formatBytes, formatDate, formatDateTime, formatMoney, humanizeKey } from "@/lib/utils";
 import { Button, LinkButton } from "@/components/ui/Button";
@@ -673,6 +674,7 @@ export function AdminOrderDetailPage() {
 
   const detail = trpc.admin.orderDetail.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
   const files = trpc.adminFiles.list.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
+  const workflows = trpc.admin.orderWorkflows.useQuery();
 
   const [tab, setTab] = useState("overview");
   const [note, setNote] = useState("");
@@ -687,10 +689,20 @@ export function AdminOrderDetailPage() {
   const [internalNotes, setInternalNotes] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteReason, setDeleteReason] = useState("");
+  const [workflowId, setWorkflowId] = useState("");
+  const [phaseUploadOpen, setPhaseUploadOpen] = useState(false);
+  const [phaseUpload, setPhaseUpload] = useState<"phase_1" | "phase_2">("phase_1");
+  const [phaseUploading, setPhaseUploading] = useState(false);
+  const phaseFileInput = useRef<HTMLInputElement>(null);
 
   const refetchAll = async () => {
     await Promise.all([detail.refetch(), files.refetch()]);
   };
+
+  const assignWorkflow = trpc.admin.assignOrderWorkflow.useMutation({
+    async onSuccess() { await detail.refetch(); toast.success("Workflow assigned", "The order now uses the selected workflow."); },
+    onError(error) { toast.error("Could not assign workflow", errorMessage(error)); },
+  });
 
   const transition = trpc.admin.transitionOrder.useMutation({
     async onSuccess() {
@@ -766,6 +778,40 @@ export function AdminOrderDetailPage() {
     },
     onError(error) { toast.error("Could not prepare download", errorMessage(error)); },
   });
+
+  const uploadPhaseDocuments = async (selected: FileList | null) => {
+    if (!selected || selected.length === 0) return;
+    const selectedFiles = Array.from(selected).slice(0, 5);
+    setPhaseUploading(true);
+    try {
+      const post = async (token: string) => {
+        const body = new FormData();
+        selectedFiles.forEach((file) => body.append("files", file));
+        body.append("orderId", String(orderId));
+        body.append("category", "reference");
+        body.append("phase", phaseUpload);
+        const response = await fetch("/api/files/upload", { method: "POST", credentials: "same-origin", headers: { "x-rp-csrf": token }, body });
+        let payload: { error?: string; files?: unknown[] } = {};
+        try { payload = await response.json() as typeof payload; } catch { /* status below handles malformed responses */ }
+        return { response, payload };
+      };
+      let token = await refreshCsrfToken();
+      let result = await post(token ?? csrfToken() ?? "");
+      if (result.response.status === 403 && /csrf|security token/i.test(result.payload.error ?? "")) {
+        token = await refreshCsrfToken();
+        if (token) result = await post(token);
+      }
+      if (!result.response.ok) { toast.error("Upload rejected", result.payload.error ?? "The documents could not be uploaded."); return; }
+      await files.refetch();
+      setPhaseUploadOpen(false);
+      toast.success("Phase documents uploaded", `${result.payload.files?.length ?? 0} file(s) were added to ${phaseUpload === "phase_1" ? "Phase 1" : "Phase 2"}.`);
+    } catch {
+      toast.error("Upload failed", "A network error occurred. Please try again.");
+    } finally {
+      setPhaseUploading(false);
+      if (phaseFileInput.current) phaseFileInput.current.value = "";
+    }
+  };
 
   const softDelete = trpc.admin.softDeleteOrder.useMutation({
     async onSuccess() {
@@ -900,6 +946,11 @@ export function AdminOrderDetailPage() {
                     </Button>
                   </div>
                 )}
+              </Card>
+
+              <Card>
+                <CardHeader title="Order workflow" description="Select the active workflow that organizes this order’s stages. Status, payment, and automation safeguards remain enforced separately." actions={<LinkButton href="/admin/order-workflows" size="sm" variant="outline">Manage workflows</LinkButton>} />
+                <div className="mt-4 space-y-3"><Select label="Assigned workflow" value={workflowId || String(order.workflowId ?? "")} onChange={(event) => setWorkflowId(event.target.value)} options={[{ value: "", label: "Choose a workflow…" }, ...(workflows.data ?? []).filter((workflow) => workflow.active || workflow.id === order.workflowId).map((workflow) => ({ value: String(workflow.id), label: `${workflow.name}${workflow.isDefault ? " (default)" : ""}` }))]} /><Button size="sm" busy={assignWorkflow.isPending} disabled={!workflowId || Number(workflowId) === order.workflowId} onClick={() => assignWorkflow.mutate({ orderId, workflowId: Number(workflowId) })}>Assign workflow</Button></div>
               </Card>
 
               <Card>
@@ -1272,7 +1323,7 @@ export function AdminOrderDetailPage() {
             <CardHeader
               title="Files on this order"
               description="Review all Phase 1 intake artifacts and Phase 2/delivery files. Toggle visibility to publish a deliverable to the customer."
-              actions={<div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" busy={bulkDownload.isPending} disabled={(files.data ?? []).filter((file) => file.category === "intake_attachment").length === 0} onClick={() => bulkDownload.mutate({ fileIds: (files.data ?? []).filter((file) => file.category === "intake_attachment").map((file) => file.id), archiveName: `${order.orderNumber}-phase-1-files` })}>Download Phase 1</Button><Button size="sm" variant="outline" busy={bulkDownload.isPending} disabled={(files.data ?? []).filter((file) => file.category !== "intake_attachment").length === 0} onClick={() => bulkDownload.mutate({ fileIds: (files.data ?? []).filter((file) => file.category !== "intake_attachment").map((file) => file.id), archiveName: `${order.orderNumber}-phase-2-and-delivery-files` })}>Download Phase 2 & delivery</Button><Button size="sm" busy={bulkDownload.isPending} disabled={(files.data ?? []).length === 0} onClick={() => bulkDownload.mutate({ fileIds: (files.data ?? []).map((file) => file.id), archiveName: `${order.orderNumber}-all-files` })}>Download all</Button><LinkButton href="/admin/files" size="sm" variant="outline">File manager</LinkButton></div>}
+              actions={<div className="flex flex-wrap gap-2"><Button size="sm" variant="primary" leadingIcon={<Upload className="size-3.5" />} onClick={() => setPhaseUploadOpen(true)}>Upload phase documents</Button><Button size="sm" variant="outline" busy={bulkDownload.isPending} disabled={(files.data ?? []).filter((file) => file.phase === "phase_1").length === 0} onClick={() => bulkDownload.mutate({ fileIds: (files.data ?? []).filter((file) => file.phase === "phase_1").map((file) => file.id), archiveName: `${order.orderNumber}-phase-1-files` })}>Download Phase 1</Button><Button size="sm" variant="outline" busy={bulkDownload.isPending} disabled={(files.data ?? []).filter((file) => file.phase === "phase_2").length === 0} onClick={() => bulkDownload.mutate({ fileIds: (files.data ?? []).filter((file) => file.phase === "phase_2").map((file) => file.id), archiveName: `${order.orderNumber}-phase-2-files` })}>Download Phase 2</Button><Button size="sm" busy={bulkDownload.isPending} disabled={(files.data ?? []).length === 0} onClick={() => bulkDownload.mutate({ fileIds: (files.data ?? []).map((file) => file.id), archiveName: `${order.orderNumber}-all-files` })}>Download all</Button><LinkButton href="/admin/files" size="sm" variant="outline">File manager</LinkButton></div>}
             />
             {(files.data ?? []).length === 0 ? (
               <p className="mt-4 text-sm text-body">No files have been uploaded to this order.</p>
@@ -1283,7 +1334,7 @@ export function AdminOrderDetailPage() {
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-ink">{file.originalName}</p>
                       <p className="mt-0.5 text-xs text-muted">
-                        {file.category === "intake_attachment" ? "Phase 1 intake" : file.phase === "phase_2" ? "Phase 2" : "Phase 2 / delivery"} · {formatBytes(file.sizeBytes)} · v{file.version} · {formatDate(file.createdAt)}
+                        {file.phase === "phase_1" ? (file.category === "intake_attachment" ? "Phase 1 intake" : "Phase 1 staff document") : file.phase === "phase_2" ? (file.category === "intake_attachment" ? "Phase 2 customer artifact" : "Phase 2 staff document") : "General / delivery"} · {formatBytes(file.sizeBytes)} · v{file.version} · {formatDate(file.createdAt)}
                       </p>
                     </div>
                     <Button
@@ -1313,6 +1364,8 @@ export function AdminOrderDetailPage() {
           </Card>
         ) : null}
       </div>
+
+      <Modal open={phaseUploadOpen} onClose={() => setPhaseUploadOpen(false)} title="Upload phase documents" description="Attach administrator documents to this order and assign them to the correct workflow phase." footer={<><Button variant="outline" onClick={() => setPhaseUploadOpen(false)}>Cancel</Button><Button busy={phaseUploading} leadingIcon={<Upload className="size-4" />} onClick={() => phaseFileInput.current?.click()}>Choose documents</Button></>}><div className="space-y-4"><Select label="Order phase" value={phaseUpload} onChange={(event) => setPhaseUpload(event.target.value as "phase_1" | "phase_2")} options={[{ value: "phase_1", label: "Phase 1" }, { value: "phase_2", label: "Phase 2" }]} /><Alert tone="info">Uploaded administrator documents are initially internal. Use the visibility control in the Files tab to publish a file to the customer.</Alert><input ref={phaseFileInput} className="hidden" type="file" multiple onChange={(event) => void uploadPhaseDocuments(event.target.files)} /></div></Modal>
 
       <ConfirmDialog
         open={deleteOpen}

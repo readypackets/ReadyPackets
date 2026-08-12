@@ -30,6 +30,24 @@ export function csrfToken(): string | null {
   return readCookie("rp_csrf");
 }
 
+/**
+ * Refresh the session-bound CSRF cookie through a same-origin, no-store endpoint.
+ * This is deliberately used only after a pre-persistence CSRF rejection, so it
+ * repairs a stale tab/session cookie without broad automatic mutation retries.
+ */
+export async function refreshCsrfToken(): Promise<string | null> {
+  const response = await fetch("/api/security/csrf", {
+    method: "GET",
+    credentials: "same-origin",
+    cache: "no-store",
+    redirect: "error",
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) return null;
+  const payload = (await response.json()) as { csrfToken?: string };
+  return payload.csrfToken ?? csrfToken();
+}
+
 export function createTrpcClient() {
   return trpc.createClient({
     links: [

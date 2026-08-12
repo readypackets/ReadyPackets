@@ -18,13 +18,14 @@ import {
 } from "lucide-react";
 import { INTEGRITY_CHOICE_LABELS } from "@shared/domain";
 import { BRAND } from "@shared/brand";
-import { trpc, errorMessage } from "@/lib/trpc";
+import { trpc, errorMessage, refreshCsrfToken } from "@/lib/trpc";
 import { formatDateTime } from "@/lib/utils";
 import { Markdown } from "@/lib/markdown";
 import { Button, LinkButton } from "@/components/ui/Button";
 import { Checkbox, Input, Textarea } from "@/components/ui/Field";
 import { Alert, Badge, Card, CardHeader, Skeleton } from "@/components/ui/Surface";
 import { ProgressBar } from "@/components/ui/DataDisplay";
+import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { PageHeader } from "@/components/layout/PortalLayout";
 
@@ -56,6 +57,7 @@ export function IntakePage() {
   // Audio recording state
   const [recording, setRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [microphonePromptOpen, setMicrophonePromptOpen] = useState(false);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const audioChunks = useRef<Blob[]>([]);
   const recordingInterval = useRef<NodeJS.Timeout | null>(null);
@@ -129,27 +131,22 @@ export function IntakePage() {
         const response = await fetch("/api/files/upload", {
           method: "POST",
           credentials: "same-origin",
-          headers: { "x-csrf-token": token, ...(isAudio ? { "x-rp-recorded-pitch": "true" } : {}) },
+          headers: { "x-rp-csrf": token, ...(isAudio ? { "x-rp-recorded-pitch": "true" } : {}) },
           body,
         });
         let payload: UploadPayload = {};
         try { payload = (await response.json()) as UploadPayload; } catch { /* handled by response status below */ }
         return { response, payload };
       };
-      const currentSession = await utils.auth.session.fetch();
-      let token = currentSession.csrfToken ?? csrfToken() ?? "";
-      let result = await post(token);
+      let token = await refreshCsrfToken();
+      let result = await post(token ?? csrfToken() ?? "");
       const csrfRejected = result.response.status === 403 && /csrf|security token/i.test(result.payload.error ?? "");
       if (csrfRejected) {
-        // A second tab or an earlier session rotation can leave the cookie stale.
-        // Fetch the server-authoritative session secret once, then retry the same
-        // in-memory files exactly once; CSRF failures occur before persistence.
-        const refreshedSession = await utils.auth.session.fetch();
-        const refreshedToken = refreshedSession.csrfToken ?? "";
-        if (refreshedToken && refreshedToken !== token) {
-          token = refreshedToken;
-          result = await post(token);
-        }
+        // A browser tab can retain a stale readable cookie after a session rotation.
+        // Refresh the server-issued cookie and retry the in-memory files once; CSRF
+        // rejections occur before file validation or persistence.
+        token = await refreshCsrfToken();
+        if (token) result = await post(token);
       }
 
       if (!result.response.ok) {
@@ -182,6 +179,11 @@ export function IntakePage() {
       toast.error("Could not delete file", errorMessage(err));
     },
   });
+
+  const requestMicrophone = () => {
+    setMicrophonePromptOpen(false);
+    void startRecording();
+  };
 
   const startRecording = async () => {
     try {
@@ -463,12 +465,14 @@ export function IntakePage() {
               <p className="text-sm font-medium text-ink">Business Pitch Idea</p>
               <p className="mt-1 text-xs text-muted">Record directly from your microphone in WebM format. Up to {limits?.maxPitchRecordings ?? 1} recording{(limits?.maxPitchRecordings ?? 1) === 1 ? "" : "s"}, maximum {Math.ceil((limits?.maxPitchLengthSeconds ?? 300) / 60)} minutes each.</p>
               {!readOnly && pitches.length < (limits?.maxPitchRecordings ?? 1) ? (
-                <div className="mt-3 flex items-center gap-2"><Button variant={recording ? "danger" : "primary"} onClick={() => recording ? stopRecording() : void startRecording()} disabled={uploading}>{recording ? `Stop recording (${recordingTime}s)` : "Record Business Pitch Idea"}</Button></div>
+                <div className="mt-3 flex items-center gap-2"><Button variant={recording ? "danger" : "primary"} onClick={() => recording ? stopRecording() : setMicrophonePromptOpen(true)} disabled={uploading}>{recording ? `Stop recording (${recordingTime}s)` : "Record Business Pitch Idea"}</Button></div>
               ) : null}
               <ul className="mt-3 space-y-2 text-sm">{pitches.map((file) => <li key={file.id} className="flex items-center justify-between gap-2 rounded border border-line px-3 py-2"><span className="truncate">{file.originalName} <Badge tone="teal">WebM recording</Badge></span>{!readOnly && <Button size="sm" variant="ghost" onClick={() => deleteFileMut.mutate({ fileId: file.id })}>Remove</Button>}</li>)}</ul>
             </div>
           </div>
         </Card>
+
+        <Modal open={microphonePromptOpen} onClose={() => setMicrophonePromptOpen(false)} title="Allow microphone access" description="ReadyPackets needs microphone access only while you record this Business Pitch Idea. Your browser will show its own permission prompt next."><div className="space-y-4"><Alert tone="info">Select <strong>Allow microphone</strong> in the browser prompt. The recording stays in your browser until you stop it, then it is uploaded as a WebM recording for this order.</Alert><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setMicrophonePromptOpen(false)}>Cancel</Button><Button onClick={requestMicrophone}>Allow microphone and record</Button></div></div></Modal>
 
         <Card id="intake-desiredOutcomes" className="hidden">
           <CardHeader
