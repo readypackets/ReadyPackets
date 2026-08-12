@@ -1881,3 +1881,8 @@ A final implementation review confirmed that excluding staff-published files fro
 TypeScript passed, all 150 automated tests passed, production client/server builds passed, the corrected server/client artifacts were deployed with timestamped rollback copies, and the production health endpoint returned `{"status":"ok"}`.
 
 Pending source-control publication after this entry.
+
+
+### Publication outcome
+
+The final staff-document order-workspace correction and session record were published to the private `main` branch as `f8acab7201212eb188923ce88d55f99890fafa9a` (`fix: show staff documents only in customer order workspace`).
