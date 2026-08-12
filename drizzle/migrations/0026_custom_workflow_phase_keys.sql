@@ -18,3 +18,22 @@ SET stages = JSON_ARRAY(
   JSON_OBJECT('key', 'closed', 'label', 'Closed', 'order', 7, 'capabilities', JSON_ARRAY())
 )
 WHERE id = 1 AND name = 'ReadyPackets standard workflow';
+
+-- Keep historical standard-workflow materials visible in their new stage workspace.
+UPDATE files
+INNER JOIN orders ON orders.id = files.order_id
+SET files.phase = CASE files.phase
+  WHEN 'phase_1' THEN 'phase_1_intake'
+  WHEN 'phase_2' THEN 'phase_2_synthesis'
+  ELSE files.phase
+END
+WHERE orders.workflow_id = 1 AND files.phase IN ('phase_1', 'phase_2');
+
+UPDATE order_questions
+INNER JOIN orders ON orders.id = order_questions.order_id
+SET order_questions.phase = CASE order_questions.phase
+  WHEN 'phase_1' THEN 'phase_1_intake'
+  WHEN 'phase_2' THEN 'phase_2_synthesis'
+  ELSE order_questions.phase
+END
+WHERE orders.workflow_id = 1 AND order_questions.phase IN ('phase_1', 'phase_2');

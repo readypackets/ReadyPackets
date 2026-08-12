@@ -1920,3 +1920,8 @@ Pending source-control publication after this entry.
 ### Publication outcome
 
 The final-deliverables separation, configurable phase workspaces, custom workflow stage capabilities, and complete session record were published to the private `main` branch as `6475fb81b9c16e5e41ab8b081a8dc15c112050f2` (`feat: add configurable phase workspaces and final deliverables`).
+
+
+### Post-deployment historical material alignment
+
+After deployment, the stage-workspace review identified that historical standard-workflow materials retained their legacy `phase_1` and `phase_2` keys while the explicit standard workflow uses `phase_1_intake` and `phase_2_synthesis`. Migration 0026 was extended and reapplied safely to map historical files and questions for orders on the standard workflow into their matching new stage keys. Production verification found 8 active `phase_1_intake` files, 1 active `phase_2_synthesis` file, and 1 `phase_2_synthesis` question. The health endpoint remained healthy.
