@@ -92,7 +92,7 @@ export function FilesPage() {
     <>
       <PageHeader
         title="My Business Packets"
-        description="Every file published to your orders. Downloads are logged for your protection and ours."
+        description="Files you uploaded to your orders. Documents published by your project team are available inside the relevant order workspace."
         actions={
           selected.size > 0 ? (
             <Button
@@ -143,7 +143,7 @@ export function FilesPage() {
         <EmptyState
           icon={FileText}
           title="No Business Packets yet"
-          description="Files appear here as your packets are completed and published. You will receive an email when something new is available."
+          description="Your uploaded files appear here. Open an individual order to view documents published to you by your project team."
         />
       ) : rows.length === 0 ? (
         <EmptyState

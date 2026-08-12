@@ -1860,3 +1860,10 @@ Pending source-control publication after this entry.
 ### Publication outcome
 
 The administrator payment controls, test-order safeguards, Business Pitch status indicators, order-scoped document visibility changes, migration, and session record were published to the private `main` branch as `8773f8c0057bd54a690dde1f4e0f1991e21abb3a` (`feat: add administrator payment and test order controls`).
+
+
+### Final order-workspace document scoping clarification
+
+The portal-wide **My Business Packets** page was updated to describe and enforce its revised role: it lists only customer-uploaded files. Staff-published documents are intentionally excluded from that cross-order library and are available to the authorized customer only inside the relevant order workspace. The customer Intake and Phase 2 pages use the per-order authorized file query, so published staff documents remain visible in their associated order. The final client-only update passed TypeScript validation, 150 automated tests, and a production client build; it was deployed with a timestamped asset rollback copy and the production health endpoint returned `{"status":"ok"}`.
+
+Pending source-control publication after this entry.
