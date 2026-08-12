@@ -313,6 +313,9 @@ export function AdminCustomersPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkTrashOpen, setBulkTrashOpen] = useState(false);
+  const [bulkDisableOpen, setBulkDisableOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string; role: string; status: string } | null>(null);
+  const [adminDeletePhrase, setAdminDeletePhrase] = useState("");
 
   // Password reset modal state
   const [resetTarget, setResetTarget] = useState<{ id: number; name: string } | null>(null);
@@ -365,11 +368,19 @@ export function AdminCustomersPage() {
     async onSuccess(result) { setSelectedIds([]); setBulkTrashOpen(false); await utils.admin.customers.invalidate(); toast.success(`${result.count} account(s) moved to trash`); },
     onError(err) { toast.error("Could not move accounts to trash", errorMessage(err)); },
   });
+  const bulkDisable = trpc.admin.bulkDisableCustomers.useMutation({
+    async onSuccess(result) { setSelectedIds([]); setBulkDisableOpen(false); await utils.admin.customers.invalidate(); toast.success(`${result.count} account(s) disabled`, "Disabled accounts are signed out and can now be moved to trash."); },
+    onError(err) { toast.error("Could not disable accounts", errorMessage(err)); },
+  });
+  const moveOneToTrash = trpc.admin.softDeleteCustomer.useMutation({
+    async onSuccess() { setDeleteTarget(null); setAdminDeletePhrase(""); await utils.admin.customers.invalidate(); toast.success("Account moved to trash"); },
+    onError(err) { toast.error("Could not move account to trash", errorMessage(err)); },
+  });
 
   const [staffEmail, setStaffEmail] = useState("");
   const [staffFirstName, setStaffFirstName] = useState("");
   const [staffLastName, setStaffLastName] = useState("");
-  const [staffRole, setStaffRole] = useState("staff");
+  const [staffRole, setStaffRole] = useState("customer");
   const [createError, setCreateError] = useState<string | null>(null);
   const [issued, setIssued] = useState<{ email: string; password: string } | null>(null);
 
@@ -389,6 +400,8 @@ export function AdminCustomersPage() {
   });
 
   const rows = (customers.data ?? []) as unknown as CustomerRow[];
+  const selectedRows = rows.filter((row) => selectedIds.includes(row.id));
+  const selectedHasAdministrator = selectedRows.some((row) => row.role === "admin");
 
   function handleSuspend(id: number) {
     setConfirmAction({
@@ -398,6 +411,14 @@ export function AdminCustomersPage() {
       variant: "danger",
       onConfirm: () => setStatusMut.mutate({ userId: id, status: "suspended" }),
     });
+  }
+
+  function handleMoveToTrash(row: CustomerRow) {
+    if (row.status !== "deactivated") {
+      toast.warning("Disable required", "Disable this account before moving it to trash.");
+      return;
+    }
+    setDeleteTarget({ id: row.id, name: row.name, role: row.role, status: row.status });
   }
 
   function handleDeactivate(id: number) {
@@ -511,7 +532,7 @@ export function AdminCustomersPage() {
                 <button type="button" title="Validate account" className="text-green-600 hover:text-green-800" onClick={() => handleValidateAccount(row.id)}>
                   <BadgeCheck className="size-4" aria-hidden="true" />
                 </button>
-                {row.status === "active" || row.status === "pending" ? (
+                {row.status === "active" || row.status === "pending" || row.status === "suspended" ? (
                   <button
                     type="button"
                     title="Suspend"
@@ -530,6 +551,14 @@ export function AdminCustomersPage() {
                     <CheckCircle2 className="size-4" aria-hidden="true" />
                   </button>
                 )}
+                <button
+                  type="button"
+                  title={row.status === "deactivated" ? "Move to trash" : "Disable before moving to trash"}
+                  className={row.status === "deactivated" ? "text-red-600 hover:text-red-800" : "text-muted hover:text-ink"}
+                  onClick={() => handleMoveToTrash(row)}
+                >
+                  <Trash2 className="size-4" aria-hidden="true" />
+                </button>
               </>
             )}
             <Link
@@ -557,7 +586,7 @@ export function AdminCustomersPage() {
                 Account trash
               </LinkButton>
               <Button onClick={() => setCreateOpen(true)} leadingIcon={<UserPlus className="size-4" aria-hidden="true" />}>
-                New staff account
+                New account
               </Button>
             </div>
           ) : null
@@ -622,7 +651,7 @@ export function AdminCustomersPage() {
         </div>
       </Card>
 
-      {session.isAdmin && selectedIds.length > 0 ? <Card className="mb-5 border-warning/40 bg-warning/5"><div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-medium text-ink">{selectedIds.length} account(s) selected</p><Button variant="danger" leadingIcon={<Trash2 className="size-4" />} onClick={() => setBulkTrashOpen(true)}>Move selected accounts to trash</Button></div></Card> : null}
+      {session.isAdmin && selectedIds.length > 0 ? <Card className="mb-5 border-warning/40 bg-warning/5"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-medium text-ink">{selectedIds.length} account(s) selected</p><p className="mt-1 text-xs text-muted">Accounts must be disabled before trash. Administrator accounts can be disabled in bulk but must be deleted individually.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" leadingIcon={<Ban className="size-4" />} onClick={() => setBulkDisableOpen(true)}>Disable selected accounts</Button><Button variant="danger" leadingIcon={<Trash2 className="size-4" />} disabled={selectedHasAdministrator || selectedRows.some((row) => row.status !== "deactivated")} onClick={() => setBulkTrashOpen(true)}>Move disabled accounts to trash</Button></div></div></Card> : null}
 
       {customers.isLoading ? (
         <div className="space-y-3">
@@ -668,7 +697,11 @@ export function AdminCustomersPage() {
         </div>
       )}
 
-      <ConfirmDialog open={bulkTrashOpen} onClose={() => setBulkTrashOpen(false)} onConfirm={() => bulkTrash.mutate({ userIds: selectedIds, confirmation: "MOVE_TO_TRASH" })} title="Move selected accounts to trash?" message={`This signs out and soft-deletes ${selectedIds.length} selected account(s). They remain restorable until the configured retention period ends.`} confirmLabel="Move to trash" cancelLabel="Cancel" variant="danger" busy={bulkTrash.isPending} />
+      <ConfirmDialog open={bulkDisableOpen} onClose={() => setBulkDisableOpen(false)} onConfirm={() => bulkDisable.mutate({ userIds: selectedIds, confirmation: "DISABLE_ACCOUNTS" })} title="Disable selected accounts?" message={`This immediately signs out and disables ${selectedIds.length} selected account(s). Disabled non-administrator accounts can then be moved to trash. Administrator accounts must be deleted individually.`} confirmLabel="Disable selected accounts" cancelLabel="Cancel" variant="danger" busy={bulkDisable.isPending} />
+      <ConfirmDialog open={bulkTrashOpen} onClose={() => setBulkTrashOpen(false)} onConfirm={() => bulkTrash.mutate({ userIds: selectedIds, confirmation: "MOVE_TO_TRASH" })} title="Move disabled accounts to trash?" message={`This moves ${selectedIds.length} disabled non-administrator account(s) to trash. They remain restorable until the configured retention period ends.`} confirmLabel="Move to trash" cancelLabel="Cancel" variant="danger" busy={bulkTrash.isPending} />
+      <Modal open={deleteTarget !== null} onClose={() => { setDeleteTarget(null); setAdminDeletePhrase(""); }} title={deleteTarget?.role === "admin" ? "Administrator account deletion" : "Move account to trash"} description={deleteTarget?.role === "admin" ? "This protected action applies only after the administrator account is disabled." : "This disabled account will be moved to the recoverable account trash."} footer={<><Button variant="outline" onClick={() => { setDeleteTarget(null); setAdminDeletePhrase(""); }}>Cancel</Button><Button variant="danger" busy={moveOneToTrash.isPending} disabled={!deleteTarget || (deleteTarget.role === "admin" && adminDeletePhrase !== "DELETE ADMIN")} onClick={() => deleteTarget && moveOneToTrash.mutate({ userId: deleteTarget.id, confirmation: "MOVE_TO_TRASH", ...(deleteTarget.role === "admin" ? { adminConfirmation: "DELETE ADMIN" as const } : {}) })}>{deleteTarget?.role === "admin" ? "Confirm administrator trash" : "Move to trash"}</Button></>}>
+        {deleteTarget?.role === "admin" ? <div className="mt-4 space-y-4"><Alert tone="danger"><strong className="text-base uppercase">Warning: you are disabling and deleting an administrator account.</strong><br />This account has already been disabled. It will be moved to trash and cannot be bulk deleted.</Alert><Input label="Type DELETE ADMIN to confirm" value={adminDeletePhrase} onChange={(event) => setAdminDeletePhrase(event.target.value)} autoComplete="off" /></div> : <Alert className="mt-4" tone="warning">The account is already disabled and will be signed out before it is moved to the recoverable trash.</Alert>}
+      </Modal>
 
       {/* Password Reset Modal */}
       {resetTarget && (
@@ -691,8 +724,8 @@ export function AdminCustomersPage() {
       <Modal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
-        title="Create a staff account"
-        description="Staff can manage orders and support. Administrators additionally control the catalogue, content, and security settings."
+        title="Create an account"
+        description="Create a customer, staff, or administrator account. Staff manage orders and support; administrators also control platform settings."
         footer={
           <>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>
@@ -744,6 +777,7 @@ export function AdminCustomersPage() {
             value={staffRole}
             onChange={(event) => setStaffRole(event.target.value)}
             options={[
+              { value: "customer", label: "Customer" },
               { value: "staff", label: "Staff" },
               { value: "admin", label: "Administrator" },
             ]}
@@ -817,6 +851,8 @@ export function AdminCustomerTrashPage() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [restoreId, setRestoreId] = useState<number | null>(null);
   const [bulkRestoreOpen, setBulkRestoreOpen] = useState(false);
+  const [purgeTarget, setPurgeTarget] = useState<TrashedCustomerRow | null>(null);
+  const [purgePhrase, setPurgePhrase] = useState("");
   const restore = trpc.admin.restoreCustomer.useMutation({
     async onSuccess() {
       setRestoreId(null);
@@ -824,6 +860,15 @@ export function AdminCustomerTrashPage() {
       toast.success("Account restored", "The account is active and visible in the customer directory again.");
     },
     onError(error) { toast.error("Could not restore account", errorMessage(error)); },
+  });
+  const purge = trpc.admin.permanentlyPurgeCustomer.useMutation({
+    async onSuccess() {
+      setPurgeTarget(null);
+      setPurgePhrase("");
+      await Promise.all([trashed.refetch(), utils.admin.customers.invalidate()]);
+      toast.success("Account permanently purged");
+    },
+    onError(error) { toast.error("Could not permanently purge account", errorMessage(error)); },
   });
   const bulkRestore = trpc.admin.bulkRestoreCustomers.useMutation({
     async onSuccess(result) {
@@ -840,11 +885,12 @@ export function AdminCustomerTrashPage() {
     { key: "account", header: "Account", cell: (row) => <div><p className="font-medium text-ink">{row.name}</p><p className="text-xs text-muted">{row.email}</p>{row.company ? <p className="mt-0.5 text-xs text-muted">{row.company}</p> : null}</div> },
     { key: "role", header: "Role", hideOnMobile: true, cell: (row) => <Badge tone={ROLE_TONES[row.role] ?? "neutral"}>{row.role}</Badge> },
     { key: "deleted", header: "Moved to trash", hideOnMobile: true, cell: (row) => <span className="text-sm text-body">{formatDate(row.deletedAt)}</span> },
-    { key: "restore", header: <span className="sr-only">Restore</span>, align: "right", cell: (row) => <Button size="sm" variant="outline" onClick={() => setRestoreId(row.id)}>Restore</Button> },
+    { key: "actions", header: <span className="sr-only">Actions</span>, align: "right", cell: (row) => <div className="flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => setRestoreId(row.id)}>Restore</Button><Button size="sm" variant="danger" onClick={() => setPurgeTarget(row)}>Purge</Button></div> },
   ];
   return <>
     <ConfirmDialog open={restoreId !== null} onClose={() => setRestoreId(null)} onConfirm={() => { if (restoreId !== null) restore.mutate({ userId: restoreId }); }} title="Restore this account?" message="The account will be reactivated and can sign in again immediately." confirmLabel="Restore account" cancelLabel="Cancel" variant="primary" busy={restore.isPending} />
     <ConfirmDialog open={bulkRestoreOpen} onClose={() => setBulkRestoreOpen(false)} onConfirm={() => bulkRestore.mutate({ userIds: selectedIds, confirmation: "RESTORE_FROM_TRASH" })} title="Restore selected accounts?" message={`This reactivates ${selectedIds.length} selected account(s) and permits them to sign in again.`} confirmLabel="Restore selected accounts" cancelLabel="Cancel" variant="primary" busy={bulkRestore.isPending} />
+    <Modal open={purgeTarget !== null} onClose={() => { setPurgeTarget(null); setPurgePhrase(""); }} title="Permanently purge account" description={purgeTarget ? `This permanently removes ${purgeTarget.name}'s account from the trash and cannot be undone.` : ""} footer={<><Button variant="outline" onClick={() => { setPurgeTarget(null); setPurgePhrase(""); }}>Cancel</Button><Button variant="danger" busy={purge.isPending} disabled={!purgeTarget || purgePhrase !== "DELETE"} onClick={() => purgeTarget && purge.mutate({ userId: purgeTarget.id, confirmation: "DELETE" })}>Permanently purge account</Button></>}><div className="mt-4 space-y-4"><Alert tone="danger"><strong className="text-base uppercase">Permanent deletion cannot be undone.</strong><br />The account must already be disabled and in trash. Associated account access and profile data will be removed.</Alert><Input label="Type DELETE to permanently purge" value={purgePhrase} onChange={(event) => setPurgePhrase(event.target.value)} autoComplete="off" /></div></Modal>
     <PageHeader title="Account trash" description="Soft-deleted accounts remain recoverable until the configured retention window expires." breadcrumb={{ href: "/admin/customers", label: "Customers" }} actions={<LinkButton href="/admin/customers" variant="outline">Back to customers</LinkButton>} />
     <Alert tone="info" className="mb-5">Restoring an account preserves its customer ID, order history, files, tickets, and activity trail.</Alert>
     {selectedIds.length > 0 ? <Card className="mb-5 border-success/40 bg-success/5"><div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-medium text-ink">{selectedIds.length} account(s) selected</p><Button variant="primary" onClick={() => setBulkRestoreOpen(true)}>Restore selected accounts</Button></div></Card> : null}

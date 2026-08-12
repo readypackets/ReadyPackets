@@ -1722,3 +1722,30 @@ The paid-order gating source and complete session record are ready for final int
 ### Publication outcome
 
 The Stripe-confirmed paid-order access gate, checkout-only customer navigation, post-payment activation safeguards, validation record, and complete session log were committed and pushed to the private `readypackets/ReadyPackets` `main` branch as `7a83e92448856c8e57517bb26cd3f7e162791580` with the message `fix: gate customer orders on Stripe payment`. A final log-only publication commit follows so GitHub contains this outcome as well as the implementation. The production release marker is updated after that closing commit is pushed.
+
+
+---
+
+## 2026-08-12 — Account lifecycle deletion and trash safeguards
+
+### User request
+
+The user requested that every account be disabled before it can be moved to trash; that accounts can be bulk-disabled and bulk-deleted; that administrator accounts cannot be bulk-deleted and require a prominent double confirmation before individual deletion; that administrators can create customer-role accounts; and that permanently purging a trashed account requires an explicit typed `DELETE` confirmation.
+
+### Implemented safeguards
+
+The administrator customer directory now has a server-enforced lifecycle sequence: active accounts must first be deactivated, which revokes all sessions, and only then can they be soft-deleted to recoverable trash. The client offers bulk disable for up to 200 selected accounts, followed by bulk trash only for already-disabled, non-administrator accounts. Server validation rejects bulk deletion whenever any selected account has the administrator role, rejects all trash moves if a target is not disabled, and rejects self-targeting operations.
+
+Individual trash controls were added to the account table. A non-disabled target receives an explicit disable-required notice. For administrator targets, the deletion dialog displays a prominent uppercase warning that an administrator account is being disabled and deleted; the account must already be disabled, the operator must enter exactly `DELETE ADMIN`, and a separate confirm action is required. The server independently requires both the general `MOVE_TO_TRASH` confirmation and the administrator phrase; user-interface controls alone cannot bypass the rule.
+
+The account creation dialog is now named "Create an account" and offers Customer, Staff, and Administrator roles. The existing server procedure now validates and supports all three roles, still generates a temporary password server-side, and requires a password change at first sign-in.
+
+Account Trash now includes individual **Purge** controls. Permanent purge is available only for an account already soft-deleted following disablement. The dialog contains a prominent irreversible-deletion warning and enables the purge control only when the administrator types exactly `DELETE`; the server also requires the matching `DELETE` literal. The transaction removes the account and its remaining portal-announcement recipient relation before deleting the user record. Production foreign-key metadata was inspected to confirm this is the only direct user-account foreign-key dependency.
+
+### Validation and deployment
+
+TypeScript completed with zero errors. The full automated suite passed with **150 tests**. Client and server production builds succeeded. The live server/client release was deployed with timestamped rollback copies, the service restarted cleanly, and the health endpoint returned `{"status":"ok"}`. No schema migration was required.
+
+### Publication pending
+
+The account lifecycle source changes and this full session record are ready for final integrity review and publication to the private repository. A closing session-log publication entry will be appended after the release commit is pushed.

@@ -893,7 +893,7 @@ export const adminRouter = router({
         email: z.string().trim().toLowerCase().email().max(254),
         firstName: z.string().trim().min(1).max(80),
         lastName: z.string().trim().min(1).max(80),
-        role: z.enum(["staff", "admin"]),
+        role: z.enum(["customer", "staff", "admin"]),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -921,24 +921,35 @@ export const adminRouter = router({
       return { ok: true as const, userId: user.id, temporaryPassword: temporary };
     }),
 
-  softDeleteCustomer: adminProcedure
-    .input(z.object({ userId: z.number().int().positive() }))
+  bulkDisableCustomers: adminProcedure
+    .input(z.object({ userIds: z.array(z.number().int().positive()).min(1).max(200), confirmation: z.literal("DISABLE_ACCOUNTS") }))
     .mutation(async ({ ctx, input }) => {
-      if (input.userId === ctx.session.user.id) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "You cannot delete your own account." });
+      const ids = [...new Set(input.userIds)].filter((id) => id !== ctx.session.user.id);
+      if (ids.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "You cannot disable your own account." });
+      const rows = await db.select({ id: users.id }).from(users).where(and(inArray(users.id, ids), isNull(users.deletedAt)));
+      if (rows.length === 0) throw new TRPCError({ code: "NOT_FOUND", message: "No active accounts were found to disable." });
+      for (const row of rows) {
+        await setUserStatus(row.id, "deactivated");
+        await revokeAllUserSessions(row.id, "status_deactivated");
+      }
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "customer.bulk_disabled", entityType: "user", entityId: 0, severity: "warning", summary: `Administrator disabled ${rows.length} account(s) before lifecycle action`, ipAddress: ctx.clientIp });
+      return { ok: true as const, count: rows.length };
+    }),
+
+  softDeleteCustomer: adminProcedure
+    .input(z.object({ userId: z.number().int().positive(), confirmation: z.literal("MOVE_TO_TRASH"), adminConfirmation: z.literal("DELETE ADMIN").optional() }))
+    .mutation(async ({ ctx, input }) => {
+      if (input.userId === ctx.session.user.id) throw new TRPCError({ code: "BAD_REQUEST", message: "You cannot delete your own account." });
+      const rows = await db.select({ id: users.id, role: users.role, status: users.status, deletedAt: users.deletedAt }).from(users).where(eq(users.id, input.userId)).limit(1);
+      const target = rows[0];
+      if (!target || target.deletedAt) throw new TRPCError({ code: "NOT_FOUND", message: "Active account not found." });
+      if (target.status !== "deactivated") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Disable this account before moving it to trash." });
+      if (target.role === "admin" && input.adminConfirmation !== "DELETE ADMIN") {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Administrator deletion requires the exact confirmation DELETE ADMIN." });
       }
       await softDeleteUser(input.userId);
       await revokeAllUserSessions(input.userId, "account_deleted");
-      void recordActivity({
-        actorUserId: ctx.session.user.id,
-        actorRole: "admin",
-        action: "customer.soft_delete",
-        entityType: "user",
-        entityId: input.userId,
-        severity: "warning",
-        summary: "Administrator soft-deleted a customer account",
-        ipAddress: ctx.clientIp,
-      });
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: target.role === "admin" ? "administrator.soft_delete" : "customer.soft_delete", entityType: "user", entityId: input.userId, severity: "critical", summary: `Administrator moved ${target.role} account to trash after disablement`, changes: { role: target.role, priorStatus: target.status }, ipAddress: ctx.clientIp });
       return { ok: true as const };
     }),
 
@@ -962,9 +973,13 @@ export const adminRouter = router({
     .mutation(async ({ ctx, input }) => {
       const ids = [...new Set(input.userIds)].filter((id) => id !== ctx.session.user.id);
       if (ids.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "You cannot move your own account to trash." });
-      for (const userId of ids) { await softDeleteUser(userId); await revokeAllUserSessions(userId, "account_deleted"); }
-      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "customer.bulk_soft_delete", entityType: "user", entityId: 0, severity: "warning", summary: `Administrator moved ${ids.length} customer account(s) to trash`, ipAddress: ctx.clientIp });
-      return { ok: true as const, count: ids.length };
+      const rows = await db.select({ id: users.id, role: users.role, status: users.status }).from(users).where(and(inArray(users.id, ids), isNull(users.deletedAt)));
+      if (rows.some((row) => row.role === "admin")) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Administrator accounts cannot be bulk deleted. Disable and delete each administrator individually." });
+      const notDisabled = rows.filter((row) => row.status !== "deactivated");
+      if (notDisabled.length > 0) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Disable every selected account before moving it to trash." });
+      for (const row of rows) { await softDeleteUser(row.id); await revokeAllUserSessions(row.id, "account_deleted"); }
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "customer.bulk_soft_delete", entityType: "user", entityId: 0, severity: "warning", summary: `Administrator moved ${rows.length} disabled non-administrator account(s) to trash`, ipAddress: ctx.clientIp });
+      return { ok: true as const, count: rows.length };
     }),
 
   bulkRestoreCustomers: adminProcedure
@@ -976,6 +991,21 @@ export const adminRouter = router({
       for (const row of rows) await restoreUser(row.id);
       void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "customer.bulk_restore", entityType: "user", entityId: 0, summary: `Administrator restored ${rows.length} account(s) from trash`, ipAddress: ctx.clientIp });
       return { ok: true as const, count: rows.length };
+    }),
+
+  permanentlyPurgeCustomer: adminProcedure
+    .input(z.object({ userId: z.number().int().positive(), confirmation: z.literal("DELETE") }))
+    .mutation(async ({ ctx, input }) => {
+      const rows = await db.select({ id: users.id, role: users.role, status: users.status, deletedAt: users.deletedAt }).from(users).where(eq(users.id, input.userId)).limit(1);
+      const target = rows[0];
+      if (!target || !target.deletedAt) throw new TRPCError({ code: "NOT_FOUND", message: "Trashed account not found." });
+      if (target.status !== "deleted") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Only disabled accounts moved to trash can be permanently purged." });
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`DELETE FROM portal_announcement_recipients WHERE user_id = ${target.id}`);
+        await tx.delete(users).where(eq(users.id, target.id));
+      });
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "customer.permanently_purged", entityType: "user", entityId: input.userId, severity: "critical", summary: `Administrator permanently purged a trashed ${target.role} account`, changes: { role: target.role }, ipAddress: ctx.clientIp });
+      return { ok: true as const };
     }),
 
   restoreCustomer: adminProcedure
