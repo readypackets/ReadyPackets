@@ -32,7 +32,7 @@ export default function Checkout() {
   const [couponError, setCouponError] = useState<string | null>(null);
   const [isApplyingCoupon, setIsApplyingCoupon] = useState(false);
 
-  const order = trpc.orders.detail.useQuery(
+  const order = trpc.orders.checkoutDetail.useQuery(
     { orderId },
     { enabled: orderId > 0 },
   );
@@ -207,7 +207,7 @@ export default function Checkout() {
         </button>
       </Card>
 
-      <div className="text-center"><button onClick={() => navigate(`/portal/orders/${orderId}`)} className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">← Back to order</button></div>
+      <div className="text-center"><button onClick={() => navigate("/portal/orders")} className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">← Back to my orders</button></div>
     </div>
   );
 }

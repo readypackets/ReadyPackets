@@ -148,7 +148,7 @@ export const filesRouter = router({
     const ownedOrders = await db
       .select({ id: orders.id, orderNumber: orders.orderNumber, status: orders.status })
       .from(orders)
-      .where(and(eq(orders.userId, ctx.session.user.id), isNull(orders.deletedAt)));
+      .where(and(eq(orders.userId, ctx.session.user.id), eq(orders.paymentStatus, "paid"), isNull(orders.deletedAt)));
 
     if (ownedOrders.length === 0) return [];
 

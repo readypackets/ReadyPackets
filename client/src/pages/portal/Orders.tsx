@@ -135,11 +135,11 @@ export function OrdersListPage() {
       align: "right",
       cell: (order) => (
         <Link
-          href={`/portal/orders/${order.id}`}
+          href={order.paymentStatus === "paid" ? `/portal/orders/${order.id}` : `/portal/checkout?order=${order.id}`}
           className="inline-flex items-center gap-1 text-sm font-semibold text-teal-dark no-underline hover:text-teal"
-          aria-label={`View order ${order.orderNumber}`}
+          aria-label={order.paymentStatus === "paid" ? `View order ${order.orderNumber}` : `Complete payment for order ${order.orderNumber}`}
         >
-          View
+          {order.paymentStatus === "paid" ? "View" : "Complete payment"}
           <ArrowRight className="size-4" aria-hidden="true" />
         </Link>
       ),

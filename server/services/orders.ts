@@ -51,6 +51,34 @@ export interface CreateOrderInput {
   ipAddress?: string | null;
 }
 
+export async function activatePaidOrder(orderId: number): Promise<void> {
+  const rows = await db
+    .select({ id: orders.id, userId: orders.userId, orderNumber: orders.orderNumber, paymentStatus: orders.paymentStatus })
+    .from(orders)
+    .where(and(eq(orders.id, orderId), isNull(orders.deletedAt)))
+    .limit(1);
+  const order = rows[0];
+  if (!order || order.paymentStatus !== "paid") return;
+
+  void queueFullOrderFolderProvisioning(orderId).catch((error) =>
+    logger.warn("sharepoint.full_order_provisioning.queue_failed", { orderId, error: String(error) }),
+  );
+  void fireAutomations("order.created", { userId: order.userId });
+  void fireAutomations("payment.succeeded", { userId: order.userId });
+  void applyOrderAutomationRules(orderId, "payment_status", "paid").catch((error) =>
+    logger.warn("order.payment_activation.automation_failed", { orderId, error: String(error) }),
+  );
+  void recordActivity({
+    actorUserId: null,
+    actorRole: "system",
+    action: "order.activated_after_payment",
+    entityType: "order",
+    entityId: orderId,
+    summary: `Order ${order.orderNumber} activated after Stripe-confirmed payment`,
+    changes: { paymentStatus: "paid" },
+  });
+}
+
 export async function createOrder(input: CreateOrderInput) {
   if (input.selections.length === 0) {
     throw new OrderStateError("Select at least one packet before placing an order.");
@@ -139,14 +167,9 @@ export async function createOrder(input: CreateOrderInput) {
     ipAddress: input.ipAddress ?? null,
   });
 
-  // Create the full SharePoint hierarchy asynchronously. This is non-blocking,
-  // so an order remains valid even when Graph is not configured yet.
-  void queueFullOrderFolderProvisioning(orderId).catch((error) =>
-    logger.warn("sharepoint.full_order_provisioning.queue_failed", { orderId, error: String(error) }),
-  );
-
-  // Fire order.created automation triggers (non-fatal).
-  void fireAutomations("order.created", { userId: input.userId });
+  // A pre-payment order is a checkout record, not an active engagement. Folder
+  // provisioning and order-created automations are deferred until the signed
+  // Stripe webhook confirms settlement.
 
   return { orderId, orderNumber, quote };
 }
@@ -471,17 +494,27 @@ export async function assertOrderAccess(
   }
 
   const rows = await db
-    .select({ id: orders.id })
+    .select({ id: orders.id, paymentStatus: orders.paymentStatus })
     .from(orders)
     .where(and(eq(orders.id, orderId), eq(orders.userId, userId), isNull(orders.deletedAt)))
     .limit(1);
-  if (rows[0]) return;
+  if (rows[0]) {
+    if (rows[0].paymentStatus !== "paid") {
+      throw new OrderStateError("Payment confirmation is required before this order can be used. Complete checkout and wait for Stripe confirmation.");
+    }
+    return;
+  }
 
   const shared = await db.execute(
-    sql`SELECT id FROM order_shares WHERE order_id = ${orderId} AND shared_with_user_id = ${userId} AND revoked_at IS NULL LIMIT 1`,
+    sql`SELECT o.payment_status AS paymentStatus FROM order_shares os INNER JOIN orders o ON o.id = os.order_id WHERE os.order_id = ${orderId} AND os.shared_with_user_id = ${userId} AND os.revoked_at IS NULL AND o.deleted_at IS NULL LIMIT 1`,
   );
-  const sharedRows = (shared as unknown as [unknown[]])[0];
-  if (Array.isArray(sharedRows) && sharedRows.length > 0) return;
+  const sharedRows = (shared as unknown as [{ paymentStatus: string }[]])[0];
+  if (Array.isArray(sharedRows) && sharedRows.length > 0) {
+    if (sharedRows[0]?.paymentStatus !== "paid") {
+      throw new OrderStateError("Payment confirmation is required before this order can be used.");
+    }
+    return;
+  }
 
   // A missing order and a forbidden order are indistinguishable to the caller.
   throw new OrderStateError("Order not found.");

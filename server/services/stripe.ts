@@ -32,6 +32,7 @@ import {
 import { env } from "../config/env.js";
 import { logger } from "../observability/logger.js";
 import { recordActivity, recordSecurityEvent } from "../observability/audit.js";
+import { activatePaidOrder } from "./orders.js";
 
 let _stripe: Stripe | null = null;
 let _stripeKeyFromDb: string | null | undefined = undefined; // undefined = not yet loaded
@@ -394,6 +395,10 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     .update(orders)
     .set({ paymentStatus: "paid" })
     .where(eq(orders.id, orderId));
+
+  // Only the signed checkout webhook can activate customer access, folders, and
+  // downstream order automations. Browser success redirects are never trusted.
+  await activatePaidOrder(orderId);
 
   // Increment coupon redemption count.
   if (couponId) {

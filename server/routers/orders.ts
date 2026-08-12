@@ -15,6 +15,7 @@ import {
   files,
   orderAnswers,
   orderAnswerHistory,
+  orderItems,
   orderNotes,
   orderQuestions,
   orderShares,
@@ -60,6 +61,30 @@ export const ordersRouter = router({
   list: protectedProcedure.query(async ({ ctx }) =>
     listOrdersForUser(ctx.session.user.id),
   ),
+
+  checkoutDetail: protectedProcedure
+    .input(z.object({ orderId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      const orderRows = await db
+        .select({
+          id: orders.id,
+          orderNumber: orders.orderNumber,
+          paymentStatus: orders.paymentStatus,
+          subtotalCents: orders.subtotalCents,
+          discountCents: orders.discountCents,
+          totalCents: orders.totalCents,
+        })
+        .from(orders)
+        .where(and(eq(orders.id, input.orderId), eq(orders.userId, ctx.session.user.id), isNull(orders.deletedAt)))
+        .limit(1);
+      const order = orderRows[0];
+      if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Order not found." });
+      const items = await db
+        .select({ id: orderItems.id, name: orderItems.name, tier: orderItems.tier, unitPriceCents: orderItems.unitPriceCents, quantity: orderItems.quantity })
+        .from(orderItems)
+        .where(eq(orderItems.orderId, order.id));
+      return { order, items };
+    }),
 
   detail: protectedProcedure
     .input(z.object({ orderId: z.number().int().positive() }))

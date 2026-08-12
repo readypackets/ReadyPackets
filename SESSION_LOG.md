@@ -1688,3 +1688,32 @@ The client source and complete session record are ready for final integrity revi
 ### Publication outcome
 
 The intake upload CSRF refresh and one-time retry repair, validation record, and complete session log were committed and pushed to the private `readypackets/ReadyPackets` `main` branch as `d055df4106c3247643b2896d231d8c7312015896` with the message `fix: retry intake upload after CSRF refresh`. A final log-only publication commit follows so GitHub contains this outcome as well as the implementation. The production release marker is updated after that closing commit is pushed.
+
+
+---
+
+## 2026-08-12 — Stripe-confirmed paid-order access gate
+
+### User report
+
+The user reported that a customer could create an order, decline or omit payment, and still use the order in the customer portal. The user requested that order creation/use be restricted until payment is confirmed by Stripe.
+
+### Root cause
+
+The platform intentionally created an order row before redirecting the customer to Stripe Checkout so the provider had a stable internal order reference. Stripe’s signed webhook already updated `orders.payment_status` to `paid`, but the shared customer `assertOrderAccess` guard checked ownership/share only and did not require payment. The order detail UI also linked pre-payment orders to intake actions. Resource provisioning and `order.created` automation were initiated on creation rather than after settlement.
+
+### Delivered payment gate
+
+The system now treats a pre-payment order as a checkout record, not an active engagement. Customer access to detail, intake, MNDA, questions, files, downloads, notes, sharing, and customer-order procedures that depend on `assertOrderAccess` requires `payment_status = paid`. Staff and administrators retain operational access. Customer file listings are additionally filtered to paid orders. Pending-payment cards in My Orders and the dashboard route back to secure checkout instead of the order workspace.
+
+Created-but-unpaid orders remain visible solely for their owner to resume payment. A new owner-only checkout summary procedure returns only the item and price data necessary to pay; it cannot expose the protected order workspace. Browser redirects from Stripe are not trusted to activate access.
+
+The signed Stripe `checkout.session.completed` webhook is now the exclusive activation path. It updates the payment record and order to `paid`, then provisions the order’s SharePoint hierarchy, fires the existing `order.created` and `payment.succeeded` email automations, applies paid-payment order rules, and records an activation audit event. Duplicate signed webhooks remain idempotent because an already-paid order returns before activation side effects.
+
+### Stripe configuration status and deployment
+
+Production settings were checked without reading or logging secret values. `stripe.secret_key`, `stripe.publishable_key`, and `stripe.webhook_secret` are all present. TypeScript passed with zero errors; the full automated suite passed with **150 tests**; client/server production builds succeeded. Server and client were deployed with timestamped rollback copies and the production health endpoint returned `{"status":"ok"}`.
+
+### Publication pending
+
+The paid-order gating source and complete session record are ready for final integrity review and publication to the private repository. A final session-log publication entry will be appended after the commit is pushed.

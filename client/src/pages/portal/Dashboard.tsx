@@ -232,7 +232,7 @@ export function PortalDashboard() {
                 {recentOrders.map((order) => (
                   <li key={order.id} className="py-4 first:pt-0 last:pb-0">
                     <Link
-                      href={`/portal/orders/${order.id}`}
+                      href={order.paymentStatus === "paid" ? `/portal/orders/${order.id}` : `/portal/checkout?order=${order.id}`}
                       className="group flex items-start justify-between gap-4 no-underline"
                     >
                       <div className="min-w-0">
