@@ -1822,3 +1822,8 @@ A follow-up customer report clarified that the browser had already granted micro
 This refinement preserves the browser’s authority over actual microphone permission while preventing redundant application-level prompts after approval. TypeScript validation and the full 150-test suite passed, the production client build passed, the client assets were deployed with a timestamped rollback copy, and the six-second post-restart production health check returned `{"status":"ok"}`.
 
 Pending source-control publication after this entry.
+
+
+### Publication outcome
+
+The granted-permission microphone refinement and session record were published to the private `main` branch as `d67b9dc63575caf5f3d9f2d6474b05ad4fa90c0b` (`fix: skip redundant microphone prompt after permission grant`).
