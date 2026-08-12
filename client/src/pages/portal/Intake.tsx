@@ -34,6 +34,7 @@ export function IntakePage() {
   const toast = useToast();
   const [, navigate] = useLocation();
 
+  const utils = trpc.useUtils();
   const questions = trpc.intake.questions.useQuery();
   const outcomes = trpc.intake.outcomes.useQuery();
   const existing = trpc.intake.get.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
@@ -114,39 +115,58 @@ export function IntakePage() {
     if (!selected || selected.length === 0) return;
     setUploading(true);
     try {
-      const body = new FormData();
-      for (const file of Array.from(selected)) body.append("files", file);
-      body.append("orderId", String(orderId));
-      body.append("category", "intake_attachment");
-      if (isAudio) body.append("recordedPitch", "true");
-
-      const response = await fetch("/api/files/upload", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "x-csrf-token": csrfToken() ?? "", ...(isAudio ? { "x-rp-recorded-pitch": "true" } : {}) },
-        body,
-      });
-      const payload = (await response.json()) as {
+      type UploadPayload = {
         error?: string;
         files?: { originalName: string }[];
         rejected?: { name: string; reason: string }[];
       };
+      const post = async (token: string) => {
+        const body = new FormData();
+        for (const file of Array.from(selected)) body.append("files", file);
+        body.append("orderId", String(orderId));
+        body.append("category", "intake_attachment");
+        if (isAudio) body.append("recordedPitch", "true");
+        const response = await fetch("/api/files/upload", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "x-csrf-token": token, ...(isAudio ? { "x-rp-recorded-pitch": "true" } : {}) },
+          body,
+        });
+        let payload: UploadPayload = {};
+        try { payload = (await response.json()) as UploadPayload; } catch { /* handled by response status below */ }
+        return { response, payload };
+      };
+      const currentSession = await utils.auth.session.fetch();
+      let token = currentSession.csrfToken ?? csrfToken() ?? "";
+      let result = await post(token);
+      const csrfRejected = result.response.status === 403 && /csrf|security token/i.test(result.payload.error ?? "");
+      if (csrfRejected) {
+        // A second tab or an earlier session rotation can leave the cookie stale.
+        // Fetch the server-authoritative session secret once, then retry the same
+        // in-memory files exactly once; CSRF failures occur before persistence.
+        const refreshedSession = await utils.auth.session.fetch();
+        const refreshedToken = refreshedSession.csrfToken ?? "";
+        if (refreshedToken && refreshedToken !== token) {
+          token = refreshedToken;
+          result = await post(token);
+        }
+      }
 
-      if (!response.ok) {
-        toast.error("Upload rejected", payload.error ?? "The upload could not be processed.");
+      if (!result.response.ok) {
+        toast.error("Upload rejected", result.payload.error ?? "The upload could not be processed.");
       } else {
-        const accepted = payload.files?.length ?? 0;
+        const accepted = result.payload.files?.length ?? 0;
         toast.success(`${accepted} file${accepted === 1 ? "" : "s"} uploaded`);
-        if (payload.rejected && payload.rejected.length > 0) {
+        if (result.payload.rejected && result.payload.rejected.length > 0) {
           toast.error(
             "Some files were rejected",
-            payload.rejected.map((r) => `${r.name}: ${r.reason}`).join("\n"),
+            result.payload.rejected.map((r) => `${r.name}: ${r.reason}`).join("\n"),
           );
         }
         await orderFiles.refetch();
       }
     } catch (err) {
-      toast.error("Upload failed", "A network error occurred.");
+      toast.error("Upload failed", "A network error occurred. Please try again.");
     } finally {
       setUploading(false);
       if (fileInput.current) fileInput.current.value = "";

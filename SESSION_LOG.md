@@ -1660,3 +1660,26 @@ The MFA policy source, tests, and session record are ready for integrity review 
 ### Publication outcome
 
 The configurable role-based MFA policy, Security Centre controls, SAML/local/magic-link enforcement alignment, MFA policy regression tests, and complete session record were committed and pushed to the private `readypackets/ReadyPackets` `main` branch as `644c1436c5d489d47a37046b0fe25dcb1b8e381d` with the message `feat: add configurable MFA enforcement policy`. A final log-only publication commit follows so GitHub contains this outcome as well as the implementation. The production release marker is updated after that closing commit is pushed.
+
+
+---
+
+## 2026-08-12 — Customer intake upload CSRF refresh repair
+
+### User report
+
+A customer received the toast `Upload rejected — Your security token expired. Reload the page and try again.` while uploading Phase 1 supporting documents from the order intake page.
+
+### Root cause and repair
+
+The direct multipart upload route correctly rejected a stale anti-CSRF token. The intake page previously read only the browser CSRF cookie at upload time, so a session rotation or stale cookie made the customer reload the entire page before retrying. The route remained secure but the recovery experience was poor.
+
+The intake upload flow now obtains the server-authoritative `auth.session` CSRF secret immediately before the multipart request. If the initial request still receives the specific pre-persistence CSRF rejection, it fetches the current authoritative session secret once and retries the same in-memory file(s) exactly once. It does not retry generic failures, does not disable CSRF validation, and does not retry after the server begins file persistence. A stale cookie therefore no longer blocks a valid customer upload, while a genuine unauthenticated or CSRF attack remains rejected.
+
+### Validation and deployment
+
+TypeScript passed with zero errors. The full automated suite passed with **150 tests**. Client and server production builds completed successfully. The client repair was deployed with a timestamped rollback copy, the application restarted, and the production health check returned `{"status":"ok"}`.
+
+### Publication pending
+
+The client source and complete session record are ready for final integrity review and publication to the private repository. A final session-log publication entry will be appended after the commit is pushed.
