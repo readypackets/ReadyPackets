@@ -11,6 +11,7 @@ import { z } from "zod";
 import { db } from "../db/client.js";
 import {
   changelogEntries,
+  changelogEntryVersions,
   contactMessages,
   emailTemplates,
   emailLog,
@@ -1429,7 +1430,7 @@ export const adminRouter = router({
         title: z.string().trim().min(3).max(190),
         bodyMarkdown: z.string().trim().min(10).max(20_000),
         entryType: z.enum(["feature", "improvement", "fix", "security"]).default("improvement"),
-        isPublic: z.boolean().default(true),
+        isPublic: z.boolean().default(false),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -1441,11 +1442,49 @@ export const adminRouter = router({
         isPublic: input.isPublic,
         createdByUserId: ctx.session.user.id,
       });
-      return {
-        ok: true as const,
-        id: insertedId(inserted),
-      };
+      const id = insertedId(inserted);
+      await db.insert(changelogEntryVersions).values({
+        changelogEntryId: id,
+        revisionNumber: 1,
+        version: input.version,
+        title: input.title,
+        bodyMarkdown: input.bodyMarkdown,
+        entryType: input.entryType,
+        isPublic: input.isPublic,
+        changeKind: input.isPublic ? "published" : "draft",
+        changedByUserId: ctx.session.user.id,
+      });
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: input.isPublic ? "changelog.publish" : "changelog.draft_created", entityType: "changelog_entry", entityId: id, severity: "notice", summary: `${input.isPublic ? "Published" : "Saved draft"} release ${input.version}: ${input.title}`, ipAddress: ctx.clientIp });
+      return { ok: true as const, id };
     }),
+
+  updateChangelogEntry: adminProcedure
+    .input(z.object({ id: z.number().int().positive(), version: z.string().trim().min(1).max(32), title: z.string().trim().min(3).max(190), bodyMarkdown: z.string().trim().min(10).max(20_000), entryType: z.enum(["feature", "improvement", "fix", "security"]) }))
+    .mutation(async ({ ctx, input }) => {
+      const current = (await db.select().from(changelogEntries).where(eq(changelogEntries.id, input.id)).limit(1))[0];
+      if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Release entry not found." });
+      await db.update(changelogEntries).set({ version: input.version, title: input.title, bodyMarkdown: input.bodyMarkdown, entryType: input.entryType }).where(eq(changelogEntries.id, input.id));
+      const previous = (await db.select({ revisionNumber: changelogEntryVersions.revisionNumber }).from(changelogEntryVersions).where(eq(changelogEntryVersions.changelogEntryId, input.id)).orderBy(desc(changelogEntryVersions.revisionNumber)).limit(1))[0];
+      await db.insert(changelogEntryVersions).values({ changelogEntryId: input.id, revisionNumber: (previous?.revisionNumber ?? 0) + 1, version: input.version, title: input.title, bodyMarkdown: input.bodyMarkdown, entryType: input.entryType, isPublic: current.isPublic, changeKind: "edited", changedByUserId: ctx.session.user.id });
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "changelog.updated", entityType: "changelog_entry", entityId: input.id, summary: `Updated release ${input.version}: ${input.title}`, ipAddress: ctx.clientIp });
+      return { ok: true as const };
+    }),
+
+  setChangelogEntryPublication: adminProcedure
+    .input(z.object({ id: z.number().int().positive(), isPublic: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      const current = (await db.select().from(changelogEntries).where(eq(changelogEntries.id, input.id)).limit(1))[0];
+      if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Release entry not found." });
+      await db.update(changelogEntries).set({ isPublic: input.isPublic, ...(input.isPublic ? { releasedAt: new Date() } : {}) }).where(eq(changelogEntries.id, input.id));
+      const previous = (await db.select({ revisionNumber: changelogEntryVersions.revisionNumber }).from(changelogEntryVersions).where(eq(changelogEntryVersions.changelogEntryId, input.id)).orderBy(desc(changelogEntryVersions.revisionNumber)).limit(1))[0];
+      await db.insert(changelogEntryVersions).values({ changelogEntryId: input.id, revisionNumber: (previous?.revisionNumber ?? 0) + 1, version: current.version, title: current.title, bodyMarkdown: current.bodyMarkdown, entryType: current.entryType, isPublic: input.isPublic, changeKind: input.isPublic ? "published" : "unpublished", changedByUserId: ctx.session.user.id });
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: input.isPublic ? "changelog.publish" : "changelog.unpublish", entityType: "changelog_entry", entityId: input.id, severity: "notice", summary: `${input.isPublic ? "Published" : "Unpublished"} release ${current.version}: ${current.title}`, ipAddress: ctx.clientIp });
+      return { ok: true as const };
+    }),
+
+  changelogHistory: adminProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ input }) => db.select().from(changelogEntryVersions).where(eq(changelogEntryVersions.changelogEntryId, input.id)).orderBy(desc(changelogEntryVersions.revisionNumber))),
 
   policies: adminProcedure.query(async () => {
     const documents = await db.select().from(policyDocuments).orderBy(asc(policyDocuments.id));

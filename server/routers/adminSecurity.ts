@@ -38,6 +38,8 @@ import { recordActivity, recordSecurityEvent } from "../observability/audit.js";
 import {
   DEFAULT_RATE_LIMITS,
   getAllFeatureFlags,
+  getSetting,
+  getSettingBool,
   invalidateSettingsCache,
   setFeatureFlag,
   setSetting,
@@ -592,6 +594,34 @@ export const adminSecurityRouter = router({
       return { ok: true as const };
     }),
 
+  maintenanceConfig: adminProcedure.query(async () => {
+    const [enabled, blocksLogin, blocksRegistration, showOnHomepage, message, estimatedCompletion] = await Promise.all([
+      getSettingBool("maintenance.enabled", false),
+      getSettingBool("maintenance.blocks_login", false),
+      getSettingBool("maintenance.blocks_registration", false),
+      getSettingBool("maintenance.show_on_homepage", true),
+      getSetting("maintenance.message"),
+      getSetting("maintenance.estimated_completion"),
+    ]);
+    return { enabled, blocksLogin, blocksRegistration, showOnHomepage, message: message ?? "We are performing scheduled maintenance. Some features may be briefly unavailable.", estimatedCompletion: estimatedCompletion ?? "" };
+  }),
+
+  updateMaintenanceConfig: adminProcedure
+    .input(z.object({ enabled: z.boolean(), blocksLogin: z.boolean(), blocksRegistration: z.boolean(), showOnHomepage: z.boolean(), message: z.string().trim().min(3).max(500), estimatedCompletion: z.string().trim().max(120).optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await Promise.all([
+        setSetting("maintenance.enabled", String(input.enabled), { category: "maintenance", valueType: "boolean", userId: ctx.session.user.id }),
+        setSetting("maintenance.blocks_login", String(input.blocksLogin), { category: "maintenance", valueType: "boolean", userId: ctx.session.user.id }),
+        setSetting("maintenance.blocks_registration", String(input.blocksRegistration), { category: "maintenance", valueType: "boolean", userId: ctx.session.user.id }),
+        setSetting("maintenance.show_on_homepage", String(input.showOnHomepage), { category: "maintenance", valueType: "boolean", userId: ctx.session.user.id }),
+        setSetting("maintenance.message", input.message, { category: "maintenance", valueType: "string", userId: ctx.session.user.id }),
+        setSetting("maintenance.estimated_completion", input.estimatedCompletion || null, { category: "maintenance", valueType: "string", userId: ctx.session.user.id }),
+      ]);
+      if (input.enabled) void notifyMaintenanceStart(); else void notifyMaintenanceEnd();
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "maintenance.configured", entityType: "maintenance", entityId: "global", severity: "warning", summary: `Maintenance ${input.enabled ? "enabled" : "disabled"}; login ${input.blocksLogin ? "gated" : "open"}; registration ${input.blocksRegistration ? "gated" : "open"}`, changes: { enabled: input.enabled, blocksLogin: input.blocksLogin, blocksRegistration: input.blocksRegistration, showOnHomepage: input.showOnHomepage }, ipAddress: ctx.clientIp });
+      return { ok: true as const };
+    }),
+
   featureFlags: adminProcedure.query(async () => {
     const rows = await db.select().from(featureFlags).orderBy(featureFlags.flagKey);
     const effective = await getAllFeatureFlags();
@@ -657,7 +687,7 @@ export const adminSecurityRouter = router({
         issuer: z.string().trim().min(2).max(255),
         idpCertificate: z.string().trim().min(100).max(20_000),
         signatureAlgorithm: z.enum(["sha256", "sha512"]).default("sha256"),
-        defaultRole: z.enum(["customer", "staff"]).default("customer"),
+        defaultRole: z.enum(["customer", "staff", "admin"]).default("customer"),
         autoProvision: z.boolean().default(false),
       }),
     )

@@ -1326,3 +1326,37 @@ The user requested verified protection for Microsoft Graph/SharePoint credential
 
 The platform enforces TLS for public transit through nginx and Cloudflare and uses strict security headers. Sensitive application fields—including customer PII and saved Graph secrets—are application-encrypted with AES-256-GCM; email lookup uses a keyed blind index. Application code and protected backups still require privileged host/database access controls, so no system can truthfully claim that every operational metadata field or root-access backup is mathematically unreadable. The release narrows export exposure and preserves strict privilege boundaries rather than making that false claim.
 
+
+## 2026-08-12 — Release governance, identity controls, observability, and comprehensive review
+
+### Requested work
+
+The owner requested a prioritized assessment of remaining master-prompt features while completing configurable SAML role assignment, maintenance mode access gates, secure customer magic-link sign-in with MFA, expanded system and security logging, a full code/security/functionality review, and version history with controlled public release publishing.
+
+### Delivered implementation
+
+- Added administrative changelog release governance: drafts, explicit publish and unpublish actions, immutable revision snapshots, version-history viewing, and audit events. Only published entries remain visible through the public changelog surface.
+- Added configurable SAML auto-provisioning roles for Customer, Staff, and Administrator. SAML-provisioned administrators follow the existing MFA-pending security path and cannot receive a full privileged session before MFA is completed.
+- Added dedicated, audited maintenance gates for public access, login, and new account creation, while preserving allowlist bypass behavior for authorised operators.
+- Added hashed, recipient-bound, single-use 15-minute customer magic-link tokens with generic responses that do not disclose account existence. Magic-link authentication requires a valid MFA completion path or MFA enrolment before customer access is granted.
+- Added advanced Activity Replay system search across action, entity type/ID, severity, source address, text, date, pagination, and event review fields.
+- Added changelog revision and magic-link-token migrations `0018_changelog_entry_versions.sql` and `0019_magic_link_tokens.sql`, both applied to production.
+- Completed a dependency and source review. Removed the unused legacy `passport-saml` dependency, upgraded Drizzle ORM, Nodemailer, file-type, and Multer, and replaced policy HTML interpolation with the shared safe React Markdown renderer.
+- Wrote `docs/FEATURE_GAPS_AND_PRIORITIES_2026-08-12.md` and `docs/COMPREHENSIVE_CODE_SECURITY_FUNCTIONALITY_REVIEW_2026-08-12.md`.
+
+### Validation and deployment
+
+- `pnpm run typecheck` passed with zero errors.
+- `pnpm test` passed: 143 tests.
+- Final `pnpm audit --prod` reported no known vulnerabilities.
+- Client and server production builds completed successfully. The release was deployed to the VPS, migrations were verified, and local/public `/api/health` checks returned `{\"status\":\"ok\"}`.
+- Live security verification against `https://myportal.readypackets.com` passed 46/46 checks.
+
+### Residual operational requirements
+
+The public gap assessment identifies Stripe signed-webhook setup, SharePoint production validation, external backup restore testing, full-volume encryption planning, migration-journal reconciliation, and browser-level regression coverage as the most important remaining operational items. These are documented in the review report and must be handled through controlled configuration or maintenance work.
+
+### User communication summary
+
+The user will receive the prioritized feature-gap assessment and release history/governance outcome with links to both new review documents and the final source/session-log commit.
+

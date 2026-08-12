@@ -31,6 +31,7 @@ import { Alert, Badge, Card, CardHeader, Skeleton } from "@/components/ui/Surfac
 import { DataTable, type Column } from "@/components/ui/DataDisplay";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
+import { renderMarkdown } from "@/lib/markdown";
 import { PageHeader } from "@/components/layout/PortalLayout";
 
 type PolicyDoc = {
@@ -54,21 +55,7 @@ type PolicyDoc = {
 };
 
 function MarkdownPreview({ content }: { content: string }) {
-  // Simple markdown-to-HTML for preview (headings, bold, paragraphs)
-  const html = content
-    .replace(/^### (.+)$/gm, "<h3>$1</h3>")
-    .replace(/^## (.+)$/gm, "<h2>$1</h2>")
-    .replace(/^# (.+)$/gm, "<h1>$1</h1>")
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    .replace(/\n\n/g, "</p><p>")
-    .replace(/^(?!<[h|p])(.+)$/gm, "<p>$1</p>");
-  return (
-    <div
-      className="prose prose-sm max-w-none text-ink"
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
-  );
+  return <div className="prose prose-sm max-w-none text-ink">{renderMarkdown(content)}</div>;
 }
 
 export function PolicyCenterPage() {

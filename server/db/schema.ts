@@ -170,6 +170,25 @@ export const passwordResetTokens = mysqlTable(
   }),
 );
 
+export const magicLinkTokens = mysqlTable(
+  "magic_link_tokens",
+  {
+    id: id(),
+    userId: int("user_id").notNull(),
+    tokenHash: varchar("token_hash", { length: 64 }).notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    usedAt: timestamp("used_at"),
+    requestIp: varchar("request_ip", { length: 64 }),
+    requestUserAgent: varchar("request_user_agent", { length: 255 }),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    tokenUnique: uniqueIndex("magic_link_token_unique").on(table.tokenHash),
+    userIdx: index("magic_link_user_idx").on(table.userId, table.createdAt),
+    expiryIdx: index("magic_link_expiry_idx").on(table.expiresAt),
+  }),
+);
+
 export const emailVerificationTokens = mysqlTable(
   "email_verification_tokens",
   {
@@ -1091,6 +1110,27 @@ export const changelogEntries = mysqlTable(
   },
   (table) => ({
     publicIdx: index("changelog_public_idx").on(table.isPublic, table.releasedAt),
+  }),
+);
+
+export const changelogEntryVersions = mysqlTable(
+  "changelog_entry_versions",
+  {
+    id: id(),
+    changelogEntryId: int("changelog_entry_id").notNull(),
+    revisionNumber: int("revision_number").notNull(),
+    version: varchar("version", { length: 32 }).notNull(),
+    title: varchar("title", { length: 190 }).notNull(),
+    bodyMarkdown: text("body_markdown").notNull(),
+    entryType: varchar("entry_type", { length: 24 }).notNull(),
+    isPublic: boolean("is_public").notNull().default(false),
+    changeKind: varchar("change_kind", { length: 24 }).notNull().default("draft"),
+    changedByUserId: int("changed_by_user_id"),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    entryRevisionUnique: uniqueIndex("changelog_entry_versions_entry_revision_unique").on(table.changelogEntryId, table.revisionNumber),
+    entryIdx: index("changelog_entry_versions_entry_idx").on(table.changelogEntryId, table.createdAt),
   }),
 );
 

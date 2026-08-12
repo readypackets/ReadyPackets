@@ -13,22 +13,10 @@ import { Button } from "@/components/ui/Button";
 import { Alert, Badge, Card, CardHeader, Skeleton } from "@/components/ui/Surface";
 import { useToast } from "@/components/ui/Toast";
 import { PageHeader } from "@/components/layout/PortalLayout";
+import { renderMarkdown } from "@/lib/markdown";
 
 function MarkdownPreview({ content }: { content: string }) {
-  const html = content
-    .replace(/^### (.+)$/gm, "<h3 class=\"text-base font-semibold mt-4 mb-1\">$1</h3>")
-    .replace(/^## (.+)$/gm, "<h2 class=\"text-lg font-semibold mt-5 mb-2\">$1</h2>")
-    .replace(/^# (.+)$/gm, "<h1 class=\"text-xl font-bold mt-6 mb-3\">$1</h1>")
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    .replace(/\n\n/g, "</p><p class=\"mb-3\">")
-    .replace(/^(?!<[h|p])(.+)$/gm, "<p class=\"mb-3\">$1</p>");
-  return (
-    <div
-      className="text-sm text-body leading-relaxed"
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
-  );
+  return <div className="prose prose-sm max-w-none text-body leading-relaxed">{renderMarkdown(content)}</div>;
 }
 
 export function PoliciesPage() {

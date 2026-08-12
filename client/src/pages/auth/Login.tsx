@@ -5,9 +5,9 @@
  * exists, the password was wrong, or the account is locked, so the form cannot be
  * used to enumerate accounts. The server applies the matching constant-work path.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { KeyRound, LogIn, ShieldCheck } from "lucide-react";
+import { KeyRound, LogIn, Mail, ShieldCheck } from "lucide-react";
 import { BRAND, BRAND_ASSETS } from "@shared/brand";
 import { trpc, errorMessage } from "@/lib/trpc";
 import { useSession } from "@/lib/session";
@@ -74,6 +74,7 @@ export function LoginPage() {
   const [stage, setStage] = useState<"credentials" | "mfa" | "mfaSetup">("credentials");
   const [code, setCode] = useState("");
   const [useBackupCode, setUseBackupCode] = useState(false);
+  const magicHandled = useRef(false);
 
   // If a session already exists, do not show the form again.
   useEffect(() => {
@@ -132,6 +133,31 @@ export function LoginPage() {
       setCode("");
     },
   });
+
+  const requestMagicLink = trpc.auth.requestMagicLink.useMutation({
+    onSuccess() {
+      toast.success("If an eligible customer account uses that address, a secure sign-in link has been sent.", "The link expires in 15 minutes and requires MFA before portal access.");
+    },
+    onError(error) { setFormError(errorMessage(error)); },
+  });
+
+  const verifyMagicLink = trpc.auth.verifyMagicLink.useMutation({
+    async onSuccess(result) {
+      await session.refresh();
+      if (result.mfaRequired) { setStage("mfa"); return; }
+      if (result.mfaSetupRequired) { toast.info("MFA enrolment required", "Set up an authenticator app to complete your secure magic-link sign-in."); navigate("/portal/mfa-setup"); return; }
+      navigate("/portal");
+    },
+    onError(error) { setFormError(errorMessage(error)); },
+  });
+
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get("magic");
+    if (!token || magicHandled.current) return;
+    magicHandled.current = true;
+    window.history.replaceState({}, document.title, "/login");
+    verifyMagicLink.mutate({ token });
+  }, [verifyMagicLink]);
 
   const submitCredentials = (event: React.FormEvent) => {
     event.preventDefault();
@@ -262,7 +288,19 @@ export function LoginPage() {
           Sign in
         </Button>
 
-        <div className="border-t border-line pt-4">
+        <div className="border-t border-line pt-4 space-y-3">
+          <Button
+            type="button"
+            fullWidth
+            variant="outline"
+            busy={requestMagicLink.isPending}
+            disabled={maintenanceBlocking || !email.trim()}
+            leadingIcon={<Mail className="size-4" aria-hidden="true" />}
+            onClick={() => { setFormError(null); requestMagicLink.mutate({ email: email.trim().toLowerCase() }); }}
+          >
+            Email me a secure sign-in link
+          </Button>
+          <p className="text-center text-xs text-muted">Customer-only links expire in 15 minutes, work once, and require an authenticator factor before portal access.</p>
           <Button
             type="button"
             fullWidth
@@ -273,7 +311,7 @@ export function LoginPage() {
           >
             Continue with Single Sign-On
           </Button>
-          <p className="mt-2 text-center text-xs text-muted">
+          <p className="text-center text-xs text-muted">
             {session.sso.enabled
               ? `Use ${session.sso.name ?? "your organization’s"} single sign-on.`
               : "Single Sign-On will be available after an administrator enables a SAML identity provider."}

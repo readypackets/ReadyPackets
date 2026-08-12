@@ -16,6 +16,7 @@ import { env } from "../config/env.js";
 import { db } from "../db/client.js";
 import {
   emailVerificationTokens,
+  magicLinkTokens,
   passwordResetTokens,
   registrationFields,
   samlConfigs,
@@ -77,6 +78,7 @@ import {
 import { isIpAllowlisted } from "../security/ipBlacklist.js";
 import { button, queueTemplatedEmail, wrapHtmlBody } from "../services/email.js";
 import { fireAutomations } from "../services/emailAutomations.js";
+import { affectedRows } from "../db/result.js";
 import { publicProcedure, protectedProcedure, router, sessionProcedure } from "../trpc/trpc.js";
 
 /** The single message returned for every credential failure. */
@@ -232,6 +234,15 @@ export const authRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      const maintenance = await getMaintenanceState();
+      const bypass = await isIpAllowlisted(ctx.clientIp, "maintenance");
+      const maintenanceBlocksRegistration = await getSettingBool("maintenance.blocks_registration", false);
+      if (maintenance.enabled && maintenanceBlocksRegistration && !bypass) {
+        throw new TRPCError({
+          code: "SERVICE_UNAVAILABLE",
+          message: "New account creation is temporarily unavailable during maintenance.",
+        });
+      }
       if (!(await isFeatureEnabled("registration", true))) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -306,6 +317,61 @@ export const authRouter = router({
       // Fire user.registered automation (non-fatal).
       void fireAutomations("user.registered", { userId: user.id });
       return { ok: true as const, requiresVerification: true };
+    }),
+
+  requestMagicLink: publicProcedure
+    .input(z.object({ email: emailSchema }))
+    .mutation(async ({ ctx, input }) => {
+      const maintenance = await getMaintenanceState();
+      const bypass = await isIpAllowlisted(ctx.clientIp, "maintenance");
+      if ((maintenance.enabled && maintenance.blocksLogin && !bypass) || (await isFeatureEnabled("login_block", false) && !bypass)) {
+        // Keep the external response uniform while avoiding a usable delivery path during a gate.
+        return { ok: true as const };
+      }
+      const user = await getUserByEmail(input.email);
+      // Customer-only, active accounts receive a link. The constant response avoids account enumeration.
+      if (!user || user.role !== "customer" || user.status !== "active") {
+        void recordSecurityEvent({ eventType: "magic_link.requested", outcome: "blocked", message: "Magic-link request was not eligible", subject: input.email, ipAddress: ctx.clientIp, userAgent: ctx.userAgent });
+        return { ok: true as const };
+      }
+      const token = randomToken(32);
+      const now = new Date();
+      await db.update(magicLinkTokens).set({ usedAt: now }).where(and(eq(magicLinkTokens.userId, user.id), isNull(magicLinkTokens.usedAt)));
+      await db.insert(magicLinkTokens).values({ userId: user.id, tokenHash: hashToken(token), expiresAt: new Date(Date.now() + 15 * 60_000), requestIp: ctx.clientIp, requestUserAgent: ctx.userAgent });
+      const link = `${env.appUrl}/login?magic=${encodeURIComponent(token)}`;
+      void queueTemplatedEmail({
+        to: user.email,
+        templateKey: "customer_magic_link",
+        variables: { name: displayNameOf(user), magic_link: link, expires_minutes: "15" },
+        fallback: { subject: "Your secure ReadyPackets sign-in link", html: wrapHtmlBody("Your secure sign-in link", `<p>Hello {{name}},</p><p>Use the link below to sign in. It expires in 15 minutes and can be used once.</p>${button("Sign in securely", "{{magic_link}}")}<p>If you did not request this link, you can safely ignore this email.</p>`), text: "Hello {{name}}. Sign in securely within 15 minutes: {{magic_link}}. If you did not request this link, ignore this email." },
+      });
+      void recordSecurityEvent({ eventType: "magic_link.requested", message: "Customer magic-link sign-in requested", userId: user.id, ipAddress: ctx.clientIp, userAgent: ctx.userAgent });
+      return { ok: true as const };
+    }),
+
+  verifyMagicLink: publicProcedure
+    .input(z.object({ token: z.string().trim().min(32).max(256) }))
+    .mutation(async ({ ctx, input }) => {
+      const tokenHash = hashToken(input.token);
+      const record = (await db.select().from(magicLinkTokens).where(and(eq(magicLinkTokens.tokenHash, tokenHash), isNull(magicLinkTokens.usedAt), gt(magicLinkTokens.expiresAt, new Date()))).limit(1))[0];
+      if (!record) {
+        void recordSecurityEvent({ eventType: "magic_link.invalid", outcome: "failure", message: "Invalid, expired, or previously used magic link", ipAddress: ctx.clientIp, userAgent: ctx.userAgent });
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "This sign-in link is invalid, expired, or has already been used." });
+      }
+      const consumed = await db.update(magicLinkTokens).set({ usedAt: new Date() }).where(and(eq(magicLinkTokens.id, record.id), isNull(magicLinkTokens.usedAt)));
+      if (!affectedRows(consumed)) throw new TRPCError({ code: "UNAUTHORIZED", message: "This sign-in link has already been used." });
+      const user = await getUserById(record.userId);
+      if (!user || user.role !== "customer" || user.status !== "active") {
+        void recordSecurityEvent({ eventType: "magic_link.invalid", outcome: "blocked", message: "Magic-link account was not eligible", userId: record.userId, ipAddress: ctx.clientIp, userAgent: ctx.userAgent });
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "This sign-in link is no longer available." });
+      }
+      // Magic links always require a second factor. New customers are placed in a
+      // restricted enrolment session; enrolled customers must complete TOTP/backup MFA.
+      const mfaConfirmed = await hasConfirmedMfa(user.id);
+      await revokePendingMfaSessions(user.id);
+      await createSession(ctx.res, { userId: user.id, ipAddress: ctx.clientIp, userAgent: ctx.userAgent, mfaPending: mfaConfirmed, restricted: !mfaConfirmed });
+      void recordSecurityEvent({ eventType: mfaConfirmed ? "login.mfa_required" : "mfa.enrolment_required", message: mfaConfirmed ? "Magic link accepted; awaiting customer second factor" : "Magic link accepted; customer MFA enrolment required", userId: user.id, ipAddress: ctx.clientIp, userAgent: ctx.userAgent });
+      return { ok: true as const, mfaRequired: mfaConfirmed, mfaSetupRequired: !mfaConfirmed, role: user.role };
     }),
 
   login: publicProcedure

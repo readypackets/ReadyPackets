@@ -66,7 +66,7 @@ export function AdminSystemPage() {
         {tab === "flags" ? <FlagsPanel /> : null}
         {tab === "keys" ? <ApiKeysPanel /> : null}
         {tab === "saml" ? <SamlPanel /> : null}
-        {tab === "maintenance" ? <MaintenancePanel /> : null}
+        {tab === "maintenance" ? <><MaintenanceAccessPanel /><MaintenancePanel /></> : null}
         {tab === "launch" ? <LaunchCountdownPanel /> : null}
         {tab === "intake" ? <IntakeControlsPanel /> : null}
       </div>
@@ -669,6 +669,7 @@ function SamlPanel() {
             options={[
               { value: "customer", label: "Customer" },
               { value: "staff", label: "Staff" },
+              { value: "admin", label: "Administrator" },
             ]}
           />
         </div>
@@ -684,8 +685,7 @@ function SamlPanel() {
         />
 
         <Alert tone="info">
-          Administrator accounts continue to require a local password and a second factor even when
-          SAML is enabled, so a compromised identity provider cannot yield platform control.
+          New SAML accounts receive this role only when automatic provisioning is enabled. SAML is treated as the primary factor; Administrator accounts must still complete or enrol in MFA before receiving administrative access.
         </Alert>
 
         <Button
@@ -710,6 +710,21 @@ function SamlPanel() {
       </div>
     </Card>
   );
+}
+
+function MaintenanceAccessPanel() {
+  const toast = useToast();
+  const config = trpc.adminSecurity.maintenanceConfig.useQuery();
+  const [draft, setDraft] = useState<{ enabled: boolean; blocksLogin: boolean; blocksRegistration: boolean; showOnHomepage: boolean; message: string; estimatedCompletion: string } | null>(null);
+  useEffect(() => { if (config.data) setDraft(config.data); }, [config.data]);
+  const update = trpc.adminSecurity.updateMaintenanceConfig.useMutation({
+    async onSuccess() { await config.refetch(); toast.success("Maintenance controls saved", "The selected public, login, and registration gates are now active."); },
+    onError(error) { toast.error("Could not save maintenance controls", errorMessage(error)); },
+  });
+  if (config.isLoading || !draft) return <Skeleton className="mb-6 h-80 w-full" />;
+  return <Card className="mb-6"><CardHeader title="Maintenance access controls" description="Use a planned maintenance window to gate the public website, sign-in, and new-account creation. Maintenance allowlist entries continue to bypass the login and registration gates." actions={<Badge tone={draft.enabled ? "warning" : "success"}>{draft.enabled ? "maintenance active" : "normal operation"}</Badge>} />
+    <div className="mt-5 space-y-4"><Alert tone="warning" title="Use with care">When enabling a login gate, keep your administrator address in the maintenance allowlist before saving. Existing browser sessions are not forcibly revoked.</Alert><Textarea label="Maintenance message" rows={3} value={draft.message} onChange={(event) => setDraft({ ...draft, message: event.target.value })} /><Input label="Estimated completion (optional)" placeholder="Example: 2026-08-13 02:00 UTC" value={draft.estimatedCompletion} onChange={(event) => setDraft({ ...draft, estimatedCompletion: event.target.value })} /><div className="grid gap-3 sm:grid-cols-2"><Checkbox label="Enable maintenance mode" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} /><Checkbox label="Show the maintenance notice on the public website" checked={draft.showOnHomepage} onChange={(event) => setDraft({ ...draft, showOnHomepage: event.target.checked })} /><Checkbox label="Restrict new logins during maintenance" checked={draft.blocksLogin} onChange={(event) => setDraft({ ...draft, blocksLogin: event.target.checked })} /><Checkbox label="Restrict new account creation during maintenance" checked={draft.blocksRegistration} onChange={(event) => setDraft({ ...draft, blocksRegistration: event.target.checked })} /></div><div className="flex justify-end"><Button busy={update.isPending} onClick={() => update.mutate(draft)} leadingIcon={<Save className="size-4" aria-hidden="true" />}>Save maintenance controls</Button></div></div>
+  </Card>;
 }
 
 function MaintenancePanel() {

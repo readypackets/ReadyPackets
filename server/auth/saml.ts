@@ -23,10 +23,12 @@ import {
   getUserByEmail,
   type CreateUserInput,
 } from "../db/users.js";
-import { createSession } from "./session.js";
+import { createSession, revokePendingMfaSessions } from "./session.js";
 import { env } from "../config/env.js";
 import { logger } from "../observability/logger.js";
 import { recordSecurityEvent } from "../observability/audit.js";
+import { hasConfirmedMfa } from "./mfa.js";
+import { getSettingBool } from "../services/settings.js";
 
 
 // ---------------------------------------------------------------------------
@@ -228,27 +230,31 @@ export async function handleAcs(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  // Create a session — createSession sets the cookies on the response.
+    // SAML is a primary factor. Administrators still follow the same enforced MFA
+  // path as local sign-ins, including restricted MFA-enrolment sessions.
+  const mfaConfirmed = await hasConfirmedMfa(user.id);
+  const requireAdminMfa = await getSettingBool("security.require_admin_mfa", true);
+  const adminNeedsEnrolment = user.role === "admin" && requireAdminMfa && !mfaConfirmed;
+  await revokePendingMfaSessions(user.id);
   await createSession(res, {
     userId: user.id,
     userAgent: req.headers["user-agent"]?.slice(0, 255) ?? null,
     ipAddress: req.ip ?? null,
+    mfaPending: user.role === "admin" && mfaConfirmed,
+    restricted: adminNeedsEnrolment,
   });
-
   await recordSecurityEvent({
-    eventType: "login.success",
+    eventType: user.role === "admin" && mfaConfirmed ? "login.mfa_required" : "login.success",
     outcome: "success",
-    message: "SAML SSO login succeeded",
+    message: user.role === "admin" && mfaConfirmed ? "SAML assertion accepted; awaiting administrator second factor" : adminNeedsEnrolment ? "SAML administrator must enrol in MFA before access" : "SAML SSO login succeeded",
     userId: user.id,
     ipAddress: req.ip ?? null,
     userAgent: req.headers["user-agent"]?.slice(0, 255) ?? null,
   });
-
   const relayState = req.body?.RelayState as string | undefined;
-  const redirectTo =
-    relayState && relayState.startsWith("/") ? relayState : "/portal";
-
-  res.redirect(`${env.appUrl}${redirectTo}`);
+  const redirectTo = relayState && relayState.startsWith("/") ? relayState : "/portal";
+  const destination = user.role === "admin" && (mfaConfirmed || adminNeedsEnrolment) ? "/login?from=saml" : redirectTo;
+  res.redirect(`${env.appUrl}${destination}`);
 }
 
 // ---------------------------------------------------------------------------

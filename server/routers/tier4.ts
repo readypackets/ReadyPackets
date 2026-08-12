@@ -7,7 +7,7 @@
  */
 import { createHash } from "node:crypto";
 import { TRPCError } from "@trpc/server";
-import { and, asc, count, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, isNull, like, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import {
@@ -569,6 +569,38 @@ const activityReplayRouter = router({
         ipAddress: row.ipAddress,
         createdAt: row.createdAt,
       }));
+    }),
+
+  /** Cross-system activity search for operational investigation and audit review. */
+  search: adminProcedure
+    .input(z.object({
+      action: z.string().trim().max(96).optional(),
+      entityType: z.string().trim().max(48).optional(),
+      actorUserId: z.number().int().positive().optional(),
+      severity: z.enum(["debug", "info", "notice", "warning", "error", "critical"]).optional(),
+      ipAddress: z.string().trim().max(64).optional(),
+      query: z.string().trim().max(160).optional(),
+      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      limit: z.number().int().min(1).max(500).default(100),
+      offset: z.number().int().min(0).max(50_000).default(0),
+    }))
+    .query(async ({ input }) => {
+      const conditions = [];
+      if (input.action) conditions.push(like(activityLogs.action, `%${input.action}%`));
+      if (input.entityType) conditions.push(eq(activityLogs.entityType, input.entityType));
+      if (input.actorUserId) conditions.push(eq(activityLogs.actorUserId, input.actorUserId));
+      if (input.severity) conditions.push(eq(activityLogs.severity, input.severity));
+      if (input.ipAddress) conditions.push(like(activityLogs.ipAddress, `%${input.ipAddress}%`));
+      if (input.query) conditions.push(or(like(activityLogs.summary, `%${input.query}%`), like(activityLogs.action, `%${input.query}%`), like(activityLogs.entityId, `%${input.query}%`)));
+      if (input.from) conditions.push(gte(activityLogs.createdAt, new Date(`${input.from}T00:00:00.000Z`)));
+      if (input.to) conditions.push(lte(activityLogs.createdAt, new Date(`${input.to}T23:59:59.999Z`)));
+      const where = conditions.length > 0 ? and(...(conditions as [ReturnType<typeof eq>, ...ReturnType<typeof eq>[]])) : undefined;
+      const [rows, totals] = await Promise.all([
+        db.select({ entry: activityLogs, actorPublicId: users.publicId }).from(activityLogs).leftJoin(users, eq(users.id, activityLogs.actorUserId)).where(where).orderBy(desc(activityLogs.createdAt)).limit(input.limit).offset(input.offset),
+        db.select({ total: count() }).from(activityLogs).where(where),
+      ]);
+      return { rows: rows.map((row) => ({ ...row.entry, actorPublicId: row.actorPublicId ?? null })), total: Number(totals[0]?.total ?? 0) };
     }),
 
   /** Summary statistics for the activity log. */
