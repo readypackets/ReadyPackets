@@ -28,7 +28,7 @@ import { env } from "../config/env.js";
 import { logger } from "../observability/logger.js";
 import { recordSecurityEvent } from "../observability/audit.js";
 import { hasConfirmedMfa } from "./mfa.js";
-import { getSettingBool } from "../services/settings.js";
+import { getMfaPolicyForRole, mfaRequirement } from "./mfaPolicy.js";
 
 
 // ---------------------------------------------------------------------------
@@ -232,28 +232,27 @@ export async function handleAcs(req: Request, res: Response): Promise<void> {
 
     // SAML is a primary factor. Administrators still follow the same enforced MFA
   // path as local sign-ins, including restricted MFA-enrolment sessions.
-  const mfaConfirmed = await hasConfirmedMfa(user.id);
-  const requireAdminMfa = await getSettingBool("security.require_admin_mfa", true);
-  const adminNeedsEnrolment = user.role === "admin" && requireAdminMfa && !mfaConfirmed;
+  const [mfaConfirmed, policy] = await Promise.all([hasConfirmedMfa(user.id), getMfaPolicyForRole(user.role)]);
+  const requirement = mfaRequirement(policy, mfaConfirmed);
   await revokePendingMfaSessions(user.id);
   await createSession(res, {
     userId: user.id,
     userAgent: req.headers["user-agent"]?.slice(0, 255) ?? null,
     ipAddress: req.ip ?? null,
-    mfaPending: user.role === "admin" && mfaConfirmed,
-    restricted: adminNeedsEnrolment,
+    mfaPending: requirement.mfaPending,
+    restricted: requirement.restricted,
   });
   await recordSecurityEvent({
-    eventType: user.role === "admin" && mfaConfirmed ? "login.mfa_required" : "login.success",
+    eventType: requirement.mfaPending ? "login.mfa_required" : requirement.mfaSetupRequired ? "mfa.enrolment_required" : "login.success",
     outcome: "success",
-    message: user.role === "admin" && mfaConfirmed ? "SAML assertion accepted; awaiting administrator second factor" : adminNeedsEnrolment ? "SAML administrator must enrol in MFA before access" : "SAML SSO login succeeded",
+    message: requirement.mfaPending ? "SAML assertion accepted; awaiting second factor" : requirement.mfaSetupRequired ? "SAML assertion accepted; MFA enrolment required by policy" : "SAML SSO login succeeded",
     userId: user.id,
     ipAddress: req.ip ?? null,
     userAgent: req.headers["user-agent"]?.slice(0, 255) ?? null,
   });
   const relayState = req.body?.RelayState as string | undefined;
   const redirectTo = relayState && relayState.startsWith("/") ? relayState : "/portal";
-  const destination = user.role === "admin" && (mfaConfirmed || adminNeedsEnrolment) ? "/login?from=saml" : redirectTo;
+  const destination = requirement.mfaPending || requirement.mfaSetupRequired ? "/login?from=saml" : redirectTo;
   res.redirect(`${env.appUrl}${destination}`);
 }
 

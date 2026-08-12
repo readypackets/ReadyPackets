@@ -594,6 +594,37 @@ export const adminSecurityRouter = router({
       return { ok: true as const };
     }),
 
+  mfaPolicy: adminProcedure.query(async () => {
+    const [adminPolicy, customerPolicy] = await Promise.all([
+      getSetting("security.mfa_admin_policy"),
+      getSetting("security.mfa_customer_policy"),
+    ]);
+    const parse = (value: string | null, fallback: "required" | "optional") =>
+      value === "required" || value === "optional" || value === "disabled" ? value : fallback;
+    return { adminPolicy: parse(adminPolicy, "required"), customerPolicy: parse(customerPolicy, "optional") };
+  }),
+
+  updateMfaPolicy: adminProcedure
+    .input(z.object({ adminPolicy: z.enum(["required", "optional", "disabled"]), customerPolicy: z.enum(["required", "optional", "disabled"]) }))
+    .mutation(async ({ ctx, input }) => {
+      await Promise.all([
+        setSetting("security.mfa_admin_policy", input.adminPolicy, { category: "security", valueType: "string", userId: ctx.session.user.id }),
+        setSetting("security.mfa_customer_policy", input.customerPolicy, { category: "security", valueType: "string", userId: ctx.session.user.id }),
+      ]);
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: "admin",
+        action: "security.mfa_policy_updated",
+        entityType: "security_policy",
+        entityId: "mfa",
+        severity: input.adminPolicy === "required" ? "notice" : "warning",
+        summary: `MFA policy updated: administrators ${input.adminPolicy}; customers ${input.customerPolicy}`,
+        changes: input,
+        ipAddress: ctx.clientIp,
+      });
+      return { ok: true as const };
+    }),
+
   maintenanceConfig: adminProcedure.query(async () => {
     const [enabled, blocksLogin, blocksRegistration, showOnHomepage, message, estimatedCompletion] = await Promise.all([
       getSettingBool("maintenance.enabled", false),

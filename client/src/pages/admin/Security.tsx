@@ -58,6 +58,7 @@ export function AdminSecurityPage() {
 
       <TabStrip
         tabs={[
+          { id: "mfa", label: "MFA policy" },
           { id: "limits", label: "Rate limits" },
           { id: "network", label: "IP policy" },
           { id: "logs", label: "Logs" },
@@ -69,6 +70,7 @@ export function AdminSecurityPage() {
       />
 
       <div className="mt-6">
+        {tab === "mfa" ? <MfaPolicyPanel /> : null}
         {tab === "limits" ? <RateLimitsPanel /> : null}
         {tab === "network" ? <NetworkPanel /> : null}
         {tab === "logs" ? <LogsPanel /> : null}
@@ -77,6 +79,22 @@ export function AdminSecurityPage() {
       </div>
     </>
   );
+}
+
+function MfaPolicyPanel() {
+  const toast = useToast();
+  const policy = trpc.adminSecurity.mfaPolicy.useQuery();
+  const [adminPolicy, setAdminPolicy] = useState("required");
+  const [customerPolicy, setCustomerPolicy] = useState("optional");
+  const [hasDraft, setHasDraft] = useState(false);
+  const update = trpc.adminSecurity.updateMfaPolicy.useMutation({
+    onSuccess: async () => { setHasDraft(false); await policy.refetch(); toast.success("MFA policy saved", "The new policy is enforced on subsequent sign-ins and recorded in the audit trail."); },
+    onError: (error) => toast.error("Could not save MFA policy", errorMessage(error)),
+  });
+  const selectedAdmin = hasDraft ? adminPolicy : (policy.data?.adminPolicy ?? adminPolicy);
+  const selectedCustomer = hasDraft ? customerPolicy : (policy.data?.customerPolicy ?? customerPolicy);
+  const options = [{ value: "required", label: "Required — enrolment and verification before access" }, { value: "optional", label: "Optional — enrolled users still verify" }, { value: "disabled", label: "Disabled — no MFA prompt" }];
+  return <Card><CardHeader title="Multi-factor authentication policy" description="Set the sign-in policy by role. Changes are audited and apply on each user’s next sign-in." /><Alert tone="warning" className="mt-4">Requiring MFA is the strongest posture. Optional mode permits unenrolled accounts to sign in but still challenges enrolled accounts. Disabled mode removes MFA from new sign-ins for that role.</Alert><div className="mt-5 grid gap-5 md:grid-cols-2"><Select label="Administrator MFA" value={selectedAdmin} onChange={(event) => { setHasDraft(true); setAdminPolicy(event.target.value); }} options={options} help="Changing this from Required lowers administrator account protection." /><Select label="Customer MFA" value={selectedCustomer} onChange={(event) => { setHasDraft(true); setCustomerPolicy(event.target.value); }} options={options} help="Optional is the default for customers; enrolled customers remain protected." /></div><div className="mt-5"><Button leadingIcon={<Save className="size-4" />} busy={update.isPending} onClick={() => update.mutate({ adminPolicy: selectedAdmin as "required" | "optional" | "disabled", customerPolicy: selectedCustomer as "required" | "optional" | "disabled" })}>Save MFA policy</Button></div></Card>;
 }
 
 function RateLimitsPanel() {

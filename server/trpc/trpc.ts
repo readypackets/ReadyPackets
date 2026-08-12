@@ -14,6 +14,7 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import { ZodError } from "zod";
 import { env } from "../config/env.js";
 import { getSettingBool } from "../services/settings.js";
+import { getMfaPolicyForRole } from "../auth/mfaPolicy.js";
 import { isIpAllowlisted } from "../security/ipBlacklist.js";
 import { ipMatchesAny } from "../security/ipAddress.js";
 import { recordSecurityEvent } from "../observability/audit.js";
@@ -178,9 +179,10 @@ const requireAdmin = middleware(async ({ ctx, next }) => {
     throw new TRPCError({ code: "FORBIDDEN", message: "Administrator privileges required." });
   }
 
-  // Gap analysis 3.6 / 5.5: administrators must hold a second factor.
-  const enforceMfa = await getSettingBool("security.require_admin_mfa", true);
-  if (enforceMfa && !session.user.mfaEnabled) {
+  // Required policy is enforced server-side; optional/disabled mode allows an
+  // administrator to choose a different operational MFA posture explicitly.
+  const policy = await getMfaPolicyForRole(session.user.role);
+  if (policy === "required" && !session.user.mfaEnabled) {
     void recordSecurityEvent({
       eventType: "admin.mfa_required",
       outcome: "blocked",

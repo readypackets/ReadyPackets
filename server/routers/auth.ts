@@ -79,6 +79,7 @@ import { isIpAllowlisted } from "../security/ipBlacklist.js";
 import { button, queueTemplatedEmail, wrapHtmlBody } from "../services/email.js";
 import { fireAutomations } from "../services/emailAutomations.js";
 import { affectedRows } from "../db/result.js";
+import { getMfaPolicyForRole, mfaRequirement } from "../auth/mfaPolicy.js";
 import { publicProcedure, protectedProcedure, router, sessionProcedure } from "../trpc/trpc.js";
 
 /** The single message returned for every credential failure. */
@@ -365,13 +366,12 @@ export const authRouter = router({
         void recordSecurityEvent({ eventType: "magic_link.invalid", outcome: "blocked", message: "Magic-link account was not eligible", userId: record.userId, ipAddress: ctx.clientIp, userAgent: ctx.userAgent });
         throw new TRPCError({ code: "UNAUTHORIZED", message: "This sign-in link is no longer available." });
       }
-      // Magic links always require a second factor. New customers are placed in a
-      // restricted enrolment session; enrolled customers must complete TOTP/backup MFA.
-      const mfaConfirmed = await hasConfirmedMfa(user.id);
+      const [mfaConfirmed, policy] = await Promise.all([hasConfirmedMfa(user.id), getMfaPolicyForRole(user.role)]);
+      const requirement = mfaRequirement(policy, mfaConfirmed);
       await revokePendingMfaSessions(user.id);
-      await createSession(ctx.res, { userId: user.id, ipAddress: ctx.clientIp, userAgent: ctx.userAgent, mfaPending: mfaConfirmed, restricted: !mfaConfirmed });
-      void recordSecurityEvent({ eventType: mfaConfirmed ? "login.mfa_required" : "mfa.enrolment_required", message: mfaConfirmed ? "Magic link accepted; awaiting customer second factor" : "Magic link accepted; customer MFA enrolment required", userId: user.id, ipAddress: ctx.clientIp, userAgent: ctx.userAgent });
-      return { ok: true as const, mfaRequired: mfaConfirmed, mfaSetupRequired: !mfaConfirmed, role: user.role };
+      await createSession(ctx.res, { userId: user.id, ipAddress: ctx.clientIp, userAgent: ctx.userAgent, mfaPending: requirement.mfaPending, restricted: requirement.restricted });
+      void recordSecurityEvent({ eventType: requirement.mfaPending ? "login.mfa_required" : requirement.mfaSetupRequired ? "mfa.enrolment_required" : "login.success", message: requirement.mfaPending ? "Magic link accepted; awaiting second factor" : requirement.mfaSetupRequired ? "Magic link accepted; MFA enrolment required by policy" : "Magic link accepted", userId: user.id, ipAddress: ctx.clientIp, userAgent: ctx.userAgent });
+      return { ok: true as const, mfaRequired: requirement.mfaRequired, mfaSetupRequired: requirement.mfaSetupRequired, role: user.role };
     }),
 
   login: publicProcedure
@@ -472,10 +472,8 @@ export const authRouter = router({
 
       await recordSuccessfulLogin(user.id, ctx.clientIp);
 
-      const mfaConfirmed = await hasConfirmedMfa(user.id);
-      const requireAdminMfa = await getSettingBool("security.require_admin_mfa", true);
-      const adminNeedsEnrolment =
-        user.role === "admin" && requireAdminMfa && !mfaConfirmed;
+      const [mfaConfirmed, policy] = await Promise.all([hasConfirmedMfa(user.id), getMfaPolicyForRole(user.role)]);
+      const requirement = mfaRequirement(policy, mfaConfirmed);
 
       // Revoke any stale mfaPending sessions before creating a new one.
       // Without this, the browser can accumulate multiple session cookies and
@@ -487,15 +485,13 @@ export const authRouter = router({
         userId: user.id,
         ipAddress: ctx.clientIp,
         userAgent: ctx.userAgent,
-        mfaPending: mfaConfirmed,
-        restricted: adminNeedsEnrolment,
+        mfaPending: requirement.mfaPending,
+        restricted: requirement.restricted,
       });
 
       void recordSecurityEvent({
-        eventType: mfaConfirmed ? "login.mfa_required" : "login.success",
-        message: mfaConfirmed
-          ? "Password accepted; awaiting second factor"
-          : "Login succeeded",
+        eventType: requirement.mfaPending ? "login.mfa_required" : requirement.mfaSetupRequired ? "mfa.enrolment_required" : "login.success",
+        message: requirement.mfaPending ? "Password accepted; awaiting second factor" : requirement.mfaSetupRequired ? "Password accepted; MFA enrolment required by policy" : "Login succeeded",
         userId: user.id,
         ipAddress: ctx.clientIp,
         userAgent: ctx.userAgent,
@@ -503,8 +499,8 @@ export const authRouter = router({
 
       return {
         ok: true as const,
-        mfaRequired: mfaConfirmed,
-        mfaSetupRequired: adminNeedsEnrolment,
+        mfaRequired: requirement.mfaRequired,
+        mfaSetupRequired: requirement.mfaSetupRequired,
         mustChangePassword: user.mustChangePassword,
         emailVerified: user.emailVerified,
         role: user.role,
@@ -814,15 +810,16 @@ export const authRouter = router({
   mfaStatus: sessionProcedure.query(async ({ ctx }) => {
     const session = ctx.session;
     if (!session) throw new TRPCError({ code: "UNAUTHORIZED" });
-    const [confirmed, remaining, required] = await Promise.all([
+    const [confirmed, remaining, policy] = await Promise.all([
       hasConfirmedMfa(session.user.id),
       countUnusedBackupCodes(session.user.id),
-      getSettingBool("security.require_admin_mfa", true),
+      getMfaPolicyForRole(session.user.role),
     ]);
     return {
       enabled: confirmed,
       remainingBackupCodes: remaining,
-      requiredForRole: session.user.role === "admin" && required,
+      requiredForRole: policy === "required",
+      policy,
     };
   }),
 
@@ -889,12 +886,12 @@ export const authRouter = router({
       const user = await getUserById(ctx.session.user.id);
       if (!user?.passwordHash) throw new TRPCError({ code: "UNAUTHORIZED" });
 
-      const requireAdminMfa = await getSettingBool("security.require_admin_mfa", true);
-      if (user.role === "admin" && requireAdminMfa) {
+      const policy = await getMfaPolicyForRole(user.role);
+      if (policy === "required") {
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Multi-factor authentication is mandatory for administrator accounts and cannot be disabled.",
+            "Multi-factor authentication is required by the current account policy and cannot be disabled.",
         });
       }
 

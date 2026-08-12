@@ -1630,3 +1630,28 @@ The complete source, migration, tests, documentation, and session record are rea
 ### Publication outcome
 
 The order operations release, migration `0023_order_operations_context.sql`, Phase 1 artifact/file management, bulk question templates, order-specific automation controls, enriched delivery logging, and full session record were committed and pushed to the private `readypackets/ReadyPackets` `main` branch as `22074a44c7e4bbf589bb696fbaf077ce72eff301` with the message `feat: enhance order operations and delivery logs`. A final log-only publication commit follows so that GitHub contains this outcome as well as the implementation. The production release marker is updated after that closing commit is pushed.
+
+
+---
+
+## 2026-08-12 — Configurable MFA policy release
+
+### User request
+
+The user requested an administrator-controlled ability to enforce MFA or not require it.
+
+### Implementation
+
+Implemented an audited, role-scoped MFA policy with three explicit modes: `required`, `optional`, and `disabled`. Separate settings are stored for administrator and customer roles. Defaults preserve the existing security posture when no setting exists: administrators are **required** to use MFA; customers are **optional**.
+
+Required mode puts unenrolled users into the existing restricted enrolment session and challenges enrolled users with TOTP or a backup code before access. Optional mode allows unenrolled users to sign in but continues to challenge enrolled users. Disabled mode suppresses MFA challenges at sign-in for the selected role. Administrator policy enforcement is applied server-side in local password login, magic-link login, SAML SSO completion, MFA status/disable behavior, and the administrator tRPC authorization middleware.
+
+Added a new **Security centre → MFA policy** tab. It presents separate administrator and customer selectors, warns when the administrative posture is lowered, saves through an administrator-only validated API, and records every change in the activity/audit log. No stored authenticator secrets or backup codes are exposed. Existing enabled MFA enrolments remain intact; the policy controls sign-in requirements rather than deleting enrolment data.
+
+### Validation and deployment
+
+Added `tests/mfaPolicy.test.ts` covering required enrolment, optional sign-in, second-factor challenge for enrolled users in required/optional modes, and explicit disabled mode. TypeScript passed with zero errors. The full suite passed with **150 tests**, and client/server production builds succeeded. The production server/client deployment used timestamped rollback copies; `https://myportal.readypackets.com/api/health` returned `{"status":"ok"}`.
+
+### Publication pending
+
+The MFA policy source, tests, and session record are ready for integrity review and publication to the private repository. A final session-log publication entry will be appended after the commit is pushed.
