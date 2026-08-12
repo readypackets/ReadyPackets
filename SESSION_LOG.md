@@ -1486,3 +1486,32 @@ The completed roadmap release, research notes, migration files, source changes, 
 ### Publication outcome
 
 The complete source release was committed on `main` as `94287fd5cd99c0f6aff64dd71ef43f5e5209a50d` with the message `feat: public discovery, accessibility, FAQs, and marketing workspace` and pushed successfully to the private `readypackets/ReadyPackets` repository. A final log-only commit follows this entry so the repository contains this publication outcome as well as the implementation itself. The production release marker is updated after that closing commit is pushed.
+
+
+---
+
+## 2026-08-12 — Login response-contract repair
+
+### User report
+
+The user reported that the production sign-in page at `https://myportal.readypackets.com/login?next=%2Fadmin%2Fapi-keys` showed **“Unable to transform response from server”** instead of allowing the administrator to complete login.
+
+### Investigation
+
+The production service remained healthy. Recent journal records showed CSRF rejections for anonymous login requests followed by a successful password login event for the administrator account, which isolated the problem to the browser’s presentation of an expired/missing CSRF-token rejection rather than account credentials, MFA enrollment, database access, or service availability.
+
+The login page was opened in a fresh browser context. It correctly received a CSRF cookie and the anonymous `auth.session` bootstrap returned a valid tRPC result. The fault was identified in `server/security/csrf.ts`: CSRF middleware runs before the tRPC adapter and returned a plain Express object (`{"error": ...}`) for failed state-changing tRPC calls. The tRPC browser client expects an array of tRPC result/error envelopes, so it could not deserialize the plain object and surfaced the generic transformation error.
+
+### Repair
+
+A CSRF rejection helper now detects `/api/trpc/` requests and returns the normal tRPC error envelope, including `FORBIDDEN`, HTTP `403`, the procedure path, and the user-safe message: **“Your security token expired. Reload the page and try again.”** Non-tRPC callers retain the ordinary Express JSON error response. Origin rejection follows the same compatible contract.
+
+The source passed `pnpm run typecheck`, all **143** automated tests, and the server production build. The server-only artifact was deployed with a timestamped rollback copy and `readypackets.service` restarted successfully. Production health returned `{"status":"ok"}`. A deliberately missing-CSRF login request was verified to return the valid tRPC error-array contract rather than the former unparseable response.
+
+### User recovery action
+
+The repair is live. A browser that was already open during the token expiry must reload the login page once so it receives a fresh CSRF token, then the user can sign in normally and complete the existing MFA step. The account password, MFA configuration, and server secrets were not changed during this repair.
+
+### Publication pending
+
+This source repair and its complete session-log record are ready for private GitHub publication; the production release marker will be updated after that commit is pushed.

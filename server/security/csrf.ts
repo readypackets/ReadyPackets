@@ -63,6 +63,39 @@ export function generateCsrfToken(): string {
   return randomToken(32);
 }
 
+/**
+ * CSRF checks run before the tRPC adapter. A plain Express JSON response is not
+ * parseable by the tRPC client, which previously obscured an expired browser
+ * token as “Unable to transform response from server.” Preserve the normal
+ * response shape for tRPC requests so callers receive an actionable message.
+ */
+function rejectRequest(req: Request, res: Response, message: string): void {
+  if (!req.path.startsWith("/api/trpc/")) {
+    res.status(403).json({ error: message });
+    return;
+  }
+  const path = req.path.slice("/api/trpc/".length);
+  const error = {
+    error: {
+      message,
+      code: -32003,
+      data: { code: "FORBIDDEN", httpStatus: 403, path, validation: null },
+    },
+  };
+  // A mutation is normally one operation, but preserve the batch response
+  // cardinality when the client supplied multiple calls in one request.
+  let count = 1;
+  if (req.query.batch === "1" && typeof req.query.input === "string") {
+    try {
+      const parsed = JSON.parse(req.query.input) as Record<string, unknown>;
+      count = Math.max(1, Object.keys(parsed).length);
+    } catch {
+      // Invalid input is handled by tRPC after an otherwise valid CSRF check.
+    }
+  }
+  res.status(403).json(Array.from({ length: count }, () => error));
+}
+
 export function csrfMiddleware() {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     if (SAFE_METHODS.has(req.method)) {
@@ -90,7 +123,7 @@ export function csrfMiddleware() {
         userAgent: req.headers["user-agent"]?.slice(0, 255) ?? null,
         metadata: { origin: originHostname ?? "missing", path: req.path },
       });
-      res.status(403).json({ error: "Cross-origin request rejected." });
+      rejectRequest(req, res, "Cross-origin request rejected.");
       return;
     }
 
@@ -118,7 +151,7 @@ export function csrfMiddleware() {
           sessionBound: sessionSecret !== "",
         },
       });
-      res.status(403).json({ error: "Invalid or missing CSRF token." });
+      rejectRequest(req, res, "Your security token expired. Reload the page and try again.");
       return;
     }
 
