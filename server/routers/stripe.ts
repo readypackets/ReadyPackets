@@ -59,10 +59,27 @@ export const stripeRouter = router({
       })
     )
     .mutation(async ({ input, ctx }) => {
-      if (!env.stripe.enabled) {
+      // Database settings are the administrator-supported configuration source;
+      // environment variables are only the optional deployment fallback.  Do not
+      // gate checkout on the env-only boolean, otherwise a saved admin key appears
+      // active in Finance while customers are incorrectly blocked here.
+      const [stripeKey, webhookSecret] = await Promise.all([
+        getEffectiveStripeKey(),
+        getEffectiveWebhookSecret(),
+      ]);
+      if (!stripeKey) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
           message: "Online payment is not currently enabled. Please contact support.",
+        });
+      }
+      // A successful redirect is not proof of settlement. Require Stripe's signed
+      // webhook before accepting charges so paid orders are updated only after the
+      // server verifies the provider event.
+      if (!webhookSecret) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Online payment setup is incomplete. An administrator must add the Stripe webhook signing secret in Finance → Stripe Settings before collecting payments.",
         });
       }
 
@@ -348,7 +365,10 @@ export const stripeRouter = router({
       .where(sql`${siteSettings.settingKey} IN ('stripe.secret_key','stripe.publishable_key','stripe.webhook_secret')`);
     const dbKeys = new Set(dbRows.map((r) => r.key));
     return {
-      enabled: Boolean(secretKey),
+      // A checkout key lets staff validate the Stripe connection, but settlement
+      // is only safe when the webhook-signing secret is also configured.
+      enabled: Boolean(secretKey && webhookSecret),
+      checkoutKeyConfigured: Boolean(secretKey),
       publishableKey: publishableKey ?? null,
       webhookConfigured: Boolean(webhookSecret),
       secretKeySet: Boolean(secretKey),

@@ -1218,3 +1218,24 @@ Migrations `0015_delivery_and_automation_actions.sql` and `0016_knowledge_base_a
 ### Validation
 
 `pnpm run typecheck` completed with zero TypeScript errors. `pnpm test` passed all 143 tests. Shell syntax checks passed for the backup scripts and installer. The production readiness endpoint succeeded, schema additions were confirmed, the restricted `readypackets` service-account backup-control path was verified, and the live security suite passed all 46 of 46 checks.
+
+
+## 2026-08-12 — Stripe Checkout Activation-State Correction
+
+### Reported issue
+
+The user reported that the Finance page displayed Stripe as active while a customer order presented “Online payment is not currently enabled” instead of opening Stripe Checkout. Screenshots showed a secret key and publishable key saved in Finance, but no webhook signing secret configured. The checkout example also applied coupon `ALEX99`, reducing the displayed purchase amount to `$0.00`.
+
+### Root cause and correction
+
+The Finance status page correctly used effective Stripe settings (database values first, environment fallback) to show an active secret key. The customer `createCheckout` procedure used a separate environment-only `env.stripe.enabled` boolean. Therefore an administrator-saved Stripe secret key could appear active while checkout rejected customers before attempting Stripe.
+
+Checkout eligibility now uses the same effective database-or-environment secret-key resolver as Finance. To prevent an unsafe “redirect succeeded but order was never verified as paid” flow, checkout also requires the Stripe webhook signing secret. Finance now reports three distinct states: **Not configured**, **Webhook required** (Stripe key can be tested but verified checkout is blocked), and **Payment ready** (secret key plus webhook signing secret).
+
+### Production verification
+
+The saved secret and publishable keys were confirmed present without reading their values. The webhook signing secret was confirmed missing. The corrected server and Finance client were deployed with a rollback-preserved client bundle. TypeScript passed with zero errors, all 143 automated tests passed, production readiness succeeded, and the live security suite passed 46/46 checks.
+
+### Required administrator action
+
+In Stripe Workbench/Dashboard, create an HTTPS webhook endpoint at `https://myportal.readypackets.com/api/stripe/webhook`, configure the snapshot events `checkout.session.completed`, `payment_intent.payment_failed`, and `charge.refunded`, then copy the resulting endpoint signing secret (`whsec_...`) into **Admin → Finance → Stripe Settings** and save. Use **Test Stripe connection** before accepting live payment. A 100% coupon such as `ALEX99` leaves no amount to collect; test a nonzero order when confirming the hosted payment redirect.

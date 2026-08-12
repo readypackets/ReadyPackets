@@ -38,17 +38,19 @@ function StripeSettingsTab() {
             <h3 className="font-semibold text-brand-navy">Stripe Integration</h3>
             <p className="text-sm text-gray-500 mt-1">
               {data?.enabled
-                ? "Connected — online payments are enabled."
+                ? "Payment ready — online payments can be verified and completed safely."
+                : data?.checkoutKeyConfigured
+                ? "Stripe key saved — add the webhook signing secret to enable verified online payments."
                 : "Not configured — enter your Stripe keys below to enable online payments."}
             </p>
           </div>
           <span className={`px-3 py-1 rounded-full text-sm font-medium ${
             data?.enabled ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"
           }`}>
-            {data?.enabled ? "Active" : "Not configured"}
+            {data?.enabled ? "Payment ready" : data?.checkoutKeyConfigured ? "Webhook required" : "Not configured"}
           </span>
         </div>
-        {data?.enabled && (
+        {data?.checkoutKeyConfigured && (
           <div className="mt-4 grid grid-cols-3 gap-4 text-sm">
             <div>
               <span className="text-gray-500">Secret key</span>
@@ -80,10 +82,10 @@ function StripeSettingsTab() {
           </div>
         )}
         <div className="mt-4">
-          <Button variant="outline" busy={testConnection.isPending} disabled={!data?.enabled} onClick={() => testConnection.mutate()}>
+          <Button variant="outline" busy={testConnection.isPending} disabled={!data?.checkoutKeyConfigured} onClick={() => testConnection.mutate()}>
             Test Stripe connection
           </Button>
-          {!data?.enabled ? <p className="mt-2 text-xs text-gray-500">Save a Stripe secret key before testing the connection.</p> : null}
+          {!data?.checkoutKeyConfigured ? <p className="mt-2 text-xs text-gray-500">Save a Stripe secret key before testing the connection.</p> : !data?.webhookConfigured ? <p className="mt-2 text-xs text-yellow-700">Connection testing is available, but online payments remain disabled until the webhook signing secret is saved.</p> : null}
         </div>
       </Card>
 
