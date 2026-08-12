@@ -59,6 +59,10 @@ export function IntakePage() {
   const [recordingTime, setRecordingTime] = useState(0);
   const [microphonePromptOpen, setMicrophonePromptOpen] = useState(false);
   const [microphonePermission, setMicrophonePermission] = useState<PermissionState | "unknown">("unknown");
+  const [preflightOpen, setPreflightOpen] = useState(false);
+  const [preflightStatus, setPreflightStatus] = useState<"idle" | "running" | "passed" | "failed">("idle");
+  const [preflightMessage, setPreflightMessage] = useState("");
+  const [preflightForRecording, setPreflightForRecording] = useState(false);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const audioChunks = useRef<Blob[]>([]);
   const recordingInterval = useRef<NodeJS.Timeout | null>(null);
@@ -199,7 +203,63 @@ export function IntakePage() {
     void startRecording();
   };
 
+  const microphonePreflightEnabled = (existing.data?.limits as { microphonePreflightEnabled?: boolean } | undefined)?.microphonePreflightEnabled !== false;
+
+  const openPreflight = (forRecording: boolean) => {
+    setPreflightForRecording(forRecording);
+    setPreflightStatus("idle");
+    setPreflightMessage("");
+    setPreflightOpen(true);
+  };
+
+  const runMicrophonePreflight = async () => {
+    setPreflightStatus("running");
+    setPreflightMessage("Checking browser recording support, microphone permission, and a live audio input…");
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setPreflightStatus("failed");
+      setPreflightMessage("This browser does not support secure microphone recording. Use a current Chrome, Edge, Firefox, or Safari browser.");
+      return;
+    }
+    if (typeof MediaRecorder === "undefined") {
+      setPreflightStatus("failed");
+      setPreflightMessage("This browser can access a microphone but cannot create a Business Pitch recording. Use a current Chrome, Edge, Firefox, or Safari browser.");
+      return;
+    }
+    const webmSupported = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") || MediaRecorder.isTypeSupported("audio/webm");
+    if (!webmSupported) {
+      setPreflightStatus("failed");
+      setPreflightMessage("This browser does not support the required WebM recording format. Use Chrome, Edge, or Firefox to record your Business Pitch Idea.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      const liveTrack = stream.getAudioTracks().find((track) => track.readyState === "live" && track.enabled);
+      stream.getTracks().forEach((track) => track.stop());
+      if (!liveTrack) {
+        setPreflightStatus("failed");
+        setPreflightMessage("No enabled microphone was detected. Choose an input device in your browser or operating-system settings, then test again.");
+        return;
+      }
+      setPreflightStatus("passed");
+      setPreflightMessage("Microphone check passed. Browser recording support, permission, and a live audio input are ready.");
+    } catch (error) {
+      const name = error instanceof DOMException ? error.name : "";
+      setPreflightStatus("failed");
+      if (name === "NotAllowedError" || name === "SecurityError") {
+        setPreflightMessage("Microphone access is blocked. Allow microphone access for myportal.readypackets.com in your browser and operating-system privacy settings, then test again.");
+      } else if (name === "NotFoundError" || name === "NotReadableError") {
+        setPreflightMessage("No microphone is currently available. Connect or select a working microphone, and close any application that is using it, then test again.");
+      } else {
+        setPreflightMessage("The microphone check could not complete. Confirm your browser and device settings, then test again.");
+      }
+    }
+  };
+
   const beginPitchRecording = () => {
+    if (microphonePreflightEnabled) {
+      openPreflight(true);
+      return;
+    }
     if (microphonePermission === "granted") {
       void startRecording();
       return;
@@ -509,13 +569,29 @@ export function IntakePage() {
               <p className="text-sm font-medium text-ink">Business Pitch Idea</p>
               <p className="mt-1 text-xs text-muted">Record directly from your microphone in WebM format. Up to {limits?.maxPitchRecordings ?? 1} recording{(limits?.maxPitchRecordings ?? 1) === 1 ? "" : "s"}, maximum {Math.ceil((limits?.maxPitchLengthSeconds ?? 300) / 60)} minutes each.</p>
               {!readOnly && pitches.length < (limits?.maxPitchRecordings ?? 1) ? (
-                <div className="mt-3 flex items-center gap-2"><Button variant={recording ? "danger" : "primary"} onClick={() => recording ? stopRecording() : beginPitchRecording()} disabled={uploading}>{recording ? `Stop recording (${recordingTime}s)` : "Record Business Pitch Idea"}</Button></div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Button variant={recording ? "danger" : "primary"} onClick={() => recording ? stopRecording() : beginPitchRecording()} disabled={uploading}>{recording ? `Stop recording (${recordingTime}s)` : "Record Business Pitch Idea"}</Button>
+                  {microphonePreflightEnabled && !recording ? <Button variant="outline" onClick={() => openPreflight(false)} disabled={uploading}>Test microphone</Button> : null}
+                </div>
               ) : null}
               <ul className="mt-3 space-y-2 text-sm">{pitches.map((file) => <li key={file.id} className="flex items-center justify-between gap-2 rounded border border-line px-3 py-2"><span className="truncate">{file.originalName} <Badge tone="teal">WebM recording</Badge></span>{!readOnly && <Button size="sm" variant="ghost" onClick={() => deleteFileMut.mutate({ fileId: file.id })}>Remove</Button>}</li>)}</ul>
             </div>
           </div>
         </Card>
 
+        <Modal open={preflightOpen} onClose={() => setPreflightOpen(false)} title="Microphone check" description="Verify your browser, permission, and microphone before recording a Business Pitch Idea.">
+          <div className="space-y-4">
+            {preflightStatus === "idle" ? <Alert tone="info">The check requests microphone access, confirms a live audio input, and verifies WebM recording support. It does not save or upload audio.</Alert> : null}
+            {preflightStatus === "running" ? <Alert tone="info">{preflightMessage}</Alert> : null}
+            {preflightStatus === "passed" ? <Alert tone="success">{preflightMessage}</Alert> : null}
+            {preflightStatus === "failed" ? <Alert tone="danger">{preflightMessage}</Alert> : null}
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="outline" onClick={() => setPreflightOpen(false)}>{preflightStatus === "passed" && preflightForRecording ? "Cancel" : "Close"}</Button>
+              {preflightStatus !== "passed" ? <Button busy={preflightStatus === "running"} onClick={() => void runMicrophonePreflight()}>Run microphone check</Button> : null}
+              {preflightStatus === "passed" && preflightForRecording ? <Button onClick={() => { setPreflightOpen(false); void startRecording(); }}>Start recording</Button> : null}
+            </div>
+          </div>
+        </Modal>
         <Modal open={microphonePromptOpen} onClose={() => setMicrophonePromptOpen(false)} title="Allow microphone access" description="ReadyPackets needs microphone access only while you record this Business Pitch Idea. Your browser will show its own permission prompt next. This step is skipped automatically once access is already granted."><div className="space-y-4"><Alert tone="info">Select <strong>Allow microphone</strong> in the browser prompt. The recording stays in your browser until you stop it, then it is uploaded as a WebM recording for this order.</Alert><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setMicrophonePromptOpen(false)}>Cancel</Button><Button onClick={requestMicrophone}>Allow microphone and record</Button></div></div></Modal>
 
         <Card id="intake-desiredOutcomes" className="hidden">

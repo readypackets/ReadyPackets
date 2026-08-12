@@ -1886,3 +1886,14 @@ Pending source-control publication after this entry.
 ### Publication outcome
 
 The final staff-document order-workspace correction and session record were published to the private `main` branch as `f8acab7201212eb188923ce88d55f99890fafa9a` (`fix: show staff documents only in customer order workspace`).
+
+
+## 2026-08-12 — Configurable Microphone Preflight and Reference Comparison
+
+The user requested only a microphone preflight diagnostic and an administrator option to disable it; no written-pitch, customer audio-upload, staff-assisted, recording-format, or other fallback path was added. The Phase I intake API now returns `microphonePreflightEnabled`, backed by the `intake.microphone_preflight_enabled` setting and enabled by default. Administration → System → Intake controls now has **Run microphone preflight before Business Pitch recording**. When enabled, the customer sees a Microphone check before beginning a Business Pitch recording. The diagnostic checks secure `getUserMedia` support, `MediaRecorder` availability, WebM support, permission/device access, and an enabled live audio track. It does not record, retain, or upload audio. A successful check offers an explicit Start recording action; a failed check provides a specific permission, device, browser-support, or general diagnostic. When disabled, the prior recording flow remains available.
+
+An authorized public source repository, `Manus-MadaSitoEnterprises-RP/readypackets`, was mirrored with full history into the new private user repository `readypackets/readypackets-audio-reference`. Its recording implementation was reviewed read-only. The reference uses `getUserMedia({ audio: true })`, a WebM/MP4 selection, local playback/discard, and generic denial feedback. ReadyPackets requests audio with echo/noise constraints, standardizes the platform recording format to WebM, gives differentiated errors, and now provides the configurable preflight. The comparison is recorded in `docs/research/audio-recording-reference-comparison-2026-08-12.md`.
+
+TypeScript validation passed. All 150 automated tests passed. Client and server production builds passed. The server/client deployment used timestamped rollback copies and the production health endpoint returned `{"status":"ok"}`.
+
+Pending source-control publication after this entry.

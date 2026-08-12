@@ -992,6 +992,7 @@ function IntakeControlsPanel() {
   const [allowedTypes, setAllowedTypes] = useState(".pdf,.doc,.docx,.txt");
   const [maxPitchRecordings, setMaxPitchRecordings] = useState("1");
   const [maxPitchLengthSeconds, setMaxPitchLengthSeconds] = useState("300");
+  const [microphonePreflightEnabled, setMicrophonePreflightEnabled] = useState(true);
 
   useEffect(() => {
     if (!settings.data) return;
@@ -1000,6 +1001,7 @@ function IntakeControlsPanel() {
     setAllowedTypes(values.get("intake.allowed_document_types") || ".pdf,.doc,.docx,.txt");
     setMaxPitchRecordings(values.get("intake.max_pitch_recordings") || "1");
     setMaxPitchLengthSeconds(values.get("intake.max_pitch_length_seconds") || "300");
+    setMicrophonePreflightEnabled(values.get("intake.microphone_preflight_enabled") !== "false");
   }, [settings.data]);
 
   const update = trpc.adminSecurity.updateSetting.useMutation();
@@ -1025,6 +1027,7 @@ function IntakeControlsPanel() {
         update.mutateAsync({ key: "intake.allowed_document_types", value: allowedTypes.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean).join(",") }),
         update.mutateAsync({ key: "intake.max_pitch_recordings", value: String(pitchCount) }),
         update.mutateAsync({ key: "intake.max_pitch_length_seconds", value: String(pitchSeconds) }),
+        update.mutateAsync({ key: "intake.microphone_preflight_enabled", value: String(microphonePreflightEnabled) }),
       ]);
       await settings.refetch();
       toast.success("Intake controls saved", "The new limits apply to future intake uploads and submissions.");
@@ -1080,6 +1083,12 @@ function IntakeControlsPanel() {
             value={maxPitchLengthSeconds}
             onChange={(event) => setMaxPitchLengthSeconds(event.target.value)}
             help="The browser stops in-app recordings at this duration."
+          />
+          <Checkbox
+            label="Run microphone preflight before Business Pitch recording"
+            checked={microphonePreflightEnabled}
+            onChange={(event) => setMicrophonePreflightEnabled(event.target.checked)}
+            help="When enabled, customers verify browser support, microphone permission, a live input track, and WebM recording support before they begin a pitch."
           />
         </div>
       </Card>

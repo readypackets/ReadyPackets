@@ -261,6 +261,7 @@ export const intakeRouter = router({
             allowedDocumentTypes: await getSetting("intake.allowed_document_types") ?? ".pdf,.doc,.docx,.txt",
             maxPitchRecordings: await getSettingNumber("intake.max_pitch_recordings", 1),
             maxPitchLengthSeconds: await getSettingNumber("intake.max_pitch_length_seconds", 300),
+            microphonePreflightEnabled: (await getSetting("intake.microphone_preflight_enabled")) !== "false",
           },
         };
       }
@@ -286,11 +287,13 @@ export const intakeRouter = router({
         limits: {
           maxDocuments: await getSettingNumber("intake.max_documents", 5),
           allowedDocumentTypes: await getSetting("intake.allowed_document_types") ?? ".pdf,.doc,.docx,.txt",
-          maxPitchRecordings: await getSettingNumber("intake.max_pitch_recordings", 1),
-          maxPitchLengthSeconds: await getSettingNumber("intake.max_pitch_length_seconds", 300),
-        },
-      };
-    }),
+                      maxPitchRecordings: await getSettingNumber("intake.max_pitch_recordings", 1),
+            maxPitchLengthSeconds: await getSettingNumber("intake.max_pitch_length_seconds", 300),
+            microphonePreflightEnabled: (await getSetting("intake.microphone_preflight_enabled")) !== "false",
+          },
+        };
+      }
+),
 
   /** Save a draft. Length rules are not applied until submission. */
   save: protectedProcedure
