@@ -1515,3 +1515,8 @@ The repair is live. A browser that was already open during the token expiry must
 ### Publication pending
 
 This source repair and its complete session-log record are ready for private GitHub publication; the production release marker will be updated after that commit is pushed.
+
+
+### Publication outcome
+
+The login repair was committed and pushed to the private `readypackets/ReadyPackets` `main` branch as `0aa5b1ae4cd0452eeee4eb0517bfc1495fdbd3e9` with the message `fix: return tRPC CSRF errors to login client`. The production host is running the corresponding server artifact, and the release marker was set to that commit. A final log-only publication commit follows this entry so that the GitHub session record includes the outcome itself.
