@@ -84,21 +84,18 @@ export function resetGraphTokenCache(): void {
   _tokenCache = null;
 }
 
-async function getGraphToken(): Promise<string> {
-  if (_tokenCache && Date.now() < _tokenCache.expiresAt - 60_000) {
-    return _tokenCache.token;
-  }
+interface GraphCredentials {
+  tenantId: string;
+  clientId: string;
+  clientSecret: string;
+}
 
-  const { tenantId, clientId, clientSecret } = await getGraphRuntimeConfig();
-  if (!tenantId || !clientId || !clientSecret) {
-    throw new Error("Microsoft Graph credentials are not fully configured.");
-  }
-
-  const url = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
+async function requestGraphToken(credentials: GraphCredentials): Promise<GraphTokenCache> {
+  const url = `https://login.microsoftonline.com/${encodeURIComponent(credentials.tenantId)}/oauth2/v2.0/token`;
   const body = new URLSearchParams({
     grant_type: "client_credentials",
-    client_id: clientId,
-    client_secret: clientSecret,
+    client_id: credentials.clientId,
+    client_secret: credentials.clientSecret,
     scope: "https://graph.microsoft.com/.default",
   });
 
@@ -109,33 +106,34 @@ async function getGraphToken(): Promise<string> {
   });
 
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Graph token request failed (${response.status}): ${text.slice(0, 200)}`);
+    throw new Error(`Microsoft Graph authentication failed (HTTP ${response.status}). Check the tenant ID, client ID, client secret, and application permissions.`);
   }
 
-  const data = (await response.json()) as {
-    access_token: string;
-    expires_in: number;
-  };
+  const data = (await response.json()) as { access_token: string; expires_in: number };
+  return { token: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
+}
 
-  _tokenCache = {
-    token: data.access_token,
-    expiresAt: Date.now() + data.expires_in * 1000,
-  };
+async function getGraphToken(): Promise<string> {
+  if (_tokenCache && Date.now() < _tokenCache.expiresAt - 60_000) {
+    return _tokenCache.token;
+  }
 
+  const { tenantId, clientId, clientSecret } = await getGraphRuntimeConfig();
+  if (!tenantId || !clientId || !clientSecret) {
+    throw new Error("Microsoft Graph credentials are not fully configured.");
+  }
+
+  _tokenCache = await requestGraphToken({ tenantId, clientId, clientSecret });
   return _tokenCache.token;
 }
 
-async function graphRequest(
+async function graphRequestWithToken(
+  token: string,
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   path: string,
   body?: unknown
 ): Promise<unknown> {
-  const token = await getGraphToken();
-  const url = path.startsWith("https://")
-    ? path
-    : `https://graph.microsoft.com/v1.0${path}`;
-
+  const url = path.startsWith("https://") ? path : `https://graph.microsoft.com/v1.0${path}`;
   const response = await fetch(url, {
     method,
     headers: {
@@ -153,6 +151,82 @@ async function graphRequest(
 
   if (response.status === 204) return null;
   return response.json();
+}
+
+async function graphRequest(
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+  path: string,
+  body?: unknown
+): Promise<unknown> {
+  return graphRequestWithToken(await getGraphToken(), method, path, body);
+}
+
+export interface SharePointDiscoveryInput {
+  tenantId: string;
+  clientId: string;
+  clientSecret: string;
+  siteUrl: string;
+}
+
+export interface SharePointDiscoveryResult {
+  siteId: string;
+  driveId: string;
+  siteUrl: string;
+  siteName: string;
+  drives: Array<{ id: string; name: string; webUrl: string | null; isDefault: boolean }>;
+}
+
+/**
+ * Discover the Graph site ID and document-library drive IDs from a SharePoint URL.
+ * Credentials are used only for this server-side request and are never returned or logged.
+ */
+export async function discoverSharePointConfig(input: SharePointDiscoveryInput): Promise<SharePointDiscoveryResult> {
+  let parsed: URL;
+  try {
+    parsed = new URL(input.siteUrl);
+  } catch {
+    throw new Error("Enter a valid HTTPS SharePoint site URL.");
+  }
+  if (parsed.protocol !== "https:" || !/(^|\\.)sharepoint\\.com$/i.test(parsed.hostname)) {
+    throw new Error("The SharePoint site URL must be an HTTPS *.sharepoint.com address.");
+  }
+
+  const token = (await requestGraphToken({
+    tenantId: input.tenantId,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+  })).token;
+  const sitePath = parsed.pathname.replace(/\/+$/, "") || "/";
+  const site = (await graphRequestWithToken(
+    token,
+    "GET",
+    `/sites/${encodeURIComponent(parsed.hostname)}:${encodeURI(sitePath)}`,
+  )) as { id?: string; displayName?: string; name?: string };
+  if (!site.id) throw new Error("Microsoft Graph did not return a SharePoint site ID for this URL.");
+
+  const [defaultDrive, driveList] = await Promise.all([
+    graphRequestWithToken(token, "GET", `/sites/${encodeURIComponent(site.id)}/drive`) as Promise<{ id?: string; name?: string; webUrl?: string }>,
+    graphRequestWithToken(token, "GET", `/sites/${encodeURIComponent(site.id)}/drives`) as Promise<{ value?: Array<{ id?: string; name?: string; webUrl?: string }> }>,
+  ]);
+  if (!defaultDrive.id) throw new Error("Microsoft Graph did not return a default document library for this site.");
+
+  const drives = (driveList.value ?? []).flatMap((drive) => drive.id ? [{
+    id: drive.id,
+    name: drive.name ?? "Document library",
+    webUrl: drive.webUrl ?? null,
+    isDefault: drive.id === defaultDrive.id,
+  }] : []);
+  if (!drives.some((drive) => drive.id === defaultDrive.id)) {
+    drives.unshift({ id: defaultDrive.id, name: defaultDrive.name ?? "Documents", webUrl: defaultDrive.webUrl ?? null, isDefault: true });
+  }
+
+  return {
+    siteId: site.id,
+    driveId: defaultDrive.id,
+    siteUrl: `${parsed.origin}${sitePath}`,
+    siteName: site.displayName ?? site.name ?? "SharePoint site",
+    drives,
+  };
 }
 
 // ---------------------------------------------------------------------------

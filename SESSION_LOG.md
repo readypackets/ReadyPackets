@@ -1275,3 +1275,24 @@ Coupons with a redemption history are retained rather than deleted. The interfac
 ### Validation and deployment
 
 TypeScript completed with zero errors, all 143 tests passed, the production service returned ready after deployment, and the live security verification suite passed 46/46 checks.
+
+
+## 2026-08-12 — Webhook Delivery Controls and SharePoint Discovery
+
+### User request
+
+The user requested clearer webhook-delivery controls—Retry, Stop, and Redeliver—and the ability to discover SharePoint configuration from only a tenant ID, client ID, client secret, and SharePoint site URL.
+
+### Implemented behavior
+
+The Integration → Delivery Log now renders clear button controls rather than ambiguous text links. Pending records expose **Retry** and confirmation-protected **Stop**. Failed and stopped records expose **Retry** and **Redeliver**. Delivered records expose **Redeliver**. Retry reopens the original delivery, clears prior response diagnostics, and reuses the scheduler; Stop changes only pending work to a non-schedulable `stopped` state; Redeliver creates a distinct audited delivery record from a non-pending record. The server validates every state transition, prevents duplicate redelivery while a record is already pending, and records privileged actions in the activity log.
+
+The SharePoint & SAML integration tab now includes **Discover site & library**. It accepts the Tenant ID, Client ID, client secret (or a previously encrypted saved secret), and SharePoint site URL. The server uses Microsoft Graph client-credential authentication only for this operation, resolves the Graph site ID from the HTTPS `*.sharepoint.com` URL, discovers the default document library and available libraries, and populates the site ID and drive ID for administrator review. Credentials are never returned, displayed, or written to activity logs. The administrator must still press **Save SharePoint settings** to persist the reviewed configuration.
+
+### Permission note
+
+Microsoft Graph discovery requires an application permission that can read the site and its drives. Existing sync requires write permission to create folders and upload order documents. Microsoft Graph’s official site-by-path and site-drive documentation was consulted during implementation.
+
+### Validation and deployment
+
+TypeScript completed with zero errors, all 143 tests passed, production readiness succeeded after deployment, and the live security verification suite passed 46/46 checks.

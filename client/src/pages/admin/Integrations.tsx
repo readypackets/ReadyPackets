@@ -10,7 +10,7 @@ import { Card } from "../../components/ui/Surface";
 import { Button } from "../../components/ui/Button";
 import { FieldShell as Field, Input, Select } from "../../components/ui/Field";
 import { Tabs } from "../../components/ui/DataDisplay";
-import { Modal } from "../../components/ui/Modal";
+import { ConfirmDialog, Modal } from "../../components/ui/Modal";
 import { useToast } from "../../components/ui/Toast";
 
 // ---------------------------------------------------------------------------
@@ -192,23 +192,33 @@ function PhaseStartWebhookConfigPanel() {
 function DeliveryLogTab() {
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState("");
+  const [stopping, setStopping] = useState<{ id: number; eventType: string } | null>(null);
   const { data, refetch } = trpc.integrations.webhookDeliveries.useQuery({ page, status: status || undefined });
-  const retry = trpc.integrations.retryWebhookDelivery.useMutation({ onSuccess: () => refetch() });
+  const toast = useToast();
+  const retry = trpc.integrations.retryWebhookDelivery.useMutation({
+    onSuccess: () => { void refetch(); toast.success("Retry queued", "The delivery will be attempted again immediately."); },
+    onError: (cause) => toast.error("Could not retry delivery", cause.message),
+  });
+  const stop = trpc.integrations.stopWebhookDelivery.useMutation({
+    onSuccess: () => { void refetch(); setStopping(null); toast.success("Delivery stopped", "The pending webhook will not be sent unless you retry or redeliver it."); },
+    onError: (cause) => toast.error("Could not stop delivery", cause.message),
+  });
   const redeliver = trpc.integrations.redeliverWebhook.useMutation({
     onSuccess: () => { void refetch(); toast.success("Redelivery queued", "A fresh delivery record has been created while preserving the original log."); },
     onError: (cause) => toast.error("Could not queue redelivery", cause.message),
   });
-  const toast = useToast();
 
   return (
     <div>
-      <div className="flex gap-3 mb-4">
-        <Select value={status} onChange={e => setStatus(e.target.value)} className="w-40">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <Select value={status} onChange={e => { setStatus(e.target.value); setPage(1); }} className="w-40">
           <option value="">All statuses</option>
           <option value="pending">Pending</option>
           <option value="delivered">Delivered</option>
           <option value="failed">Failed</option>
+          <option value="stopped">Stopped</option>
         </Select>
+        <p className="text-xs text-gray-500">Retry reopens the current delivery; Stop cancels pending work; Redeliver creates a new audited delivery.</p>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
@@ -224,35 +234,35 @@ function DeliveryLogTab() {
             </tr>
           </thead>
           <tbody>
-            {data?.rows.map((d) => (
-              <tr key={d.id} className="border-b hover:bg-gray-50">
-                <td className="py-2 pr-4 font-mono text-xs">{d.eventType}</td>
-                <td className="py-2 pr-4">
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                    d.status === "delivered" ? "bg-green-100 text-green-800" :
-                    d.status === "failed" ? "bg-red-100 text-red-800" :
-                    "bg-yellow-100 text-yellow-800"
-                  }`}>
-                    {d.status}
-                  </span>
-                </td>
-                <td className="py-2 pr-4">{d.attempts}</td>
-                <td className="py-2 pr-4">{d.responseCode ?? "—"}</td>
-                <td className="py-2 pr-4 max-w-xs"><span className="block truncate text-xs text-gray-600" title={d.lastError ?? d.responseDetail ?? ""}>{d.lastError ?? d.responseDetail ?? "—"}</span></td>
-                <td className="py-2 pr-4 text-gray-500">
-                  {new Date(d.createdAt).toLocaleDateString()}
-                </td>
-                <td className="py-2">
-                  <div className="flex gap-3">
-                    {(d.status === "failed" || d.status === "pending") && <button onClick={() => retry.mutate({ deliveryId: d.id })} className="text-brand-teal text-xs hover:underline">Retry now</button>}
-                    <button onClick={() => redeliver.mutate({ deliveryId: d.id })} className="text-brand-teal text-xs hover:underline">Redeliver</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {!data?.rows.length && (
-              <tr><td colSpan={7} className="py-8 text-center text-gray-400">No deliveries.</td></tr>
-            )}
+            {data?.rows.map((d) => {
+              const canRetry = d.status === "pending" || d.status === "failed" || d.status === "stopped";
+              return (
+                <tr key={d.id} className="border-b hover:bg-gray-50">
+                  <td className="py-2 pr-4 font-mono text-xs">{d.eventType}</td>
+                  <td className="py-2 pr-4">
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                      d.status === "delivered" ? "bg-green-100 text-green-800" :
+                      d.status === "failed" ? "bg-red-100 text-red-800" :
+                      d.status === "stopped" ? "bg-gray-100 text-gray-700" : "bg-yellow-100 text-yellow-800"
+                    }`}>
+                      {d.status}
+                    </span>
+                  </td>
+                  <td className="py-2 pr-4">{d.attempts}</td>
+                  <td className="py-2 pr-4">{d.responseCode ?? "—"}</td>
+                  <td className="py-2 pr-4 max-w-xs"><span className="block truncate text-xs text-gray-600" title={d.lastError ?? d.responseDetail ?? ""}>{d.lastError ?? d.responseDetail ?? "—"}</span></td>
+                  <td className="py-2 pr-4 text-gray-500">{new Date(d.createdAt).toLocaleDateString()}</td>
+                  <td className="py-2">
+                    <div className="flex flex-wrap gap-2">
+                      {canRetry ? <Button variant="outline" size="sm" busy={retry.isPending} onClick={() => retry.mutate({ deliveryId: d.id })}>Retry</Button> : null}
+                      {d.status === "pending" ? <Button variant="danger" size="sm" busy={stop.isPending && stopping?.id === d.id} onClick={() => setStopping({ id: d.id, eventType: d.eventType })}>Stop</Button> : null}
+                      {d.status !== "pending" ? <Button variant="secondary" size="sm" busy={redeliver.isPending} onClick={() => redeliver.mutate({ deliveryId: d.id })}>Redeliver</Button> : null}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {!data?.rows.length && <tr><td colSpan={7} className="py-8 text-center text-gray-400">No deliveries.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -263,6 +273,17 @@ function DeliveryLogTab() {
           <Button variant="ghost" size="sm" disabled={page * 50 >= data.total} onClick={() => setPage(p => p + 1)}>Next</Button>
         </div>
       )}
+      <ConfirmDialog
+        open={Boolean(stopping)}
+        onClose={() => setStopping(null)}
+        onConfirm={() => { if (stopping) stop.mutate({ deliveryId: stopping.id }); }}
+        title="Stop pending webhook delivery?"
+        message={`Stop the ${stopping?.eventType ?? "selected"} webhook before its next attempt? You can retry or redeliver it later.`}
+        confirmLabel="Stop delivery"
+        cancelLabel="Keep pending"
+        variant="danger"
+        busy={stop.isPending}
+      />
     </div>
   );
 }
@@ -390,6 +411,7 @@ function SharePointTab() {
     siteUrl: "",
     rootFolderPath: "ReadyPackets/Orders",
   });
+  const [discoveredDrives, setDiscoveredDrives] = useState<Array<{ id: string; name: string; webUrl: string | null; isDefault: boolean }>>([]);
 
   useEffect(() => {
     if (!data) return;
@@ -403,6 +425,17 @@ function SharePointTab() {
       rootFolderPath: data.rootFolderPath ?? "ReadyPackets/Orders",
     }));
   }, [data]);
+
+  const discover = trpc.integrations.discoverGraphConfig.useMutation({
+    onSuccess(result) {
+      setDiscoveredDrives(result.drives);
+      setForm((current) => ({ ...current, siteId: result.siteId, driveId: result.driveId, siteUrl: result.siteUrl }));
+      toast.success("SharePoint discovered", `${result.siteName} and its default document library have been selected. Review and save to activate sync.`);
+    },
+    onError(error) {
+      toast.error("Could not discover SharePoint", error.message);
+    },
+  });
 
   const save = trpc.integrations.saveGraphConfig.useMutation({
     async onSuccess() {
@@ -434,13 +467,37 @@ function SharePointTab() {
           <Input label="SharePoint site ID" value={form.siteId} onChange={(e) => setForm({ ...form, siteId: e.target.value })} placeholder="Microsoft Graph site ID" />
           <Input label="Drive ID" value={form.driveId} onChange={(e) => setForm({ ...form, driveId: e.target.value })} placeholder="Document library drive ID" />
           <Input label="SharePoint site URL" type="url" value={form.siteUrl} onChange={(e) => setForm({ ...form, siteUrl: e.target.value })} placeholder="https://contoso.sharepoint.com/sites/ReadyPackets" />
+          {discoveredDrives.length > 0 ? (
+            <div className="md:col-span-2">
+              <Field label="Discovered document library">
+                <Select value={form.driveId} onChange={(event) => setForm({ ...form, driveId: event.target.value })}>
+                  {discoveredDrives.map((drive) => <option key={drive.id} value={drive.id}>{drive.name}{drive.isDefault ? " (default)" : ""}</option>)}
+                </Select>
+              </Field>
+              <p className="mt-1 text-xs text-gray-500">The default library is selected automatically. Choose another discovered library before saving if needed.</p>
+            </div>
+          ) : null}
           <div className="md:col-span-2">
             <Input label="Root folder path" value={form.rootFolderPath} onChange={(e) => setForm({ ...form, rootFolderPath: e.target.value })} placeholder="ReadyPackets/Orders" help="Orders are created beneath customers/{customerId}/orders/{orderId}." />
           </div>
         </div>
         <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-gray-100 pt-4">
+          <Button
+            variant="outline"
+            busy={discover.isPending}
+            disabled={!form.tenantId.trim() || !form.clientId.trim() || !form.siteUrl.trim() || (!form.clientSecret.trim() && !data?.hasSecret)}
+            onClick={() => discover.mutate({
+              tenantId: form.tenantId.trim(),
+              clientId: form.clientId.trim(),
+              clientSecret: form.clientSecret.trim() || undefined,
+              siteUrl: form.siteUrl.trim(),
+            })}
+          >
+            Discover site & library
+          </Button>
           <Button busy={save.isPending} onClick={() => save.mutate(form)}>Save SharePoint settings</Button>
           {data?.siteUrl ? <a className="text-sm font-medium text-teal-700 hover:underline" href={data.siteUrl} target="_blank" rel="noreferrer">Open SharePoint site</a> : null}
+          <p className="basis-full text-xs text-gray-500">Discovery uses your credentials once, populates the Graph site and document-library IDs, and never displays the client secret.</p>
         </div>
       </Card>
 

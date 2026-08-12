@@ -16,7 +16,7 @@ import { adminProcedure, staffProcedure, router } from "../trpc/trpc.js";
 import { TRPCError } from "@trpc/server";
 import { encryptField, decryptField } from "../security/crypto.js";
 import { env } from "../config/env.js";
-import { runPhaseKickoff, resetGraphTokenCache } from "../services/sharepoint.js";
+import { discoverSharePointConfig, runPhaseKickoff, resetGraphTokenCache } from "../services/sharepoint.js";
 import { getSetting, setSetting } from "../services/settings.js";
 import { recordActivity } from "../observability/audit.js";
 import { orders } from "../db/schema.js";
@@ -182,11 +182,36 @@ export const integrationsRouter = router({
 
   retryWebhookDelivery: adminProcedure
     .input(z.object({ deliveryId: z.number().int().positive() }))
-    .mutation(async ({ input }) => {
-      await db
-        .update(webhookDeliveries)
-        .set({ status: "pending", runAfter: new Date(), lastError: null, responseCode: null, responseDetail: null })
-        .where(eq(webhookDeliveries.id, input.deliveryId));
+    .mutation(async ({ ctx, input }) => {
+      const rows = await db.select().from(webhookDeliveries).where(eq(webhookDeliveries.id, input.deliveryId)).limit(1);
+      const delivery = rows[0];
+      if (!delivery) throw new TRPCError({ code: "NOT_FOUND", message: "Webhook delivery not found." });
+      if (!(["pending", "failed", "stopped"] as const).includes(delivery.status as "pending" | "failed" | "stopped")) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Only pending, failed, or stopped deliveries can be retried." });
+      }
+      await db.update(webhookDeliveries).set({
+        status: "pending",
+        runAfter: new Date(),
+        attempts: delivery.status === "failed" ? 0 : delivery.attempts,
+        lastError: null,
+        responseCode: null,
+        responseDetail: null,
+      }).where(eq(webhookDeliveries.id, delivery.id));
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "webhook.retry_requested", entityType: "webhook_delivery", entityId: delivery.id, summary: `Webhook delivery ${delivery.id} queued for retry`, ipAddress: ctx.clientIp });
+      return { ok: true as const };
+    }),
+
+  /** Stop a queued webhook before the scheduler makes its next delivery attempt. */
+  stopWebhookDelivery: adminProcedure
+    .input(z.object({ deliveryId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const rows = await db.select().from(webhookDeliveries).where(eq(webhookDeliveries.id, input.deliveryId)).limit(1);
+      const delivery = rows[0];
+      if (!delivery) throw new TRPCError({ code: "NOT_FOUND", message: "Webhook delivery not found." });
+      if (delivery.status !== "pending") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Only pending deliveries can be stopped." });
+      await db.update(webhookDeliveries).set({ status: "stopped", lastError: "Stopped by administrator" }).where(eq(webhookDeliveries.id, delivery.id));
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "webhook.stopped", entityType: "webhook_delivery", entityId: delivery.id, severity: "warning", summary: `Stopped pending webhook delivery ${delivery.id}`, ipAddress: ctx.clientIp });
+      return { ok: true as const };
     }),
 
   /** Create a fresh delivery row while retaining the original delivery history. */
@@ -196,6 +221,9 @@ export const integrationsRouter = router({
       const rows = await db.select().from(webhookDeliveries).where(eq(webhookDeliveries.id, input.deliveryId)).limit(1);
       const delivery = rows[0];
       if (!delivery) throw new TRPCError({ code: "NOT_FOUND", message: "Webhook delivery not found." });
+      if (delivery.status === "pending") {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "This delivery is already pending. Retry it or stop it before creating a separate redelivery." });
+      }
       const insert = await db.insert(webhookDeliveries).values({
         endpointId: delivery.endpointId,
         eventType: delivery.eventType,
@@ -355,6 +383,28 @@ export const integrationsRouter = router({
       hasSecret,
     };
   }),
+
+  discoverGraphConfig: adminProcedure
+    .input(z.object({
+      tenantId: z.string().trim().min(1).max(128),
+      clientId: z.string().trim().min(1).max(128),
+      clientSecret: z.string().max(512).optional(),
+      siteUrl: z.string().trim().url().max(1024),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const storedSecret = await getSetting("sharepoint.client_secret_enc");
+      const clientSecret = input.clientSecret || (storedSecret ? decryptField(storedSecret, "sharepoint.client_secret") : null);
+      if (!clientSecret) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Enter a client secret before discovery, or save one securely first." });
+      try {
+        const result = await discoverSharePointConfig({ tenantId: input.tenantId, clientId: input.clientId, clientSecret, siteUrl: input.siteUrl });
+        void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "sharepoint.discovery_succeeded", entityType: "sharepoint", entityId: 0, summary: `Discovered SharePoint site ${result.siteName} and ${result.drives.length} document library/libraries`, ipAddress: ctx.clientIp });
+        return result;
+      } catch (error) {
+        void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "sharepoint.discovery_failed", entityType: "sharepoint", entityId: 0, severity: "warning", summary: "SharePoint discovery failed", ipAddress: ctx.clientIp });
+        const message = error instanceof Error ? error.message.slice(0, 500) : "SharePoint discovery failed.";
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message });
+      }
+    }),
 
   saveGraphConfig: adminProcedure
     .input(z.object({
