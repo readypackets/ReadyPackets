@@ -2012,6 +2012,65 @@ export const knowledgeBaseArticles = mysqlTable(
   }),
 );
 
+// ── Public frequently asked questions ───────────────────────────────────────
+
+export const publicFaqs = mysqlTable(
+  "public_faqs",
+  {
+    id: id(),
+    question: varchar("question", { length: 500 }).notNull(),
+    answerMarkdown: mediumtext("answer_markdown").notNull(),
+    category: varchar("category", { length: 96 }),
+    sortOrder: int("sort_order").notNull().default(0),
+    isPublished: boolean("is_published").notNull().default(false),
+    publishedAt: timestamp("published_at"),
+    createdByUserId: int("created_by_user_id").notNull(),
+    updatedByUserId: int("updated_by_user_id"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    publicOrderIdx: index("public_faqs_public_order_idx").on(table.isPublished, table.sortOrder, table.publishedAt),
+    categoryIdx: index("public_faqs_category_idx").on(table.category),
+  }),
+);
+
+// ── Marketing campaigns ─────────────────────────────────────────────────────
+
+export const marketingCampaigns = mysqlTable(
+  "marketing_campaigns",
+  {
+    id: id(),
+    publicKey: varchar("public_key", { length: 32 }).notNull(),
+    name: varchar("name", { length: 180 }).notNull(),
+    objective: varchar("objective", { length: 32 }).notNull().default("awareness"),
+    channel: varchar("channel", { length: 32 }).notNull().default("website"),
+    status: varchar("status", { length: 24 }).notNull().default("draft"),
+    audience: varchar("audience", { length: 255 }),
+    headline: varchar("headline", { length: 255 }),
+    message: text("message"),
+    ctaLabel: varchar("cta_label", { length: 96 }),
+    destinationUrl: varchar("destination_url", { length: 1024 }).notNull(),
+    utmSource: varchar("utm_source", { length: 96 }),
+    utmMedium: varchar("utm_medium", { length: 96 }),
+    utmCampaign: varchar("utm_campaign", { length: 128 }),
+    utmContent: varchar("utm_content", { length: 128 }),
+    startsAt: timestamp("starts_at"),
+    endsAt: timestamp("ends_at"),
+    clickCount: int("click_count").notNull().default(0),
+    conversionCount: int("conversion_count").notNull().default(0),
+    createdByUserId: int("created_by_user_id").notNull(),
+    updatedByUserId: int("updated_by_user_id"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    publicKeyUnique: uniqueIndex("marketing_campaigns_public_key_unique").on(table.publicKey),
+    statusDatesIdx: index("marketing_campaigns_status_dates_idx").on(table.status, table.startsAt, table.endsAt),
+    channelIdx: index("marketing_campaigns_channel_idx").on(table.channel),
+  }),
+);
+
 // ── Tier 4: Forum teaser click tracking ──────────────────────────────────────
 
 export const forumTeaserClicks = mysqlTable(

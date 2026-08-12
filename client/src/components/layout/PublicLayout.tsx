@@ -29,6 +29,7 @@ const FOOTER_SECTIONS = [
       { href: "/about", label: "About" },
       { href: "/reviews", label: "Client reviews" },
       { href: "/community", label: "Community" },
+      { href: "/faq", label: "Frequently asked questions" },
       { href: "/contact", label: "Contact" },
     ],
   },
@@ -39,6 +40,7 @@ const FOOTER_SECTIONS = [
       { href: "/terms", label: "Terms of service" },
       { href: "/refunds", label: "Refund policy" },
       { href: "/disclaimer", label: "Liability disclaimer" },
+      { href: "/accessibility", label: "Accessibility" },
     ],
   },
 ] as const;

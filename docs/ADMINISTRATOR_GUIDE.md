@@ -19,6 +19,8 @@ Use the customer-portal switch only for testing the experience assigned to your 
 | **Email Template Center** | Edit, clone, preview, enable, and review email templates; inspect delivery records; control retries/resends; configure retention and audit BCC. |
 | **Order and Email Automations** | Select templated emails, lifecycle conditions, webhook endpoints, and completion actions. Test endpoint configuration before enabling a production rule. |
 | **Knowledge Base** | Draft, submit, review, approve, publish, unpublish, or request revision of customer help articles. Only published articles appear in the customer portal. |
+| **Public FAQs** | Author, categorize, edit, order, publish, unpublish, and delete public frequently asked questions. Drafts never appear on the public site; confirm accuracy before publication because published answers may be indexed. |
+| **Marketing** | Plan campaigns, set audience/message/channel/status/schedule, configure a local or HTTPS destination and UTM tags, copy a controlled promotion link, and record confirmed conversions. Promotion links log aggregate clicks only; they do not record visitor identities. Activate only reviewed campaigns and pause a link immediately if its destination or offer changes. |
 | **Announcements** | Publish to all customers, staff, or selected accounts. Review audience selection before publishing. |
 | **Changelog** | Maintain release drafts, immutable revision history, and selected public feature updates. Publish only reviewed entries. |
 | **Integrations** | Configure Microsoft Graph/SharePoint, outbound webhooks, SAML, and delivery control. Graph secrets are encrypted and never displayed after saving. |
@@ -31,6 +33,12 @@ Use the customer-portal switch only for testing the experience assigned to your 
 SAML auto-provisioning can assign Customer, Staff, or Administrator roles. Assigning Administrator does not bypass MFA: the account must enrol or pass the existing MFA challenge before a privileged session is granted.
 
 Maintenance controls independently gate public access, login, and new-account creation. Use them during scheduled work, with a visible maintenance message and a narrow allowlist only when necessary. Confirm the administrator bypass route before enabling a production-wide login gate.
+
+## Public-site discovery and accessibility operations
+
+The public FAQ page, route-aware metadata, canonical URLs, XML sitemap, crawler policy, Organization/WebSite structured data, and conditional FAQPage structured data are deployed. Verify the public domain in Google Search Console, submit `https://myportal.readypackets.com/sitemap.xml`, and monitor coverage; structured data improves machine understanding but does not guarantee indexing or a search result treatment.
+
+The accessibility statement is available at `/accessibility`. Treat reported accessibility barriers as support issues: capture the page, task, browser, and assistive technology; provide an alternative route to service while the issue is assessed; and include keyboard, zoom/reflow, and screen-reader review in public-page release acceptance.
 
 ## Publishing and release governance
 

@@ -7,7 +7,7 @@
  * procedure, so the client-side guards here are a usability measure rather than
  * the security control.
  */
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { Route, Switch, Redirect, useLocation } from "wouter";
 import {
   ClipboardList,
@@ -24,6 +24,8 @@ import {
 } from "lucide-react";
 import { useSession } from "@/lib/session";
 import { trpc } from "@/lib/trpc";
+import { BRAND, BRAND_ASSETS } from "@shared/brand";
+import { Seo } from "@/components/Seo";
 import { PublicLayout } from "@/components/layout/PublicLayout";
 import { PortalLayout, type NavSection } from "@/components/layout/PortalLayout";
 import { AdminLayout } from "@/components/layout/AdminLayout";
@@ -42,6 +44,8 @@ import {
   ReviewsPage,
 } from "@/pages/public/Content";
 import { ContactPage } from "@/pages/public/Contact";
+import { FaqPage } from "@/pages/public/Faq";
+import { AccessibilityPage } from "@/pages/public/Accessibility";
 
 import { LoginPage } from "@/pages/auth/Login";
 import {
@@ -110,6 +114,8 @@ import { AdminAnnouncementsPage } from "@/pages/admin/Announcements";
 import { AdminNavigationPage } from "@/pages/admin/Navigation";
 import { AdminKnowledgeBasePage } from "@/pages/admin/KnowledgeBase";
 import { AdminPlatformUpdates } from "@/pages/admin/PlatformUpdates";
+import { AdminFaqsPage } from "@/pages/admin/Faqs";
+import { AdminMarketingPage } from "@/pages/admin/Marketing";
 
 /** Full-page loader shown while the session is being resolved. */
 function BootScreen() {
@@ -126,6 +132,38 @@ function BootScreen() {
 /** Wraps public marketing pages, honouring maintenance mode for anonymous users. */
 function PublicRoutes() {
   const session = useSession();
+  const [location] = useLocation();
+  const publicFaqs = trpc.faqs.visible.useQuery(undefined, { enabled: location === "/faq" });
+  const seo = useMemo<{ title: string; description: string; structuredData?: unknown }>(() => {
+    const pages: Record<string, { title: string; description: string }> = {
+      "/": { title: "ReadyPackets — Your Business, Professionally Packeted", description: "ReadyPackets turns an idea into a defensible, documented business package: invention architecture, business foundation, operating design, and a launch system." },
+      "/packets": { title: "Business packets | ReadyPackets", description: "Explore ReadyPackets business packet groups, selected tiers, and the All-In bundle for a structured business foundation." },
+      "/how-it-works": { title: "How ReadyPackets works", description: "Understand the ReadyPackets process, from selecting a business packet to intake, collaboration, and completed materials." },
+      "/about": { title: "About ReadyPackets", description: "Learn about ReadyPackets and its approach to creating clear, structured business documentation and operating foundations." },
+      "/reviews": { title: "Client reviews | ReadyPackets", description: "Read client feedback about the ReadyPackets business documentation and strategy experience." },
+      "/community": { title: "ReadyPackets community", description: "Explore the ReadyPackets community and resources for founders building durable business foundations." },
+      "/contact": { title: "Contact ReadyPackets", description: "Contact ReadyPackets for questions about business packets, orders, or customer support." },
+      "/faq": { title: "Frequently asked questions | ReadyPackets", description: "Find clear answers about ReadyPackets, business packets, orders, accounts, collaboration, and payment." },
+      "/accessibility": { title: "Accessibility | ReadyPackets", description: "Learn about ReadyPackets’ accessibility approach, keyboard support, and how to report an accessibility barrier." },
+    };
+    const page = pages[location] ?? { title: "ReadyPackets", description: "ReadyPackets provides structured business documentation and strategy support." };
+    const origin = typeof window === "undefined" ? "https://myportal.readypackets.com" : window.location.origin;
+    const organization = {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      name: BRAND.companyShortName,
+      legalName: BRAND.companyLegalName,
+      url: origin,
+      logo: `${origin}${BRAND_ASSETS.light.webStandard}`,
+      email: BRAND.emails.general,
+      address: { "@type": "PostalAddress", streetAddress: "347 5th Ave Ste 1402-158", addressLocality: "New York", addressRegion: "NY", postalCode: "10016", addressCountry: "US" },
+      contactPoint: { "@type": "ContactPoint", contactType: "Customer Service", email: BRAND.emails.general },
+    };
+    const visibleFaqs = publicFaqs.data ?? [];
+    if (location === "/") return { ...page, structuredData: { "@context": "https://schema.org", "@graph": [organization, { "@type": "WebSite", name: BRAND.companyShortName, url: origin }] } };
+    if (location === "/faq" && visibleFaqs.length > 0) return { ...page, structuredData: { "@context": "https://schema.org", "@type": "FAQPage", mainEntity: visibleFaqs.map((faq) => ({ "@type": "Question", name: faq.question, acceptedAnswer: { "@type": "Answer", text: faq.answerMarkdown } })) } };
+    return page;
+  }, [location, publicFaqs.data]);
 
   const maintenanceLocked =
     session.maintenance?.enabled === true &&
@@ -138,6 +176,7 @@ function PublicRoutes() {
 
   return (
     <PublicLayout>
+      <Seo title={seo.title} description={seo.description} path={location} structuredData={seo.structuredData} />
       <Switch>
         <Route path="/" component={HomePage} />
         <Route path="/packets" component={PacketsPage} />
@@ -148,6 +187,8 @@ function PublicRoutes() {
         <Route path="/community" component={CommunityTeaserPage} />
         <Route path="/changelog" component={ChangelogPage} />
         <Route path="/contact" component={ContactPage} />
+        <Route path="/faq" component={FaqPage} />
+        <Route path="/accessibility" component={AccessibilityPage} />
         <Route path="/legal/:slug" component={PolicyPage} />
         <Route path="/privacy" component={PolicyPage} />
         <Route path="/terms" component={PolicyPage} />
@@ -320,6 +361,8 @@ function AdminRoutes() {
         <Route path="/admin/catalog" component={AdminCatalogPage} />
         <Route path="/admin/moderation" component={AdminModerationPage} />
         <Route path="/admin/content" component={AdminContentPage} />
+        <Route path="/admin/faqs" component={AdminFaqsPage} />
+        <Route path="/admin/marketing" component={AdminMarketingPage} />
         <Route path="/admin/security" component={AdminSecurityPage} />
         <Route path="/admin/system" component={AdminSystemPage} />
         <Route path="/admin/finance" component={AdminFinancePage} />

@@ -77,6 +77,8 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { href: "/admin/catalog", label: "Catalogue", icon: Package, adminOnly: true },
       { href: "/admin/moderation", label: "Moderation", icon: Star },
       { href: "/admin/content", label: "Site content", icon: ScrollText, adminOnly: true },
+      { href: "/admin/faqs", label: "Public FAQs", icon: LifeBuoy, adminOnly: true },
+      { href: "/admin/marketing", label: "Marketing", icon: Newspaper, adminOnly: true },
       { href: "/admin/changelog", label: "Changelog", icon: Newspaper, adminOnly: true },
       { href: "/admin/policy-center", label: "Policy center", icon: Shield, adminOnly: true },
       { href: "/admin/knowledge-base", label: "Knowledge base", icon: FileText, adminOnly: true },

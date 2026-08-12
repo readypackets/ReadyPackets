@@ -1438,3 +1438,46 @@ pnpm run build:server   # Node 22 production bundle completed
 The release was committed as `89d0a89c2780ed0ece8b9560835020f021c582f8` with message `feat: add lifecycle toolkit and release documentation` and successfully pushed to the private repository's `main` branch. GitHub confirms the canonical repository URL as `https://github.com/readypackets/ReadyPackets`.
 
 The documentation download directory and ZIP were synchronized from the same finalized documents and session log, with archive integrity validated by `unzip -t`. A final small follow-up commit will carry this publication confirmation itself, preserving the complete outcome in the required GitHub session record.
+
+
+---
+
+## 2026-08-12 — Public discovery, accessibility, FAQ, and marketing release
+
+### User direction recorded
+
+The user asked that the remaining roadmap items be implemented after the lifecycle release: an administrator-managed FAQ system with selective public publishing; a fully accessible public website; maximized SEO, GEO, and AEO; and a marketing system within the administrator panel. The user’s standing project requirement remains that the platform be self-hosted without Manus integrations or dependencies, that security controls remain in place, and that the complete session record and source changes be published to the private GitHub repository.
+
+### Delivered: public FAQ management
+
+A dedicated `public_faqs` data model and production migration `0021_public_faqs.sql` were added. The `faqs` router enforces public read access only for published records and administrator-only creation, editing, publication, ordering, and deletion. The public `/faq` page provides keyword search, category filtering, semantic native disclosure controls, and no internal data disclosure. The administrator workspace is available at `/admin/faqs`, and FAQ navigation was added to the public header, public footer, and configurable administrator navigation.
+
+The FAQ migration was applied to production and the anonymous public API was verified to return only an empty published set before administrators create public content. This is intentional: FAQ content is controlled exclusively by the administrator and no sample or fictional material was seeded.
+
+### Delivered: public accessibility strengthening
+
+The public site now includes a dedicated `/accessibility` statement and feedback path, linked from the shared footer. The public interaction baseline was strengthened with a 3px visible keyboard focus indicator, sticky-header scroll offsets that keep focused targets visible, reduced-motion respect, 44px desktop navigation targets, and a complete mobile-menu focus trap with Escape restoration. Existing semantic skip-link, labelled field, error-text, and color-independent validation primitives were retained.
+
+The implementation is grounded in the W3C WCAG 2.2 guidance recorded in `docs/research/wcag-2-2-public-site-audit-basis.md`. Production browser verification confirmed the accessibility statement renders over HTTPS and the first Tab key press visibly reaches **Skip to main content** before primary navigation.
+
+### Delivered: SEO, GEO, and answer-discovery foundations
+
+The public HTML shell and Express renderer now produce route-aware server-rendered titles, descriptions, canonical URLs, Open Graph/Twitter metadata, and crawler directives prior to JavaScript execution. Public client routes add matching metadata and emit CSP-compatible JSON-LD only for visible, accurate content: Organization and WebSite data on the public home page and FAQPage data only when an administrator has actually published one or more visible FAQ entries.
+
+A dynamic `/sitemap.xml` exposes only intentional public marketing routes and publicly listed packet groups. `robots.txt` now includes the sitemap location, explicitly allows the new public pages, and excludes the portal, administration area, API, authentication paths, and campaign redirect links. The implementation basis is recorded in `docs/research/search-discovery-implementation-basis.md`, using official Google Search Central and Schema.org sources. It deliberately avoids unsupported GEO/AEO tactics such as artificial content farms, hidden markup, and special AI text files.
+
+### Delivered: administrator marketing workspace
+
+The self-hosted marketing system consists of a `marketing_campaigns` data model and production migration `0022_marketing_campaigns.sql`, an administrator-only `marketing` API, and the `/admin/marketing` workspace. Administrators can create, revise, archive, and delete campaigns; define objective, channel, audience, messaging, CTA, start/end window, destination, and UTM values; publish or pause a campaign; copy a controlled promotion link; and record confirmed conversions. Aggregate campaign counts show total campaigns, active campaigns, clicks, and conversions.
+
+Public promotion links use `/go/{publicKey}`. They only redirect when a campaign is active and within its optional schedule, accept only a local path or HTTPS destination at creation time, append configured UTM values, and increment only an aggregate click counter. They do not store IP addresses, accounts, user agents, or browsing histories. Anonymous callers are denied access to the marketing administrator API, while invalid or inactive campaign links return 404 without redirecting. Marketing actions are recorded in the existing activity/audit log.
+
+### Validation and production deployment
+
+All feature code passed `pnpm run typecheck`, `pnpm test` (**143 passing tests**), `pnpm run build:client`, and `pnpm run build:server`. The tested client and server artifacts were deployed using timestamped rollback copies; migrations `0021_public_faqs.sql` and `0022_marketing_campaigns.sql` are applied in production. Production checks confirmed `{"status":"ok"}`, correct canonical FAQ metadata, an XML sitemap, public robots directives, anonymous marketing API denial (`401`), and safe rejection of an unknown campaign link (`404`).
+
+The live security verifier again reported **45/46 checks passing**. The sole reported item remains the known timing artifact for the rate-limit `Retry-After` probe: the header remains present in `server/security/rateLimit.ts`, but the verifier sends its final check after exhausting the rate-limit window. No regression or missing implementation was introduced by this release.
+
+### Publication pending
+
+The completed roadmap release, research notes, migration files, source changes, and this appended session record are ready for final integrity review, commit, and push to the private `readypackets/ReadyPackets` GitHub repository. The production `RELEASE_COMMIT` marker will be updated after publication.

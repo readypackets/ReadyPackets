@@ -129,6 +129,13 @@ html.dark .text-slate-900 {
   html {
     -webkit-text-size-adjust: 100%;
     scroll-behavior: smooth;
+    /* The public header is sticky. This preserves the focused target beneath it
+       when keyboard navigation or a skip link scrolls an element into view. */
+    scroll-padding-top: 5.25rem;
+  }
+
+  [id] {
+    scroll-margin-top: 5.25rem;
   }
 
   /* Respect a user's reduced-motion preference across the whole application. */
@@ -184,8 +191,10 @@ html.dark .text-slate-900 {
    * WCAG 2.1 AA requirement and must never be removed for aesthetics.
    */
   :focus-visible {
-    outline: 2px solid var(--color-teal);
-    outline-offset: 2px;
+    /* A high-contrast 3px ring remains perceptible around compact controls and
+       differentiates the focused state without relying on colour alone. */
+    outline: 3px solid var(--color-teal);
+    outline-offset: 3px;
     border-radius: 0.25rem;
   }
 

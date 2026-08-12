@@ -25,6 +25,8 @@ import { tier3Router } from "./tier3.js";
 import { tier4Router } from "./tier4.js";
 import { knowledgeBaseRouter } from "./knowledgeBase.js";
 import { platformUpdatesRouter } from "./platformUpdates.js";
+import { faqsRouter } from "./faqs.js";
+import { marketingRouter } from "./marketing.js";
 
 export const appRouter = router({
   auth: authRouter,
@@ -48,6 +50,8 @@ export const appRouter = router({
   tier4: tier4Router,
   knowledgeBase: knowledgeBaseRouter,
   platformUpdates: platformUpdatesRouter,
+  faqs: faqsRouter,
+  marketing: marketingRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -28,7 +28,7 @@ Packet Collective allows organization workspaces and scoped order sharing. Custo
 
 ### Administration and governance
 
-The admin console supports customers, orders, soft-delete trash and bulk restore, question banks, finance, Stripe testing, coupons, referrals, templates, email delivery history/retries/resends, automations, policy center, knowledge base approval, announcements, integrations, backups, security logs, SAML/Entra setup, maintenance gates, changelog publishing, and platform updates.
+The admin console supports customers, orders, soft-delete trash and bulk restore, question banks, finance, Stripe testing, coupons, referrals, templates, email delivery history/retries/resends, automations, policy center, knowledge base approval, announcements, public FAQ publishing, marketing campaigns and aggregate promotion-link measurement, integrations, backups, security logs, SAML/Entra setup, maintenance gates, changelog publishing, and platform updates.
 
 ### Security and operations
 
@@ -42,7 +42,7 @@ The platform includes protected backup, restore, configuration export, cloud syn
 |---|---|
 | **P0** | Configure and perform verified Stripe test-mode/live-mode webhook and payment lifecycle tests. |
 | **P0** | Configure Microsoft Graph consent and perform a real SharePoint folder-sync test; configure cloud backup remotes and perform a restore drill. |
-| **P1** | Deliver an administrator-published FAQ system, public WCAG 2.2 AA validation/remediation, SEO/GEO/AEO content and metadata programme, and marketing workspace. |
+| **Completed — 2026-08-12** | Administrator-published FAQ system, public WCAG 2.2 AA-focused remediation and accessibility statement, server-rendered SEO/discovery metadata with sitemap and structured data, and administrator marketing workspace are deployed. Continue periodic accessibility, Search Console, and campaign-performance review. |
 | **P1** | Add browser-level end-to-end regression coverage for SAML, magic links/MFA, checkout, file upload, policies, backup download, and rollback authorization. |
 | **P2** | Migrate the production host to provider-managed encrypted storage or an encrypted volume with a planned downtime/restore procedure. |
 | **P2** | Reconcile historic direct-SQL migration journal entries and modernize the remaining chart-library major version in a separately tested release. |

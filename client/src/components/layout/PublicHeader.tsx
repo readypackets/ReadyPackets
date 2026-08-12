@@ -20,6 +20,7 @@ const NAV_LINKS = [
   { href: "/how-it-works", label: "How it works" },
   { href: "/reviews", label: "Reviews" },
   { href: "/community", label: "Community" },
+  { href: "/faq", label: "FAQ" },
   { href: "/about", label: "About" },
   { href: "/contact", label: "Contact" },
 ] as const;
@@ -43,6 +44,19 @@ export function PublicHeader() {
       if (event.key === "Escape") {
         setOpen(false);
         toggleRef.current?.focus();
+        return;
+      }
+      if (event.key !== "Tab" || !panelRef.current) return;
+      const focusable = Array.from(panelRef.current.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"));
+      if (!focusable.length) return;
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
       }
     };
     document.addEventListener("keydown", onKeyDown);
@@ -84,7 +98,7 @@ export function PublicHeader() {
               href={link.href}
               aria-current={isActive(link.href) ? "page" : undefined}
               className={cn(
-                "rounded-lg px-3 py-2 text-sm font-medium no-underline transition-colors",
+                "inline-flex min-h-11 items-center rounded-lg px-3 py-2 text-sm font-medium no-underline transition-colors",
                 isActive(link.href)
                   ? "bg-teal/10 text-teal-dark"
                   : "text-body hover:bg-surface-sunken hover:text-ink",

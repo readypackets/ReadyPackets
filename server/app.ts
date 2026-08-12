@@ -16,6 +16,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
+import { eq, sql } from "drizzle-orm";
 import cookieParser from "cookie-parser";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { env } from "./config/env.js";
@@ -38,13 +39,15 @@ import { createAvatarRouter } from "./http/avatar.js";
 import { logger } from "./observability/logger.js";
 import { getMaintenanceState } from "./services/settings.js";
 import { handleStripeWebhook } from "./services/stripe.js";
+import { getCatalog } from "./services/catalog.js";
 import {
   handleAcs,
   handleLoginRedirect,
   handleLogout,
   handleMetadata,
 } from "./auth/saml.js";
-import { pingDatabase } from "./db/client.js";
+import { db, pingDatabase } from "./db/client.js";
+import { marketingCampaigns } from "./db/schema.js";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 
@@ -76,6 +79,32 @@ function resolveClientDist(): string {
 
 const clientDist = resolveClientDist();
 
+function escapeXml(value: string): string {
+  return value.replace(/[<>&'\"]/g, (character) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", "\"": "&quot;" })[character] ?? character);
+}
+
+function pageMetadata(req: Request) {
+  const pages: Record<string, { title: string; description: string }> = {
+    "/": { title: "ReadyPackets — Your Business, Professionally Packeted", description: "ReadyPackets turns an idea into a defensible, documented business package: invention architecture, business foundation, operating design, and a launch system." },
+    "/packets": { title: "Business packets | ReadyPackets", description: "Explore ReadyPackets business packet groups, selected tiers, and the All-In bundle for a structured business foundation." },
+    "/how-it-works": { title: "How ReadyPackets works", description: "Understand the ReadyPackets process, from selecting a business packet to intake, collaboration, and completed materials." },
+    "/about": { title: "About ReadyPackets", description: "Learn about ReadyPackets and its approach to creating clear, structured business documentation and operating foundations." },
+    "/reviews": { title: "Client reviews | ReadyPackets", description: "Read client feedback about the ReadyPackets business documentation and strategy experience." },
+    "/community": { title: "ReadyPackets community", description: "Explore the ReadyPackets community and resources for founders building durable business foundations." },
+    "/contact": { title: "Contact ReadyPackets", description: "Contact ReadyPackets for questions about business packets, orders, or customer support." },
+    "/faq": { title: "Frequently asked questions | ReadyPackets", description: "Find clear answers about ReadyPackets, business packets, orders, accounts, collaboration, and payment." },
+    "/accessibility": { title: "Accessibility | ReadyPackets", description: "Learn about ReadyPackets’ accessibility approach, keyboard support, and how to report an accessibility barrier." },
+  };
+  const pathName = req.path;
+  const publicPath = Boolean(pages[pathName]) || pathName.startsWith("/packets/") || pathName.startsWith("/legal/") || ["/privacy", "/terms", "/refunds", "/disclaimer", "/changelog"].includes(pathName);
+  const page = pages[pathName] ?? (pathName.startsWith("/packets/") ? { title: "Business packet | ReadyPackets", description: "Review a ReadyPackets business packet group and its available service tiers." } : { title: "ReadyPackets", description: "ReadyPackets provides structured business documentation and strategy support." });
+  return {
+    ...page,
+    canonical: new URL(pathName, `https://${req.hostname}`).toString(),
+    robots: publicPath ? "index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" : "noindex, nofollow",
+  };
+}
+
 /**
  * Serve index.html with the request's CSP nonce injected.
  *
@@ -94,12 +123,19 @@ async function serveIndex(req: Request, res: Response): Promise<void> {
     }
 
     const nonce = (res.locals.cspNonce as string | undefined) ?? "";
+    const metadata = pageMetadata(req);
     const html = await readFile(path.join(clientDist, "index.html"), "utf8");
+    const rendered = html
+      .replaceAll("__CSP_NONCE__", nonce)
+      .replaceAll("__PAGE_TITLE__", escapeXml(metadata.title))
+      .replaceAll("__PAGE_DESCRIPTION__", escapeXml(metadata.description))
+      .replaceAll("__PAGE_ROBOTS__", metadata.robots)
+      .replaceAll("__CANONICAL_URL__", escapeXml(metadata.canonical));
     res
       .status(200)
       .type("text/html; charset=utf-8")
       .setHeader("Cache-Control", "no-store, must-revalidate")
-      .send(html.replaceAll("__CSP_NONCE__", nonce));
+      .send(rendered);
   } catch (error) {
     logger.error("Failed to serve index.html", { error });
     res
@@ -261,6 +297,41 @@ export function createApp(): Express {
   // Any other /api path is a client mistake, and must not fall through to the SPA.
   app.use("/api", (_req: Request, res: Response) => {
     res.status(404).json({ error: "Not found" });
+  });
+
+  // Campaign redirect links track aggregate promotion clicks without logging IP,
+  // session, user-agent, or other visitor-identifying data. Campaign destinations
+  // are validated on write; an inactive or expired campaign never redirects.
+  app.get("/go/:publicKey", async (req: Request, res: Response) => {
+    const publicKey = req.params.publicKey;
+    if (!publicKey) {
+      res.status(404).type("text/plain").send("Campaign link is unavailable.");
+      return;
+    }
+    const [campaign] = await db.select().from(marketingCampaigns).where(eq(marketingCampaigns.publicKey, publicKey)).limit(1);
+    const now = new Date();
+    if (!campaign || campaign.status !== "active" || (campaign.startsAt && campaign.startsAt > now) || (campaign.endsAt && campaign.endsAt <= now)) {
+      res.status(404).type("text/plain").send("Campaign link is unavailable.");
+      return;
+    }
+    const destination = new URL(campaign.destinationUrl, `https://${req.hostname}`);
+    if (campaign.utmSource) destination.searchParams.set("utm_source", campaign.utmSource);
+    if (campaign.utmMedium) destination.searchParams.set("utm_medium", campaign.utmMedium);
+    if (campaign.utmCampaign) destination.searchParams.set("utm_campaign", campaign.utmCampaign);
+    if (campaign.utmContent) destination.searchParams.set("utm_content", campaign.utmContent);
+    await db.update(marketingCampaigns).set({ clickCount: sql`${marketingCampaigns.clickCount} + 1` }).where(eq(marketingCampaigns.id, campaign.id));
+    res.setHeader("Cache-Control", "no-store").redirect(302, destination.toString());
+  });
+
+  // Public crawl inventory. Keep portal, administration, API, authentication, and
+  // unlisted catalogue resources out of the sitemap; robots.txt reinforces this.
+  app.get("/sitemap.xml", async (req: Request, res: Response) => {
+    const origin = `https://${req.hostname}`;
+    const staticPaths = ["/", "/packets", "/how-it-works", "/about", "/reviews", "/community", "/changelog", "/contact", "/faq", "/accessibility", "/privacy", "/terms", "/refunds", "/disclaimer"];
+    const catalog = await getCatalog();
+    const urls = [...staticPaths, ...catalog.map((group) => `/packets/${group.slug}`)];
+    const body = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map((url) => `  <url><loc>${escapeXml(new URL(url, origin).toString())}</loc></url>`).join("\n")}\n</urlset>\n`;
+    res.type("application/xml").setHeader("Cache-Control", "no-cache").send(body);
   });
 
   // Static assets. Hashed bundle files are immutable; everything else is revalidated.

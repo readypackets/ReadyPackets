@@ -8,14 +8,23 @@ Allow: /reviews
 Allow: /community
 Allow: /changelog
 Allow: /contact
+Allow: /faq
+Allow: /accessibility
+Allow: /privacy
+Allow: /terms
+Allow: /refunds
+Allow: /disclaimer
 Allow: /legal/
 
 # Disallow the authenticated portal, admin panel, and API.
 Disallow: /portal/
 Disallow: /admin/
 Disallow: /api/
+Disallow: /go/
 Disallow: /login
 Disallow: /register
 Disallow: /verify-email
 Disallow: /forgot-password
 Disallow: /reset-password
+
+Sitemap: https://myportal.readypackets.com/sitemap.xml

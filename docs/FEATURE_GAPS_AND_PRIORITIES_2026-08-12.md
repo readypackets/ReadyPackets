@@ -27,10 +27,10 @@ ReadyPackets has a broad implemented foundation: the public site, customer porta
 | Customer magic links with MFA | In progress | Customers can request short-lived, single-use passwordless links. Accounts with MFA remain required to complete their second factor. |
 | Advanced system logging and security search | Partial / in progress | Security log search, viewing, IP blocking, and account bans are deployed. System-alert search, activity-log search, pagination, saved filters, and richer review workflows remain. |
 | Full security, code, and functionality review | In progress | A written issue register with severity, ownership, remediation status, and user/admin workflow coverage. |
-| FAQ publishing system | Not implemented | Administrators can author FAQs and selectively publish approved questions on the public site. |
-| Public accessibility programme | Not implemented | WCAG 2.2 AA-focused remediation, automated checks, keyboard and screen-reader review, and accessibility statement. |
-| SEO, GEO, and AEO programme | Not implemented | Technical metadata, sitemaps, structured data, answer-oriented content, crawlability validation, and search-console readiness. |
-| Marketing workspace | Not implemented | Administrative campaign planning, reusable channel copy, scheduling/status tracking, and promotion measurement. |
+| FAQ publishing system | Completed — 2026-08-12 | Administrators author, categorize, order, selectively publish, and remove FAQs; the public page presents only published records. |
+| Public accessibility programme | Completed — 2026-08-12 | WCAG 2.2 AA-focused interaction remediation, visible keyboard focus, skip-link verification, responsive target sizing, reduced-motion support, mobile-menu focus trapping, and a public accessibility statement are deployed. Continue formal assistive-technology acceptance testing. |
+| SEO, GEO, and AEO programme | Completed — 2026-08-12 | Server-rendered route metadata, canonical URLs, public sitemap, crawler directives, Organization/WebSite and conditional FAQPage JSON-LD, and answer-oriented FAQ content governance are deployed. Verify the domain in Search Console and monitor coverage. |
+| Marketing workspace | Completed — 2026-08-12 | Administrative campaign planning, UTM-tagged controlled links, scheduling/status control, aggregate privacy-preserving click counts, and conversion recording are deployed. |
 
 ## Priority 2 — Operational maturity and product polish
 
@@ -45,16 +45,16 @@ ReadyPackets has a broad implemented foundation: the public site, customer porta
 
 ## Completed items that should not be treated as current gaps
 
-The following are already implemented and deployed: policy routes and acceptance tracking; public legal aliases; customer and order trash with restore/bulk restore; customer referrals; targeted portal announcements; order question banks with Phase 1/Phase 2/both/unassigned options; editable email template center; retained sent-email records, BCC, and retention purge; Packet Collective workspaces and shared orders; coupons including percentage, fixed amount, and fixed cart price; cart persistence and recommendations; customer knowledge base workflow; Stripe connection test and payment readiness guard; delivery retry/stop/redeliver; SharePoint discovery; backup export/scheduling/downloads/multi-target controls; explicit light/dark/system appearance controls; SSO entry; opaque public account IDs; and advanced security-log review/block/ban controls.
+The following are already implemented and deployed: policy routes and acceptance tracking; public legal aliases; customer and order trash with restore/bulk restore; customer referrals; targeted portal announcements; order question banks with Phase 1/Phase 2/both/unassigned options; editable email template center; retained sent-email records, BCC, and retention purge; Packet Collective workspaces and shared orders; coupons including percentage, fixed amount, and fixed cart price; cart persistence and recommendations; customer knowledge base workflow; Stripe connection test and payment readiness guard; delivery retry/stop/redeliver; SharePoint discovery; backup export/scheduling/downloads/multi-target controls; explicit light/dark/system appearance controls; SSO entry; opaque public account IDs; advanced security-log review/block/ban controls; administrator-published public FAQs; public accessibility statement and keyboard-focused WCAG remediation; server-rendered discovery metadata, sitemap, and conditional structured data; and administrator marketing campaign management with privacy-preserving aggregate promotion-link measurement.
 
 ## Recommended delivery sequence
 
 1. Finish the active identity, maintenance, magic-link, system logging, and detailed-review work.
 2. Complete Stripe test-mode validation, then live webhook activation; validate SharePoint and at least one remote backup restore.
-3. Deliver the FAQ system, followed by accessibility and search/discovery work as one public-site quality release.
-4. Deliver the marketing workspace after the public-site content and measurement foundations exist.
+3. Verify the public domain in Search Console, submit the sitemap, and complete the remaining browser/screen-reader accessibility acceptance pass.
+4. Use the marketing workspace with approved campaigns and periodically review aggregate link and conversion performance.
 5. Schedule the encrypted-storage architecture decision separately because it changes host-level recovery and requires a maintenance window.
 
 ## Decision record
 
-The principal remaining risks are not missing portal pages. They are an incomplete payment/webhook production configuration, unvalidated third-party synchronization and restore paths, unfinished identity and observability controls, and a public-site quality programme that has been requested but not yet implemented. The correct response is to complete and test these in priority order instead of adding low-value surface area first.
+The principal remaining risks are not missing portal pages. They are incomplete payment/webhook production configuration, unvalidated third-party synchronization and restore paths, unfinished identity and observability controls, and the remaining acceptance/monitoring work for the now-deployed public-site quality programme. The correct response is to validate and complete these in priority order instead of adding low-value surface area first.
