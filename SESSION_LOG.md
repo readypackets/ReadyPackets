@@ -1520,3 +1520,36 @@ This source repair and its complete session-log record are ready for private Git
 ### Publication outcome
 
 The login repair was committed and pushed to the private `readypackets/ReadyPackets` `main` branch as `0aa5b1ae4cd0452eeee4eb0517bfc1495fdbd3e9` with the message `fix: return tRPC CSRF errors to login client`. The production host is running the corresponding server artifact, and the release marker was set to that commit. A final log-only publication commit follows this entry so that the GitHub session record includes the outcome itself.
+
+
+---
+
+## 2026-08-12 — Backup-control repair and OWASP Top 10 2025 assessment
+
+### User report and questions
+
+After confirming that cache clearing and a page refresh restored browser login, the user reported two Security Centre alerts: `tier3.systemBackups.start` and `tier3.systemBackups.setSchedule`. Both displayed `sudo: The "no new privileges" flag is set, which prevents sudo from running as root.` The user also asked whether the platform is protected against the OWASP Top 10 vulnerabilities and whether `SESSION_LOG.md` is appended or overwritten.
+
+### Backup-control investigation and repair
+
+The alerts were confirmed as real production errors, but they were not an intrusion indicator. The `readypackets` service intentionally runs as an unprivileged `readypackets` user with a root-owned, fixed-path `/usr/local/sbin/readypackets-backup-control` helper and a narrowly scoped sudoers rule. The service unit nevertheless had `NoNewPrivileges=true`, which prevents sudo from elevating even when a command is explicitly allowlisted. That setting made the intended backup-control plane impossible to use.
+
+The version-controlled and production systemd unit were updated to set `NoNewPrivileges=false` with a security rationale and compensating controls documented in the file: root-owned 0750 helper, exact-path sudoers allowlist, helper-side fixed action/argument validation, empty capability set, filesystem isolation, system-call restrictions, root-owned secrets, and loopback-bound service remain in effect. The prior unit was saved as a timestamped rollback copy. `systemd-analyze verify` passed, the service was restarted, `NoNewPrivileges=no` was confirmed, and the public health endpoint returned `{"status":"ok"}`.
+
+The service account then successfully invoked the helper’s safe `status` operation. A controlled backup was started through the same repaired service-account path; `readypackets-backup.service` completed with `Result=success`, generated `readypackets-20260812T154409Z.tar.gz` in the root-owned backup directory, and retained the enabled nightly timer. No arbitrary privilege elevation was added.
+
+### OWASP assessment
+
+The current official OWASP Top 10:2025 categories and guidance were reviewed and recorded in `docs/research/owasp-top-10-2025-assessment-basis.md`. An evidence-based assessment was created at `docs/OWASP_TOP_10_2025_COVERAGE_ASSESSMENT.md` and indexed in `docs/DOCUMENTATION_INDEX.md`.
+
+The conclusion is that ReadyPackets has substantial implemented controls across all ten current categories, including server-side authorization, MFA/session controls, CSRF/origin checks, nonce CSP and headers, authenticated encryption, typed validation, safe Markdown rendering, upload controls, logging/alerts, restricted privileged helpers, secure deployment controls, and error handling. It is not represented as invulnerable or OWASP certified. The most important residual work is continuous dependency/SBOM management, authenticated browser authorization regression tests, Stripe/SharePoint/cloud-backup configuration and restore drills, host-volume encryption planning, and an independent penetration test.
+
+Fresh validation returned a clean production dependency audit (`No known vulnerabilities found`) and the live verifier reported **46/46 checks passed**, including CSRF/origin checks, anonymous authorization denials, Host validation, error-disclosure behavior, static-file protections, and login rate-limit/`Retry-After` behavior.
+
+### Session-log retention clarification
+
+`SESSION_LOG.md` is **append-only in practice** for this project: each task’s user request, investigation, implementation, verification, deployment, and GitHub publication outcome is appended as a new dated section. It is version-controlled in the private repository, so Git history also preserves prior revisions. It is not intentionally overwritten; only an exceptional corrective edit to an inaccurate prior statement would modify existing text, and that change would remain auditable through Git history.
+
+### Publication pending
+
+The backup repair, documentation index, OWASP assessment, research basis, and this complete session-log addition are ready for final integrity review, private GitHub publication, and production release-marker update.
