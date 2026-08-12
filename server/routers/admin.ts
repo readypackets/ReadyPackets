@@ -314,6 +314,9 @@ export const adminRouter = router({
           originalName: files.originalName,
           sizeBytes: files.sizeBytes,
           category: files.category,
+          phase: files.phase,
+          detectedMime: files.detectedMime,
+          extension: files.extension,
           visibleToCustomer: files.visibleToCustomer,
           isPlaceholder: files.isPlaceholder,
           version: files.version,
@@ -558,6 +561,32 @@ export const adminRouter = router({
       if (input.id) { await db.update(orderQuestionTemplates).set(values).where(eq(orderQuestionTemplates.id, input.id)); return { id: input.id }; }
       const result = await db.insert(orderQuestionTemplates).values({ ...values, createdByUserId: ctx.session.user.id });
       return { id: insertedId(result) };
+    }),
+
+  bulkCreateQuestionTemplates: staffProcedure
+    .input(z.object({
+      namePrefix: z.string().trim().min(2).max(150),
+      questions: z.string().trim().min(5).max(20_000),
+      phase: z.enum(["phase_1", "phase_2", "both", "unassigned"]).default("unassigned"),
+      required: z.boolean().default(true),
+      isActive: z.boolean().default(true),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const lines = [...new Set(input.questions.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length >= 5))].slice(0, 100);
+      if (lines.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Enter at least one question of five or more characters." });
+      const current = await db.select({ maxSort: sql<number>`COALESCE(MAX(${orderQuestionTemplates.sortOrder}), 0)` }).from(orderQuestionTemplates);
+      const baseSort = Number(current[0]?.maxSort ?? 0);
+      await db.insert(orderQuestionTemplates).values(lines.map((question, index) => ({
+        name: `${input.namePrefix} ${index + 1}`.slice(0, 190),
+        question,
+        phase: input.phase,
+        required: input.required,
+        isActive: input.isActive,
+        sortOrder: baseSort + index + 1,
+        createdByUserId: ctx.session.user.id,
+      })));
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: ctx.session.user.role, action: "question_template.bulk_created", entityType: "question_template", entityId: 0, summary: `Created ${lines.length} question templates from a bulk list`, changes: { count: lines.length, phase: input.phase }, ipAddress: ctx.clientIp });
+      return { ok: true as const, count: lines.length };
     }),
 
   applyQuestionTemplate: staffProcedure

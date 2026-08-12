@@ -224,12 +224,14 @@ function DeliveryLogTab() {
         <table className="min-w-full text-sm">
           <thead>
             <tr className="border-b text-left text-gray-500">
+              <th className="py-2 pr-4">Date & time</th>
+              <th className="py-2 pr-4">Customer</th>
+              <th className="py-2 pr-4">Order ID</th>
               <th className="py-2 pr-4">Event</th>
               <th className="py-2 pr-4">Status</th>
               <th className="py-2 pr-4">Attempts</th>
               <th className="py-2 pr-4">Response</th>
               <th className="py-2 pr-4">Diagnostic</th>
-              <th className="py-2 pr-4">Date</th>
               <th className="py-2">Actions</th>
             </tr>
           </thead>
@@ -238,6 +240,9 @@ function DeliveryLogTab() {
               const canRetry = d.status === "pending" || d.status === "failed" || d.status === "stopped";
               return (
                 <tr key={d.id} className="border-b hover:bg-gray-50">
+                  <td className="py-2 pr-4 whitespace-nowrap text-xs text-gray-500">{new Date(d.createdAt).toLocaleString()}</td>
+                  <td className="py-2 pr-4">{d.customerName ?? "—"}</td>
+                  <td className="py-2 pr-4 font-mono text-xs">{d.orderNumber ?? "—"}</td>
                   <td className="py-2 pr-4 font-mono text-xs">{d.eventType}</td>
                   <td className="py-2 pr-4">
                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${
@@ -251,7 +256,6 @@ function DeliveryLogTab() {
                   <td className="py-2 pr-4">{d.attempts}</td>
                   <td className="py-2 pr-4">{d.responseCode ?? "—"}</td>
                   <td className="py-2 pr-4 max-w-xs"><span className="block truncate text-xs text-gray-600" title={d.lastError ?? d.responseDetail ?? ""}>{d.lastError ?? d.responseDetail ?? "—"}</span></td>
-                  <td className="py-2 pr-4 text-gray-500">{new Date(d.createdAt).toLocaleDateString()}</td>
                   <td className="py-2">
                     <div className="flex flex-wrap gap-2">
                       {canRetry ? <Button variant="outline" size="sm" busy={retry.isPending} onClick={() => retry.mutate({ deliveryId: d.id })}>Retry</Button> : null}
@@ -262,7 +266,7 @@ function DeliveryLogTab() {
                 </tr>
               );
             })}
-            {!data?.rows.length && <tr><td colSpan={7} className="py-8 text-center text-gray-400">No deliveries.</td></tr>}
+            {!data?.rows.length && <tr><td colSpan={9} className="py-8 text-center text-gray-400">No deliveries.</td></tr>}
           </tbody>
         </table>
       </div>

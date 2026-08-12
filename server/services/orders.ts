@@ -214,6 +214,9 @@ export async function applyOrderAutomationRules(
       }
       await db.insert(webhookDeliveries).values({
         endpointId: endpoint.id,
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        customerName: customer ? displayNameOf(customer) : null,
         eventType: `order.${triggerType}`,
         payload: { orderId: order.id, orderNumber: order.orderNumber, customerId: order.userId, projectName, status: order.status, paymentStatus: order.paymentStatus, triggerType, triggerValue: triggerValue ?? null, ruleId: rule.id, occurredAt: new Date().toISOString() },
         status: "pending",

@@ -64,6 +64,7 @@ export const adminFilesRouter = router({
         sizeBytes: row.sizeBytes,
         sha256: row.sha256,
         category: row.category,
+        phase: row.phase,
         visibleToCustomer: row.visibleToCustomer,
         isPlaceholder: row.isPlaceholder,
         version: row.version,

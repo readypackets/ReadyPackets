@@ -739,6 +739,9 @@ export async function jobNotifyWebhooks(orderId: number, phase: string): Promise
 
     await db.insert(webhookDeliveries).values({
       endpointId: endpoint.id,
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      customerName: customer ? displayNameOf(customer) : null,
       eventType: phaseCode,
       payload,
       status: "pending",

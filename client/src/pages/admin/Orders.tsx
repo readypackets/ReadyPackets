@@ -759,6 +759,13 @@ export function AdminOrderDetailPage() {
       toast.error("Could not change visibility", errorMessage(error));
     },
   });
+  const bulkDownload = trpc.files.bulkDownload.useMutation({
+    onSuccess(result) {
+      window.location.assign(result.url);
+      toast.success("Download prepared", `${result.fileCount} file(s) will download as a ZIP archive.`);
+    },
+    onError(error) { toast.error("Could not prepare download", errorMessage(error)); },
+  });
 
   const softDelete = trpc.admin.softDeleteOrder.useMutation({
     async onSuccess() {
@@ -1095,6 +1102,12 @@ export function AdminOrderDetailPage() {
                     </div>
                   ))}
                 </dl>
+                {(() => {
+                  const intakeFiles = (files.data ?? []).filter((file) => file.category === "intake_attachment");
+                  const pitches = intakeFiles.filter((file) => file.detectedMime?.startsWith("audio/"));
+                  const documents = intakeFiles.filter((file) => !file.detectedMime?.startsWith("audio/"));
+                  return <div className="mt-6 grid gap-4 lg:grid-cols-2"><Card className="bg-surface-soft"><CardHeader title={`Business Pitch Ideas (${pitches.length})`} description="Browser-recorded WebM pitches submitted by the customer." />{pitches.length ? <ul className="mt-3 space-y-2">{pitches.map((file) => <li key={file.id} className="flex items-center justify-between gap-3 text-sm"><span className="truncate text-ink">{file.originalName}</span><span className="shrink-0 text-xs text-muted">{formatBytes(file.sizeBytes)}</span></li>)}</ul> : <p className="mt-3 text-sm text-muted">No Business Pitch Idea recording was saved for this order.</p>}</Card><Card className="bg-surface-soft"><CardHeader title={`Supporting documents (${documents.length})`} description="Customer documents attached during Phase 1 intake." />{documents.length ? <ul className="mt-3 space-y-2">{documents.map((file) => <li key={file.id} className="flex items-center justify-between gap-3 text-sm"><span className="truncate text-ink">{file.originalName}</span><span className="shrink-0 text-xs text-muted">{formatBytes(file.sizeBytes)}</span></li>)}</ul> : <p className="mt-3 text-sm text-muted">No supporting documents were saved for this order.</p>}</Card></div>;
+                })()}
               </>
             )}
           </Card>
@@ -1258,12 +1271,8 @@ export function AdminOrderDetailPage() {
           <Card>
             <CardHeader
               title="Files on this order"
-              description="Toggle visibility to publish a deliverable to the customer."
-              actions={
-                <LinkButton href="/admin/files" size="sm" variant="outline">
-                  File manager
-                </LinkButton>
-              }
+              description="Review all Phase 1 intake artifacts and Phase 2/delivery files. Toggle visibility to publish a deliverable to the customer."
+              actions={<div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" busy={bulkDownload.isPending} disabled={(files.data ?? []).filter((file) => file.category === "intake_attachment").length === 0} onClick={() => bulkDownload.mutate({ fileIds: (files.data ?? []).filter((file) => file.category === "intake_attachment").map((file) => file.id), archiveName: `${order.orderNumber}-phase-1-files` })}>Download Phase 1</Button><Button size="sm" variant="outline" busy={bulkDownload.isPending} disabled={(files.data ?? []).filter((file) => file.category !== "intake_attachment").length === 0} onClick={() => bulkDownload.mutate({ fileIds: (files.data ?? []).filter((file) => file.category !== "intake_attachment").map((file) => file.id), archiveName: `${order.orderNumber}-phase-2-and-delivery-files` })}>Download Phase 2 & delivery</Button><Button size="sm" busy={bulkDownload.isPending} disabled={(files.data ?? []).length === 0} onClick={() => bulkDownload.mutate({ fileIds: (files.data ?? []).map((file) => file.id), archiveName: `${order.orderNumber}-all-files` })}>Download all</Button><LinkButton href="/admin/files" size="sm" variant="outline">File manager</LinkButton></div>}
             />
             {(files.data ?? []).length === 0 ? (
               <p className="mt-4 text-sm text-body">No files have been uploaded to this order.</p>
@@ -1274,8 +1283,7 @@ export function AdminOrderDetailPage() {
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-ink">{file.originalName}</p>
                       <p className="mt-0.5 text-xs text-muted">
-                        {formatBytes(file.sizeBytes)} · v{file.version} ·{" "}
-                        {formatDate(file.createdAt)}
+                        {file.category === "intake_attachment" ? "Phase 1 intake" : file.phase === "phase_2" ? "Phase 2" : "Phase 2 / delivery"} · {formatBytes(file.sizeBytes)} · v{file.version} · {formatDate(file.createdAt)}
                       </p>
                     </div>
                     <Button
@@ -1344,6 +1352,11 @@ function OrderAutomationTab({ order, customer }: { order: any; customer: any }) 
   const toast = useToast();
   const utils = trpc.useUtils();
   const graphConfig = trpc.integrations.graphConfig.useQuery();
+  const phaseJobs = trpc.integrations.phaseJobs.useQuery({ orderId: order.id });
+  const deliveryLog = trpc.integrations.webhookDeliveries.useQuery({ orderId: order.id });
+  const retryPhaseJob = trpc.integrations.retryPhaseJob.useMutation({ onSuccess: () => { void phaseJobs.refetch(); toast.success("Phase job queued for retry"); }, onError: (error) => toast.error("Could not retry phase job", errorMessage(error)) });
+  const retryDelivery = trpc.integrations.retryWebhookDelivery.useMutation({ onSuccess: () => { void deliveryLog.refetch(); toast.success("Webhook delivery queued for retry"); }, onError: (error) => toast.error("Could not retry delivery", errorMessage(error)) });
+  const redeliver = trpc.integrations.redeliverWebhook.useMutation({ onSuccess: () => { void deliveryLog.refetch(); toast.success("New webhook redelivery queued"); }, onError: (error) => toast.error("Could not create redelivery", errorMessage(error)) });
 
   const p101Payload = {
     customer_id: customer?.customerNumber ?? `RP-CUST-${String(order.userId).padStart(6, '0')}`,
@@ -1445,6 +1458,11 @@ function OrderAutomationTab({ order, customer }: { order: any; customer: any }) 
             <Button variant="outline" busy={manualKickoff.isPending} onClick={() => handleKickoff("in_production")}>Kick off Phase III</Button>
             <Button variant="outline" busy={manualKickoff.isPending} onClick={() => handleKickoff("delivered")}>Kick off Phase IV</Button>
           </div>
+        </Card>
+
+        <Card>
+          <CardHeader title="This order’s Phase I and Phase II automation history" description="Jobs and webhook deliveries for this order only. Retry or create a fresh redelivery without leaving the order." />
+          <div className="mt-4 space-y-5"><div><p className="text-sm font-semibold text-ink">Phase jobs</p>{(phaseJobs.data?.rows ?? []).filter((job) => job.phase === "phase_1_intake" || job.phase === "phase_2_synthesis").length ? <ul className="mt-2 space-y-2">{(phaseJobs.data?.rows ?? []).filter((job) => job.phase === "phase_1_intake" || job.phase === "phase_2_synthesis").map((job) => <li key={job.id} className="rounded border border-line p-2.5 text-xs"><div className="flex items-center justify-between gap-2"><span className="font-medium text-ink">{job.phase === "phase_1_intake" ? "Phase I" : "Phase II"} · {job.jobType}</span><Badge tone={job.status === "completed" ? "success" : job.status === "failed" ? "danger" : "warning"}>{job.status}</Badge></div><p className="mt-1 text-muted">Started {formatDateTime(job.createdAt)}{job.completedAt ? ` · finished ${formatDateTime(job.completedAt)}` : ""}</p>{job.lastError ? <p className="mt-1 text-danger">{job.lastError}</p> : null}{job.status === "failed" || job.status === "stopped" ? <Button className="mt-2" size="sm" variant="outline" busy={retryPhaseJob.isPending} onClick={() => retryPhaseJob.mutate({ jobId: job.id })}>Retry job</Button> : null}</li>)}</ul> : <p className="mt-2 text-xs text-muted">No Phase I or Phase II jobs have been run for this order.</p>}</div><div><p className="text-sm font-semibold text-ink">Webhook deliveries</p>{(deliveryLog.data?.rows ?? []).filter((delivery) => delivery.eventType === "P101" || delivery.eventType === "P201").length ? <ul className="mt-2 space-y-2">{(deliveryLog.data?.rows ?? []).filter((delivery) => delivery.eventType === "P101" || delivery.eventType === "P201").map((delivery) => <li key={delivery.id} className="rounded border border-line p-2.5 text-xs"><div className="flex items-center justify-between gap-2"><span className="font-medium text-ink">{delivery.eventType} · {formatDateTime(delivery.createdAt)}</span><Badge tone={delivery.status === "delivered" ? "success" : delivery.status === "failed" ? "danger" : "warning"}>{delivery.status}</Badge></div><p className="mt-1 text-muted">Attempts: {delivery.attempts}{delivery.responseCode ? ` · HTTP ${delivery.responseCode}` : ""}{delivery.deliveredAt ? ` · delivered ${formatDateTime(delivery.deliveredAt)}` : ""}</p>{delivery.lastError ? <p className="mt-1 text-danger">{delivery.lastError}</p> : null}<div className="mt-2 flex gap-2">{delivery.status !== "delivered" ? <Button size="sm" variant="outline" busy={retryDelivery.isPending} onClick={() => retryDelivery.mutate({ deliveryId: delivery.id })}>Retry</Button> : null}<Button size="sm" variant="outline" busy={redeliver.isPending} onClick={() => redeliver.mutate({ deliveryId: delivery.id })}>Redeliver</Button></div></li>)}</ul> : <p className="mt-2 text-xs text-muted">No Phase I or Phase II webhook deliveries have been queued for this order.</p>}</div></div>
         </Card>
 
         <Card>

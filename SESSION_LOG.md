@@ -1594,3 +1594,34 @@ The SharePoint repair, regression test, documentation, research basis, and this 
 ### Publication outcome
 
 The SharePoint tenant-root discovery repair, configuration-flow improvements, regression tests, documentation, research basis, and session record were committed and pushed to the private `readypackets/ReadyPackets` `main` branch as `239b721abf0403b7eee499dc0a2dfe9a8b185822` with the message `fix: discover SharePoint tenant-root sites`. A final log-only publication commit follows so that GitHub contains this outcome as well as the implementation. The production release marker is updated after that closing commit is pushed.
+
+
+---
+
+## 2026-08-12 — Order operations, Phase 1 artifact visibility, and delivery-log release
+
+### User request
+
+The user reported that a customer’s Phase 1 Business Pitch Idea and supporting documents did not appear in the administrator order view. The user requested complete order-file access with Phase 1/Phase 2 downloads, bulk question-list template creation, order-specific Phase 1/Phase 2 automation history and reruns, and delivery-log date/time/customer/order context.
+
+### Investigation
+
+The affected order `RP-C000006-2608-D2B7D9` was inspected in production. It had a valid submitted Phase 1 intake, but no `files` records and no `file.upload`/rejection audit records. The absence is therefore not an administrator display filter issue: no pitch or document artifact was successfully persisted for that historical order. The customer upload endpoint is correctly mounted at `/api/files/upload`, enforces CSRF and order access, validates storage and MIME type, records a file row only after secure storage succeeds, and is used by the customer intake page. Future uploads will be shown by the enhanced administrator UI; the historical order requires the customer to upload/record the files again if the original browser session did not complete the upload.
+
+### Delivered functionality
+
+Migration `0023_order_operations_context.sql` added a file phase field and webhook delivery context fields. Existing intake attachments are classified as Phase 1. New customer intake documents and browser-recorded WebM pitches are automatically saved as `phase_1`. Webhook deliveries now persist safe order ID/order-number/customer-name context at creation. Existing deliveries were safely backfilled with order IDs/numbers using the order number carried in the payload; encrypted customer names were deliberately not decrypted in SQL.
+
+The administrator order Intake tab now shows submitted Business Pitch Idea recordings and supporting documents separately. The Files tab labels Phase 1 intake artifacts versus Phase 2/delivery material and supports safe single-use ZIP download tickets for Phase 1, Phase 2/delivery, or all order files. Existing staff authorization remains in force for archive generation and download.
+
+The Order Question Banks workspace now supports **Bulk add questions**: each nonblank line becomes a separately editable reusable template, with prefix, phase, required-answer, active-state controls, duplicate removal, and a maximum of 100 records per batch.
+
+The order Automation tab now shows Phase I/II phase jobs and P101/P201 webhook deliveries for that order only, including creation/delivery time, status, attempts, HTTP result, errors, and direct retry/redelivery controls. The central Delivery Log now shows date/time, customer, order ID, event, status, attempts, response, diagnostic, and its existing retry/stop/redelivery actions.
+
+### Validation and deployment
+
+The full automated suite passed with **146 tests**, TypeScript passed with zero errors, and client/server production builds completed successfully. The migration initially halted only at a backfill expression that referenced plaintext user name columns which do not exist because names are encrypted. The already-completed schema changes were retained; the safe order-only backfill was applied separately and identified 16 contextual historical deliveries. The production server/client were then deployed with timestamped rollback copies. Internal health, external production HTTPS health, required security headers, and systemd service status all passed. The sandbox security verifier could not reach Cloudflare during its first connection attempt (`UND_ERR_CONNECT_TIMEOUT`); this was an external connection failure, not a code-verification failure. A direct HTTPS check from the production host confirmed the live portal and security-header baseline.
+
+### Publication pending
+
+The complete source, migration, tests, documentation, and session record are ready for final integrity review and publication to the private repository.

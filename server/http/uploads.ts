@@ -248,6 +248,7 @@ export function createUploadRouter(): Router {
             sizeBytes: stored.sizeBytes,
             sha256: stored.sha256,
             category,
+            phase: category === "intake_attachment" ? "phase_1" : "unassigned",
             // Staff publish deliverables explicitly; customer uploads are theirs by definition.
             visibleToCustomer: !isStaff,
           });

@@ -154,6 +154,7 @@ export const integrationsRouter = router({
     .input(
       z.object({
         endpointId: z.number().int().positive().optional(),
+        orderId: z.number().int().positive().optional(),
         status: z.string().optional(),
         page: z.number().int().min(1).default(1),
       })
@@ -162,6 +163,7 @@ export const integrationsRouter = router({
       const offset = (input.page - 1) * 50;
       const conditions = [];
       if (input.endpointId) conditions.push(eq(webhookDeliveries.endpointId, input.endpointId));
+      if (input.orderId) conditions.push(eq(webhookDeliveries.orderId, input.orderId));
       if (input.status) conditions.push(eq(webhookDeliveries.status, input.status));
 
       const rows = await db
@@ -226,6 +228,9 @@ export const integrationsRouter = router({
       }
       const insert = await db.insert(webhookDeliveries).values({
         endpointId: delivery.endpointId,
+        orderId: delivery.orderId,
+        orderNumber: delivery.orderNumber,
+        customerName: delivery.customerName,
         eventType: delivery.eventType,
         payload: delivery.payload,
         status: "pending",

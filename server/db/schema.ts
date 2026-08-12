@@ -656,6 +656,8 @@ export const files = mysqlTable(
     sizeBytes: int("size_bytes").notNull(),
     sha256: varchar("sha256", { length: 64 }).notNull(),
     category: varchar("category", { length: 32 }).notNull().default("deliverable"),
+    /** Lifecycle phase assigned by the intake or staff workflow. */
+    phase: varchar("phase", { length: 16 }).notNull().default("unassigned"),
     /** Customer visibility. Hidden files exist only in the admin workspace. */
     visibleToCustomer: boolean("visible_to_customer").notNull().default(false),
     isPlaceholder: boolean("is_placeholder").notNull().default(false),
@@ -667,6 +669,7 @@ export const files = mysqlTable(
   (table) => ({
     storageKeyUnique: uniqueIndex("files_storage_key_unique").on(table.storageKey),
     orderIdx: index("files_order_idx").on(table.orderId),
+    orderPhaseIdx: index("files_order_phase_idx").on(table.orderId, table.phase, table.deletedAt),
     ownerIdx: index("files_owner_idx").on(table.ownerUserId),
     deletedIdx: index("files_deleted_idx").on(table.deletedAt),
   }),
@@ -1462,6 +1465,10 @@ export const webhookDeliveries = mysqlTable(
   {
     id: id(),
     endpointId: int("endpoint_id").notNull(),
+    /** Denormalized context keeps operational delivery logs searchable without exposing payload internals. */
+    orderId: int("order_id"),
+    orderNumber: varchar("order_number", { length: 64 }),
+    customerName: varchar("customer_name", { length: 255 }),
     eventType: varchar("event_type", { length: 64 }).notNull(),
     payload: json("payload"),
     status: varchar("status", { length: 16 }).notNull().default("pending"),
@@ -1475,6 +1482,7 @@ export const webhookDeliveries = mysqlTable(
   },
   (table) => ({
     endpointIdx: index("webhook_deliveries_endpoint_idx").on(table.endpointId),
+    orderIdx: index("webhook_deliveries_order_idx").on(table.orderId, table.createdAt),
     statusIdx: index("webhook_deliveries_status_idx").on(table.status, table.runAfter),
   }),
 );
