@@ -2312,3 +2312,8 @@ The customer review-space workflow capability was published in commit `0320b1f4d
 ## 2026-08-13 — Customer order status and numeric progress visibility
 
 Customer order progress is now explicit across every major portal surface. The dashboard Recent orders list, My orders table, individual order detail page, and every guided workflow stage show the administrator-configured order status label and a numeric completion percentage alongside the progress bar. Customer API order list/detail responses now resolve configured status labels server-side, preserving custom administrator status labels without exposing administration settings. The workflow-stage workspace adds a prominent current-status and order-completion summary at its top, while the order detail progress panel shows both the current label and percentage. TypeScript validation, 155/155 automated tests, production builds, and the deployment health check completed successfully. Rollback assets are retained under `/opt/readypackets/rollback-20260813191319-customer-order-progress`.
+
+
+### Publication record
+
+The customer status and numeric progress implementation was published in commit `cef797da31c5a031fd29ae46dad1f14eee364f25` (`feat: show customer order status and progress`). The production release marker was updated after a successful `{"status":"ok"}` health response, and the VPS operations record includes the rollback locations.
