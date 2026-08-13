@@ -2157,3 +2157,18 @@ Customer phase submission now calculates completed workflow stages from active `
 ### Validation and deployment
 
 TypeScript validation, the full automated suite (**155/155 tests**), production client/server builds, the workflow-presentation migration, and the production health check passed. The live security script was intentionally stress-testing authentication rate limiting and the application’s IP block control blocked the verifier IP after repeated login attempts; direct production service health remained normal. No security policy was weakened. Timestamped rollback copies were retained.
+
+
+## 2026-08-13 — Branded invoices, public-ID activity search, platform setup, and approved auto-deployment release
+
+**User request.** Add branded ReadyPackets invoices for paid orders; allow Activity Replay entity history and user timeline searches by public customer/user ID; create a first-time platform setup wizard for SMTP/Microsoft Graph, Microsoft Entra ID, Stripe, Phase I/II webhooks, and IP/account login allowlists; and update self-hosted auto-deployment documentation and scripts.
+
+**Delivered.** Paid and partially refunded orders now expose a customer and administrator **Invoice** action. Invoice generation retains one `RP-INV-YYYY-######` invoice record per order and renders a ReadyPackets-branded printable document using the document logo, customer public ID, order number, itemized products, discounts, total, payment confirmation date, and provider reference. The browser’s print flow supports controlled PDF retention without storing card data in the portal.
+
+Activity Replay now resolves opaque `RP-U-XXXXXXXXXXXX` public IDs server-side for user entity history, user timelines, and advanced actor filtering. Legacy numeric IDs remain available for historical operational use.
+
+The new administrator-only **Platform setup** wizard centralizes first-run configuration for SMTP/Microsoft Graph outbound delivery, Microsoft Entra SAML, Stripe, P101/P201 HTTPS phase-start webhooks, IP allowlisting, and an optional account login whitelist. The account whitelist is server-enforced across local password login, magic-link session issuance, and SAML sessions; it is disabled by default and requires at least one valid existing public user ID before activation. Secrets remain write-only and encrypted.
+
+`deploy/auto-deploy-approved.sh` and `/usr/local/sbin/readypackets-auto-deploy-approved` provide a root-only wrapper for an administrator-approved immutable Git commit. It deliberately requires an approved run ID, target SHA, explicit `READYPACKETS_APPROVED_DEPLOYMENT=yes`, and a PAT on standard input only; it delegates to the existing snapshot/validation/rollback helper rather than deploying the moving tip of a branch. Added `docs/AUTO_DEPLOYMENT.md` and updated the administrator, deployment, upgrade, and documentation-index guides.
+
+**Validation and production deployment.** TypeScript passed with zero errors. The full suite passed at **155/155 tests**. Shell syntax checks passed for the installer and approved deployment wrapper. Production server/client assets and the root-owned wrapper were deployed with rollback retained at `/opt/readypackets/rollback-20260813050933`; health returned `{"status":"ok"}`; the platform setup route returned HTTP 200; and live security verification passed **46/46 checks**.

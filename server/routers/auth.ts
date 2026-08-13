@@ -72,6 +72,7 @@ import {
   getMaintenanceState,
   getPasswordPolicy,
   getSettingBool,
+  getSettingJson,
   getSettingNumber,
   isFeatureEnabled,
 } from "../services/settings.js";
@@ -84,6 +85,13 @@ import { publicProcedure, protectedProcedure, router, sessionProcedure } from ".
 
 /** The single message returned for every credential failure. */
 const GENERIC_LOGIN_ERROR = "Invalid email or password.";
+
+async function isLoginWhitelisted(user: { publicId: string | null }): Promise<boolean> {
+  if (!await getSettingBool("access.login_whitelist_enabled", false)) return true;
+  if (!user.publicId) return false;
+  const allowlisted = await getSettingJson<string[]>("access.login_whitelist_public_ids", []);
+  return allowlisted.includes(user.publicId.toUpperCase());
+}
 
 const emailSchema = z
   .string()
@@ -362,7 +370,7 @@ export const authRouter = router({
       const consumed = await db.update(magicLinkTokens).set({ usedAt: new Date() }).where(and(eq(magicLinkTokens.id, record.id), isNull(magicLinkTokens.usedAt)));
       if (!affectedRows(consumed)) throw new TRPCError({ code: "UNAUTHORIZED", message: "This sign-in link has already been used." });
       const user = await getUserById(record.userId);
-      if (!user || user.role !== "customer" || user.status !== "active") {
+      if (!user || user.role !== "customer" || user.status !== "active" || !await isLoginWhitelisted(user)) {
         void recordSecurityEvent({ eventType: "magic_link.invalid", outcome: "blocked", message: "Magic-link account was not eligible", userId: record.userId, ipAddress: ctx.clientIp, userAgent: ctx.userAgent });
         throw new TRPCError({ code: "UNAUTHORIZED", message: "This sign-in link is no longer available." });
       }
@@ -461,6 +469,11 @@ export const authRouter = router({
           userAgent: ctx.userAgent,
         });
         throw new TRPCError({ code: "UNAUTHORIZED", message: GENERIC_LOGIN_ERROR });
+      }
+
+      if (!await isLoginWhitelisted(user)) {
+        void recordSecurityEvent({ eventType: "login.failure", outcome: "blocked", severity: "warning", message: "Login was blocked by the account whitelist", userId: user.id, ipAddress: ctx.clientIp, userAgent: ctx.userAgent });
+        throw new TRPCError({ code: "FORBIDDEN", message: "This account is not currently permitted to sign in." });
       }
 
       // Transparently upgrade legacy bcrypt hashes on successful login.

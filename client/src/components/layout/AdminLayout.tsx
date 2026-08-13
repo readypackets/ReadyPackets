@@ -118,6 +118,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
   {
     section: "Platform",
     items: [
+      { href: "/admin/platform-setup", label: "Platform setup", icon: Server, adminOnly: true },
       { href: "/admin/integrations", label: "Integrations", icon: Link2, adminOnly: true },
       { href: "/admin/entra-setup", label: "Microsoft Entra ID", icon: ShieldCheck, adminOnly: true },
       { href: "/admin/api-keys", label: "API keys", icon: Key, adminOnly: true },

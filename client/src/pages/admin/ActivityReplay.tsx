@@ -46,6 +46,7 @@ export function AdminActivityReplay() {
   const [searchEntityType, setSearchEntityType] = useState("");
   const [searchSeverity, setSearchSeverity] = useState("");
   const [searchIp, setSearchIp] = useState("");
+  const [searchActorUserReference, setSearchActorUserReference] = useState("");
   const [searchText, setSearchText] = useState("");
   const [searchFrom, setSearchFrom] = useState("");
   const [searchTo, setSearchTo] = useState("");
@@ -55,6 +56,7 @@ export function AdminActivityReplay() {
     entityType: searchEntityType || undefined,
     severity: (searchSeverity || undefined) as "debug" | "info" | "notice" | "warning" | "error" | "critical" | undefined,
     ipAddress: searchIp.trim() || undefined,
+    actorUserReference: searchActorUserReference.trim() || undefined,
     query: searchText.trim() || undefined,
     from: searchFrom || undefined,
     to: searchTo || undefined,
@@ -70,8 +72,8 @@ export function AdminActivityReplay() {
   );
 
   const userTimeline = trpc.tier4.activityReplay.userTimeline.useQuery(
-    { userId: Number(userId), limit: 100 },
-    { enabled: userSearched && Boolean(userId) && !isNaN(Number(userId)) },
+    { userReference: userId.trim(), limit: 100 },
+    { enabled: userSearched && Boolean(userId.trim()) },
   );
 
   const tabItems = useMemo(() => [
@@ -94,7 +96,7 @@ export function AdminActivityReplay() {
         {tab === "search" && (
           <div className="space-y-6">
             <Card><CardHeader title="Advanced operational search" description="Search activity records by action, entity, severity, source address, text, and date range." />
-              <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><FieldShell label="Search text"><Input value={searchText} onChange={(event) => { setSearchText(event.target.value); setSearchRequested(false); }} placeholder="Summary, action, or entity reference" /></FieldShell><FieldShell label="Action"><Input value={searchAction} onChange={(event) => { setSearchAction(event.target.value); setSearchRequested(false); }} placeholder="Example: order." /></FieldShell><FieldShell label="Entity type"><Select value={searchEntityType} onChange={(event) => { setSearchEntityType(event.target.value); setSearchRequested(false); }} options={[{ value: "", label: "All entity types" }, ...ENTITY_TYPES]} /></FieldShell><FieldShell label="Severity"><Select value={searchSeverity} onChange={(event) => { setSearchSeverity(event.target.value); setSearchRequested(false); }} options={[{ value: "", label: "All severities" }, { value: "debug", label: "Debug" }, { value: "info", label: "Info" }, { value: "notice", label: "Notice" }, { value: "warning", label: "Warning" }, { value: "error", label: "Error" }, { value: "critical", label: "Critical" }]} /></FieldShell><FieldShell label="IP address"><Input value={searchIp} onChange={(event) => { setSearchIp(event.target.value); setSearchRequested(false); }} placeholder="Full or partial address" /></FieldShell><FieldShell label="From"><Input type="date" value={searchFrom} onChange={(event) => { setSearchFrom(event.target.value); setSearchRequested(false); }} /></FieldShell><FieldShell label="To"><Input type="date" value={searchTo} onChange={(event) => { setSearchTo(event.target.value); setSearchRequested(false); }} /></FieldShell><div className="flex items-end"><Button fullWidth onClick={() => setSearchRequested(true)} leadingIcon={<Search className="size-4" aria-hidden="true" />}>Search logs</Button></div></div>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><FieldShell label="Search text"><Input value={searchText} onChange={(event) => { setSearchText(event.target.value); setSearchRequested(false); }} placeholder="Summary, action, or entity reference" /></FieldShell><FieldShell label="Action"><Input value={searchAction} onChange={(event) => { setSearchAction(event.target.value); setSearchRequested(false); }} placeholder="Example: order." /></FieldShell><FieldShell label="Entity type"><Select value={searchEntityType} onChange={(event) => { setSearchEntityType(event.target.value); setSearchRequested(false); }} options={[{ value: "", label: "All entity types" }, ...ENTITY_TYPES]} /></FieldShell><FieldShell label="Severity"><Select value={searchSeverity} onChange={(event) => { setSearchSeverity(event.target.value); setSearchRequested(false); }} options={[{ value: "", label: "All severities" }, { value: "debug", label: "Debug" }, { value: "info", label: "Info" }, { value: "notice", label: "Notice" }, { value: "warning", label: "Warning" }, { value: "error", label: "Error" }, { value: "critical", label: "Critical" }]} /></FieldShell><FieldShell label="IP address"><Input value={searchIp} onChange={(event) => { setSearchIp(event.target.value); setSearchRequested(false); }} placeholder="Full or partial address" /></FieldShell><FieldShell label="Actor customer / user ID"><Input value={searchActorUserReference} onChange={(event) => { setSearchActorUserReference(event.target.value.toUpperCase()); setSearchRequested(false); }} placeholder="RP-U-XXXXXXXXXXXX" /></FieldShell><FieldShell label="From"><Input type="date" value={searchFrom} onChange={(event) => { setSearchFrom(event.target.value); setSearchRequested(false); }} /></FieldShell><FieldShell label="To"><Input type="date" value={searchTo} onChange={(event) => { setSearchTo(event.target.value); setSearchRequested(false); }} /></FieldShell><div className="flex items-end"><Button fullWidth onClick={() => setSearchRequested(true)} leadingIcon={<Search className="size-4" aria-hidden="true" />}>Search logs</Button></div></div>
             </Card>
             {searchRequested && activitySearch.isLoading ? <Skeleton className="h-64 w-full" /> : null}
             {searchRequested && !activitySearch.isLoading ? <Card padded={false}><CardHeader className="px-4 pt-4" title={`${activitySearch.data?.total ?? 0} matching activity record(s)`} /><div className="mt-4 overflow-x-auto"><table className="min-w-full text-left text-sm"><thead><tr className="border-y border-line text-xs uppercase tracking-wide text-muted"><th className="px-4 py-3">Time</th><th className="px-4 py-3">Severity</th><th className="px-4 py-3">Action</th><th className="px-4 py-3">Entity</th><th className="px-4 py-3">Actor</th><th className="px-4 py-3">Summary</th><th className="px-4 py-3">Source</th></tr></thead><tbody className="divide-y divide-line">{(activitySearch.data?.rows ?? []).map((entry) => <tr key={entry.id}><td className="whitespace-nowrap px-4 py-3 text-xs text-muted">{formatDateTime(entry.createdAt)}</td><td className="px-4 py-3"><Badge tone={SEVERITY_TONES[entry.severity] ?? "neutral"}>{entry.severity}</Badge></td><td className="px-4 py-3 font-mono text-xs text-ink">{entry.action}</td><td className="px-4 py-3 text-xs text-body">{entry.entityType ?? "system"}{entry.entityId ? ` · ${entry.entityId}` : ""}</td><td className="px-4 py-3 font-mono text-xs text-body">{entry.actorPublicId ?? "system"}</td><td className="max-w-sm px-4 py-3 text-body">{entry.summary}</td><td className="px-4 py-3 font-mono text-xs text-muted">{entry.ipAddress ?? "—"}</td></tr>)}</tbody></table></div>{(activitySearch.data?.rows ?? []).length === 0 ? <EmptyState icon={Search} title="No matching activity" description="Adjust the filters and search again." /> : null}</Card> : null}
@@ -113,11 +115,11 @@ export function AdminActivityReplay() {
                     options={ENTITY_TYPES}
                   />
                 </FieldShell>
-                <FieldShell label="Entity ID">
+                <FieldShell label={entityType === "user" ? "Customer / user ID" : "Entity ID"}>
                   <Input
                     value={entityId}
                     onChange={(e) => { setEntityId(e.target.value); setEntitySearched(false); }}
-                    placeholder="e.g. 42"
+                    placeholder={entityType === "user" ? "RP-U-XXXXXXXXXXXX" : "e.g. 42"}
                   />
                 </FieldShell>
                 <div className="flex items-end">
@@ -195,18 +197,17 @@ export function AdminActivityReplay() {
             <Card>
               <CardHeader title="User timeline" />
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <FieldShell label="User ID">
+                <FieldShell label="Customer / user ID">
                   <Input
                     value={userId}
-                    onChange={(e) => { setUserId(e.target.value); setUserSearched(false); }}
-                    placeholder="e.g. 1"
-                    type="number"
+                    onChange={(e) => { setUserId(e.target.value.toUpperCase()); setUserSearched(false); }}
+                    placeholder="RP-U-XXXXXXXXXXXX"
                   />
                 </FieldShell>
                 <div className="flex items-end">
                   <Button
                     onClick={() => setUserSearched(true)}
-                    disabled={!userId || isNaN(Number(userId))}
+                    disabled={!userId.trim()}
                     leadingIcon={<User className="size-4" aria-hidden="true" />}
                     fullWidth
                   >
@@ -223,7 +224,7 @@ export function AdminActivityReplay() {
                   <EmptyState
                     icon={User}
                     title="No activity found"
-                    description={`No activity log entries for user #${userId}.`}
+                    description={`No activity log entries for user ${userId}.`}
                   />
                 ) : (
                   <ul className="divide-y divide-line">

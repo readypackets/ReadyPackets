@@ -953,15 +953,18 @@ export function AdminOrderDetailPage() {
         description={`${order.orderNumber} · ${customer?.name ?? "Unknown customer"} · placed ${formatDate(order.createdAt)}`}
         breadcrumb={{ href: "/admin/orders", label: "Order queue" }}
         actions={
-          session.isAdmin ? (
-            <Button
-              variant="ghost"
-              onClick={() => setDeleteOpen(true)}
-              leadingIcon={<Trash2 className="size-4" aria-hidden="true" />}
-            >
-              Move to trash
-            </Button>
-          ) : null
+          <div className="flex flex-wrap gap-2">
+            {["paid", "partially_refunded"].includes(order.paymentStatus) ? <LinkButton href={`/admin/orders/${order.id}/invoice`} variant="outline">Invoice</LinkButton> : null}
+            {session.isAdmin ? (
+              <Button
+                variant="ghost"
+                onClick={() => setDeleteOpen(true)}
+                leadingIcon={<Trash2 className="size-4" aria-hidden="true" />}
+              >
+                Move to trash
+              </Button>
+            ) : null}
+          </div>
         }
       />
 

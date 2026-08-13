@@ -53,3 +53,25 @@ Use **Changelog** to communicate approved improvements to the public site. Keep 
 ## Security incidents
 
 For suspected compromise, immediately preserve relevant logs, revoke sessions or API keys as appropriate, block sources only when evidence supports it, rotate affected external credentials at their provider, and assess whether customer notification is required. Do not delete logs merely to reduce noise. Factory reset is a root-console-only destructive recovery procedure and is never a first response to an incident.
+
+## Platform setup wizard
+
+Open **Admin → Platform setup** when preparing a new installation or reviewing essential integrations. The wizard is restricted to administrators and is a convenience layer over the dedicated Email Settings, Microsoft Entra ID, Finance, Integrations, and Security Centre workspaces. Secret inputs are write-only and use encrypted setting storage; a previously saved secret is never returned to the browser.
+
+| Wizard step | Configuration saved | Operational note |
+|---|---|---|
+| Email | SMTP or Microsoft Graph connection details | Test delivery from Email Settings after saving. |
+| Microsoft Entra ID | SAML sign-on URL, issuer, certificate, provisioning, and role policy | Keep Entra disabled until a local administrator sign-in and an Entra assertion have been tested. |
+| Stripe | Secret key, publishable key, and signed webhook secret | A secret key alone is insufficient; verified checkout settlement requires the webhook signing secret. |
+| Phase webhooks | HTTPS P101 and P201 destinations and optional HMAC secrets | Configure only trusted automation endpoints. Delivery and redelivery remain auditable in Integrations. |
+| Access controls | IP allowlist and optional public customer/user-ID login whitelist | Add the current administrator’s `RP-U-…` public ID before enabling the account whitelist. |
+
+The **account login whitelist** is disabled by default. When enabled, it applies server-side to password login, customer magic-link completion, and Microsoft Entra SSO. Existing sessions remain active; future sign-ins for accounts outside the configured public-ID list are blocked and recorded in the security log. Do not enable it until a recovery administrator is included.
+
+## Paid-order invoices
+
+A confirmed paid or partially refunded order exposes an **Invoice** action in both the customer order workspace and the administrator order detail view. Generating it materializes one retained invoice number for the order and displays a ReadyPackets-branded printable document with the ReadyPackets logo, customer public ID, order number, itemized charges, discounts, total paid, and payment reference. The customer or administrator can use the browser’s **Print / save PDF** option to retain a PDF copy without granting the portal any payment-card data.
+
+## Activity replay public ID search
+
+Activity Replay accepts the opaque public customer/user reference in the form `RP-U-XXXXXXXXXXXX` for **Entity history**, **User timeline**, and **Advanced operational search**. Public ID resolution happens on the administrator-only server procedure before searching internal audit records. Legacy numeric IDs remain accepted for historical operational use, but new support and audit workflows should use public IDs.

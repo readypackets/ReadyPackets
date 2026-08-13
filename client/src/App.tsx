@@ -58,6 +58,7 @@ import {
 import { PortalDashboard } from "@/pages/portal/Dashboard";
 import { NewOrderPage, OrdersListPage } from "@/pages/portal/Orders";
 import { OrderDetailPage } from "@/pages/portal/OrderDetail";
+import { InvoicePage } from "@/pages/portal/Invoice";
 import { IntakePage, MndaPage } from "@/pages/portal/Intake";
 import { Phase2ArtifactsPage } from "@/pages/portal/Phase2Artifacts";
 import { WorkflowStagePage } from "@/pages/portal/WorkflowStage";
@@ -118,6 +119,7 @@ import { AdminAnnouncementsPage } from "@/pages/admin/Announcements";
 import { AdminNavigationPage } from "@/pages/admin/Navigation";
 import { AdminKnowledgeBasePage } from "@/pages/admin/KnowledgeBase";
 import { AdminPlatformUpdates } from "@/pages/admin/PlatformUpdates";
+import { AdminPlatformSetupPage } from "@/pages/admin/PlatformSetup";
 import { AdminFaqsPage } from "@/pages/admin/Faqs";
 import { AdminMarketingPage } from "@/pages/admin/Marketing";
 
@@ -301,6 +303,7 @@ function PortalRoutes() {
         <Route path="/portal/orders" component={OrdersListPage} />
         <Route path="/portal/orders/new" component={NewOrderPage} />
         <Route path="/portal/orders/:id" component={OrderDetailPage} />
+        <Route path="/portal/orders/:id/invoice" component={InvoicePage} />
         <Route path="/portal/orders/:id/intake" component={IntakePage} />
         <Route path="/portal/orders/:id/phase-2" component={Phase2ArtifactsPage} />
         <Route path="/portal/orders/:id/workflow/:phaseKey" component={WorkflowStagePage} />
@@ -358,6 +361,7 @@ function AdminRoutes() {
         <Route path="/admin/orders" component={AdminOrdersPage} />
         <Route path="/admin/orders/trash" component={AdminOrderTrashPage} />
         <Route path="/admin/orders/:id" component={AdminOrderDetailPage} />
+        <Route path="/admin/orders/:id/invoice" component={InvoicePage} />
         <Route path="/admin/customers" component={AdminCustomersPage} />
         <Route path="/admin/customers/trash" component={AdminCustomerTrashPage} />
         <Route path="/admin/customers/:id" component={AdminCustomerDetailPage} />
@@ -371,6 +375,7 @@ function AdminRoutes() {
         <Route path="/admin/marketing" component={AdminMarketingPage} />
         <Route path="/admin/security" component={AdminSecurityPage} />
         <Route path="/admin/system" component={AdminSystemPage} />
+        <Route path="/admin/platform-setup" component={AdminPlatformSetupPage} />
         <Route path="/admin/finance" component={AdminFinancePage} />
         <Route path="/admin/integrations" component={AdminIntegrationsPage} />
         <Route path="/admin/email-settings" component={EmailSettings} />

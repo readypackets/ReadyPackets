@@ -212,6 +212,7 @@ export function OrderDetailPage() {
         breadcrumb={{ href: "/portal/orders", label: "My orders" }}
         actions={
           <>
+            {["paid", "partially_refunded"].includes(order.paymentStatus) ? <LinkButton href={`/portal/orders/${order.id}/invoice`} variant="outline" leadingIcon={<FileText className="size-4" aria-hidden="true" />}>Invoice</LinkButton> : null}
             {deliverables.length > 0 ? (
               <LinkButton
                 href="/portal/files"

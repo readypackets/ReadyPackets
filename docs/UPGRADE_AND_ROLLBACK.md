@@ -1,6 +1,6 @@
 # ReadyPackets Upgrade and Rollback Guide
 
-**Version:** 2026-08-12  
+**Version:** 2026-08-13
 **Audience:** Platform administrators
 
 ## Purpose
@@ -49,6 +49,9 @@ Because database restoration is included, any customer data written after the up
 | **Run history** | Scans, approvals, executions, errors, and rollbacks are retained in the platform upgrade history and activity log. |
 | **Rollback material** | Snapshots are root-owned under protected backup storage and are not downloadable through the public site. |
 | **Credential handling** | The GitHub token is encrypted at rest and excluded from ordinary configuration exports. |
+| **Approved wrapper** | `/usr/local/sbin/readypackets-auto-deploy-approved` is root-only, requires a named reviewed run and immutable commit SHA, reads the PAT from standard input, and requires an explicit approval environment acknowledgement. |
+
+For the root-console procedure and verification checklist, see [Approved Auto-Deployment](AUTO_DEPLOYMENT.md). The wrapper is an approved-run convenience, not an unattended timer: never schedule an automatic `apply` from a branch tip.
 
 ## Emergency procedure
 

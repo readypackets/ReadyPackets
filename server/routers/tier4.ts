@@ -28,6 +28,17 @@ import { adminProcedure, protectedProcedure, publicProcedure, staffProcedure, ro
 import { getUserById, displayNameOf } from "../db/users.js";
 
 
+async function resolveActivityUserReference(reference: string): Promise<number> {
+  const value = reference.trim();
+  if (/^RP-U-[A-F0-9]{12}$/i.test(value)) {
+    const row = (await db.select({ id: users.id }).from(users).where(eq(users.publicId, value.toUpperCase())).limit(1))[0];
+    if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "No account matches that public customer ID." });
+    return row.id;
+  }
+  if (/^\d{1,10}$/.test(value)) return Number(value);
+  throw new TRPCError({ code: "BAD_REQUEST", message: "Enter a public customer ID in the form RP-U-XXXXXXXXXXXX." });
+}
+
 // ── Newsletter management ─────────────────────────────────────────────────────
 
 const newsletterRouter = router({
@@ -509,13 +520,14 @@ const activityReplayRouter = router({
       }),
     )
     .query(async ({ input }) => {
+      const resolvedEntityId = input.entityType === "user" ? String(await resolveActivityUserReference(input.entityId)) : String(input.entityId);
       const rows = await db
         .select()
         .from(activityLogs)
         .where(
           and(
             eq(activityLogs.entityType, input.entityType),
-            eq(activityLogs.entityId, String(input.entityId)),
+            eq(activityLogs.entityId, resolvedEntityId),
           ),
         )
         .orderBy(asc(activityLogs.createdAt))
@@ -542,14 +554,15 @@ const activityReplayRouter = router({
   userTimeline: adminProcedure
     .input(
       z.object({
-        userId: z.number().int().positive(),
+        userReference: z.string().trim().min(1).max(32),
         limit: z.number().int().min(1).max(200).default(100),
         from: z.string().datetime().optional(),
         to: z.string().datetime().optional(),
       }),
     )
     .query(async ({ input }) => {
-      const conditions = [eq(activityLogs.actorUserId, input.userId)];
+      const userId = await resolveActivityUserReference(input.userReference);
+      const conditions = [eq(activityLogs.actorUserId, userId)];
       if (input.from) conditions.push(gte(activityLogs.createdAt, new Date(input.from)));
       if (input.to) conditions.push(lte(activityLogs.createdAt, new Date(input.to)));
       const rows = await db
@@ -576,7 +589,7 @@ const activityReplayRouter = router({
     .input(z.object({
       action: z.string().trim().max(96).optional(),
       entityType: z.string().trim().max(48).optional(),
-      actorUserId: z.number().int().positive().optional(),
+      actorUserReference: z.string().trim().min(1).max(32).optional(),
       severity: z.enum(["debug", "info", "notice", "warning", "error", "critical"]).optional(),
       ipAddress: z.string().trim().max(64).optional(),
       query: z.string().trim().max(160).optional(),
@@ -589,7 +602,7 @@ const activityReplayRouter = router({
       const conditions = [];
       if (input.action) conditions.push(like(activityLogs.action, `%${input.action}%`));
       if (input.entityType) conditions.push(eq(activityLogs.entityType, input.entityType));
-      if (input.actorUserId) conditions.push(eq(activityLogs.actorUserId, input.actorUserId));
+      if (input.actorUserReference) conditions.push(eq(activityLogs.actorUserId, await resolveActivityUserReference(input.actorUserReference)));
       if (input.severity) conditions.push(eq(activityLogs.severity, input.severity));
       if (input.ipAddress) conditions.push(like(activityLogs.ipAddress, `%${input.ipAddress}%`));
       if (input.query) conditions.push(or(like(activityLogs.summary, `%${input.query}%`), like(activityLogs.action, `%${input.query}%`), like(activityLogs.entityId, `%${input.query}%`)));

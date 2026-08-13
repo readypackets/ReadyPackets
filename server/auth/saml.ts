@@ -29,6 +29,7 @@ import { logger } from "../observability/logger.js";
 import { recordSecurityEvent } from "../observability/audit.js";
 import { hasConfirmedMfa } from "./mfa.js";
 import { getMfaPolicyForRole, mfaRequirement } from "./mfaPolicy.js";
+import { getSettingBool, getSettingJson } from "../services/settings.js";
 
 
 // ---------------------------------------------------------------------------
@@ -217,12 +218,14 @@ export async function handleAcs(req: Request, res: Response): Promise<void> {
     }
   }
 
-  // Check the user is active.
-  if (user.status !== "active") {
+  // Check the user is active and permitted by the optional account whitelist.
+  const whitelistEnabled = await getSettingBool("access.login_whitelist_enabled", false);
+  const whitelist = whitelistEnabled ? await getSettingJson<string[]>("access.login_whitelist_public_ids", []) : [];
+  if (user.status !== "active" || (whitelistEnabled && (!user.publicId || !whitelist.includes(user.publicId.toUpperCase())))) {
     await recordSecurityEvent({
       eventType: "login.failure",
       outcome: "failure",
-      message: `SAML login blocked: account status is ${user.status}`,
+      message: whitelistEnabled ? "SAML login blocked by account whitelist or account status" : `SAML login blocked: account status is ${user.status}`,
       userId: user.id,
       ipAddress: req.ip ?? null,
     });

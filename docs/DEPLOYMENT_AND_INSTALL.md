@@ -1,6 +1,6 @@
 # ReadyPackets Deployment and Installation Guide
 
-**Version:** 2026-08-12  
+**Version:** 2026-08-13
 **Audience:** Infrastructure administrators and deployment operators
 
 > ReadyPackets is self-hosted. The platform does not require a Manus runtime or hosted dependency. Production deployment requires a domain, a supported Linux host, TLS, MySQL for native mode or Docker Engine for container mode, and secure offline recovery handling for generated secrets.
@@ -82,6 +82,10 @@ Create the first administrator using the documented console procedure when no in
 Native installations include **Admin → Platform updates**, which can scan an approved private GitHub repository, show changed paths and risk indicators, require separate approval and upgrade phrases, create a pre-upgrade application/database snapshot, health-check the upgrade, and retain a rollback action. Review [Upgrade and Rollback Guide](UPGRADE_AND_ROLLBACK.md) before using it.
 
 Never deploy by copying application assets over a live instance without preserving the prior build and database state. Avoid changing `DATA_ENCRYPTION_KEY` or `EMAIL_INDEX_KEY`: the first protects encrypted customer data, while the latter indexes account emails; changing either without a managed migration can make existing records unavailable.
+
+### Approved auto-deployment wrapper
+
+Native installations install `/usr/local/sbin/readypackets-auto-deploy-approved` with root-only permissions. It delegates only an already reviewed immutable commit to the protected update helper; it does **not** pull and deploy the moving tip of a branch. The wrapper requires the approved run ID, a reviewed 40-character SHA, `READYPACKETS_APPROVED_DEPLOYMENT=yes`, and a GitHub PAT supplied through standard input only. Consult [Approved Auto-Deployment](AUTO_DEPLOYMENT.md) for the execution, verification, and rollback process.
 
 ## References
 
