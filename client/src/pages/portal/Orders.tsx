@@ -39,6 +39,7 @@ interface OrderRow {
   id: number;
   orderNumber: string;
   status: string;
+  statusLabel?: string;
   paymentStatus: string;
   projectName: string | null;
   totalCents: number;
@@ -67,6 +68,9 @@ export function OrdersListPage() {
     });
   }, [orders.data, search, statusFilter]);
 
+  const statusOptions = useMemo(() => [...new Map((orders.data ?? []).map((order) => [order.status, order.statusLabel ?? STATUS_LABELS[order.status] ?? order.status])).entries()].map(([value, label]) => ({ value, label })), [orders.data]);
+  const orderStatusLabel = (order: OrderRow) => order.statusLabel ?? STATUS_LABELS[order.status] ?? order.status;
+
   const columns: Column<OrderRow>[] = [
     {
       key: "order",
@@ -78,7 +82,7 @@ export function OrdersListPage() {
             {order.projectName ?? "Untitled project"}
           </p>
           <p className="mt-0.5 text-xs text-muted sm:hidden">
-            {STATUS_LABELS[order.status] ?? order.status} · {formatMoney(order.totalCents)}
+            {orderStatusLabel(order)} · {order.completionPercent}% complete · {formatMoney(order.totalCents)}
           </p>
         </div>
       ),
@@ -90,11 +94,9 @@ export function OrdersListPage() {
       cell: (order) => (
         <div className="space-y-1.5">
           <Badge tone={STATUS_TONES[order.status] ?? "neutral"}>
-            {STATUS_LABELS[order.status] ?? order.status}
+            {orderStatusLabel(order)}
           </Badge>
-          {order.completionPercent > 0 && order.completionPercent < 100 ? (
-            <ProgressBar value={order.completionPercent} className="w-28" />
-          ) : null}
+          <ProgressBar value={order.completionPercent} className="w-32" label={`${order.completionPercent}% complete`} />
         </div>
       ),
     },
@@ -177,7 +179,7 @@ export function OrdersListPage() {
             className="sm:w-56"
             options={[
               { value: "all", label: "All statuses" },
-              ...Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+              ...statusOptions,
             ]}
           />
         </div>

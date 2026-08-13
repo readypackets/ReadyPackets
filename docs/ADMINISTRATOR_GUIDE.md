@@ -124,3 +124,8 @@ If a destination is blank, ReadyPackets uses separate safe defaults: a `Docs` su
 Enable **Customer file review** in a workflow stage when the stage should be a read-only review area rather than a customer upload task. For each assigned order, staff upload or assign files to the same stage in the Order Files workspace and select **Publish**. Only non-placeholder files uploaded by staff, assigned to that review stage, and published to the customer appear in the customer review workspace.
 
 Customers see the selected file name, size, and publication date, then request a short-lived, single-use authorized download. Files are not previewed inline from the ReadyPackets origin. A staff member can remove a file from the review space at any time by selecting the corresponding Files tab visibility control.
+
+
+### Customer order status and progress visibility
+
+Customer-facing order surfaces show the live order status and numeric completion percentage. The portal dashboard’s Recent orders list, the My orders table, the individual order workspace, and every guided workflow stage display the current status and completion percentage with a labeled progress bar. Administrators control the underlying status and completion percentage through order transitions, workflow stage actions, and configured order automations. Customer views receive the active administrator-configured status label rather than only a raw internal status key.

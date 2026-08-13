@@ -241,7 +241,7 @@ export function PortalDashboard() {
                             {order.orderNumber}
                           </span>
                           <Badge tone={STATUS_TONES[order.status] ?? "neutral"}>
-                            {STATUS_LABELS[order.status] ?? order.status}
+                            {order.statusLabel ?? STATUS_LABELS[order.status] ?? order.status}
                           </Badge>
                           {order.bundleApplied ? <Badge tone="gold">Bundle</Badge> : null}
                         </div>
@@ -252,12 +252,7 @@ export function PortalDashboard() {
                           Placed {formatDate(order.createdAt)}
                           {order.dueAt ? ` · Due ${formatDate(order.dueAt)}` : ""}
                         </p>
-                        {order.completionPercent > 0 && order.completionPercent < 100 ? (
-                          <ProgressBar
-                            className="mt-2.5 max-w-xs"
-                            value={order.completionPercent}
-                          />
-                        ) : null}
+                        <div className="mt-2.5 max-w-xs"><div className="mb-1 flex items-center justify-between text-xs text-muted"><span>Order progress</span><span className="font-semibold tabular-nums text-ink">{order.completionPercent}%</span></div><ProgressBar value={order.completionPercent} label={`${order.completionPercent}% complete`} /></div>
                       </div>
                       <div className="shrink-0 text-right">
                         <p className="text-sm font-semibold tabular-nums text-ink">

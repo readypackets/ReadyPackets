@@ -240,7 +240,7 @@ export function OrderDetailPage() {
 
       <div className="mb-6 flex flex-wrap items-center gap-2">
         <Badge tone={STATUS_TONES[order.status] ?? "neutral"}>
-          {STATUS_LABELS[order.status] ?? order.status}
+          {order.statusLabel ?? STATUS_LABELS[order.status] ?? order.status}
         </Badge>
         <Badge tone={PAYMENT_TONES[order.paymentStatus] ?? "neutral"}>
           {PAYMENT_LABELS[order.paymentStatus] ?? order.paymentStatus}
@@ -249,6 +249,7 @@ export function OrderDetailPage() {
         {order.dueAt ? (
           <span className="text-xs text-muted">Target delivery {formatDate(order.dueAt)}</span>
         ) : null}
+        <span className="text-sm font-semibold tabular-nums text-ink">{displayedCompletionPercent}% complete</span>
       </div>
 
       {/* Action required */}
@@ -337,16 +338,12 @@ export function OrderDetailPage() {
             />
             {terminated ? (
               <Alert tone="danger" className="mt-4">
-                This order is {STATUS_LABELS[order.status]?.toLowerCase() ?? order.status}. Contact
+                This order is {(order.statusLabel ?? STATUS_LABELS[order.status] ?? order.status).toLowerCase()}. Contact
                 support if you believe this is incorrect.
               </Alert>
             ) : (
               <>
-                <ProgressBar
-                  className="mt-4"
-                  value={displayedCompletionPercent}
-                  label={`${displayedCompletionPercent}% complete${workflowProgress ? ` · ${workflowProgress.completedStages}/${workflowProgress.totalStages} workflow phases submitted` : ""}`}
-                />
+                <div className="mt-4 rounded-lg border border-line bg-surface-soft p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wide text-muted">Current order status</p><p className="mt-1 text-base font-semibold text-ink">{order.statusLabel ?? STATUS_LABELS[order.status] ?? order.status}</p></div><p className="text-2xl font-bold tabular-nums text-teal-dark">{displayedCompletionPercent}%</p></div><ProgressBar className="mt-3" value={displayedCompletionPercent} label={`${displayedCompletionPercent}% complete${workflowProgress ? ` · ${workflowProgress.completedStages}/${workflowProgress.totalStages} workflow phases submitted` : ""}`} /></div>
                 <ol className="mt-6 space-y-4">
                   {PHASE_SEQUENCE.map((phase, index) => {
                     const done = index < currentPhase;

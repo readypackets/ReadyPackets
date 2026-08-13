@@ -37,6 +37,7 @@ import {
   syncOrderWorkflowProgress,
 } from "../services/orders.js";
 import { priceSelection } from "../services/catalog.js";
+import { getOrderStatusOptions } from "../services/orderStatusConfig.js";
 import { protectedProcedure, publicProcedure, router } from "../trpc/trpc.js";
 import { insertedId } from "../db/result.js";
 
@@ -63,9 +64,11 @@ export const ordersRouter = router({
     .input(z.object({ selections: selectionSchema }))
     .query(async ({ input }) => priceSelection(input.selections)),
 
-  list: protectedProcedure.query(async ({ ctx }) =>
-    listOrdersForUser(ctx.session.user.id),
-  ),
+  list: protectedProcedure.query(async ({ ctx }) => {
+    const rows = await listOrdersForUser(ctx.session.user.id);
+    const labels = new Map((await getOrderStatusOptions()).map((option) => [option.key, option.label]));
+    return rows.map((order) => ({ ...order, statusLabel: labels.get(order.status) ?? order.status.replaceAll("_", " ") }));
+  }),
 
   checkoutDetail: protectedProcedure
     .input(z.object({ orderId: z.number().int().positive() }))
@@ -156,6 +159,7 @@ export const ordersRouter = router({
             id: detail.order.id,
             orderNumber: detail.order.orderNumber,
             status: detail.order.status,
+            statusLabel: (await getOrderStatusOptions()).find((option) => option.key === detail.order.status)?.label ?? detail.order.status.replaceAll("_", " "),
             paymentStatus: detail.order.paymentStatus,
             projectName: detail.order.projectName,
             subtotalCents: detail.order.subtotalCents,
