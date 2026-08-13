@@ -2354,3 +2354,6 @@ The SharePoint repair and connection-management implementation was published in 
 - Added searchable customer selection to Activity Replay Entity history (User entity type) and User timeline. Search accepts customer name, email, or public `RP-U-…` ID.
 - Migration `0034_finance_coupon_audit.sql` was confirmed already applied after a staged deployment attempted the idempotent release path; the second activation intentionally skipped duplicate column DDL and preserved client/server rollback copies. Schema confirms `coupon_redemptions`, coupon actor fields, and `refunds.provider_reference` are present.
 - Validation: TypeScript passed, `pnpm test` passed 155/155, production health returned `{"status":"ok"}`. The production release remains pending Git commit at the time of this log entry.
+
+
+**Publication record:** The release implementation was committed and pushed to GitHub as `4b7bc1c5f96ce8e161f30d03eb22f6ff9033335e` (`feat: add audited refunds, coupon tracking, and admin navigation`). The production `RELEASE_COMMIT` marker was set to the same commit after health verification. The final session-log publication record follows in a separate documentation-only commit.
