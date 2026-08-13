@@ -2271,3 +2271,8 @@ Each stage now carries a persisted customer acknowledgement policy: `required`, 
 Order Workflows now offers both the existing visual stage canvas and a new guided task wizard. The guided designer advances through stage selection, customer task selection, administrator task documentation, submission policy, and review. Administrator task records can document team document upload, question assignment, customer-submission review, and stage automation. The designer continues to expose server-validated status updates, completion percentage, email, webhook, and alert actions. A visible **Manage order statuses** action opens the administrator status manager for adding and governing custom statuses.
 
 Validation completed with TypeScript zero errors and 155/155 automated tests passing. The release was deployed with timestamped server and client rollback copies and the portal health check passed.
+
+
+### Publication record
+
+The deployed implementation was published in Git commit `b8d2a214809f3eca90d2058e04e3f1c652b0c05f` (`feat: extend workflow management and acknowledgement controls`). The production release marker was updated to that commit after the portal health endpoint returned `{"status":"ok"}`. The VPS operations record was updated with the rollback locations and operational safeguards.
