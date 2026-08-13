@@ -2105,3 +2105,34 @@ Selecting **Save draft** in the page header or **Save workspace** in the form op
 ### Validation and deployment
 
 TypeScript validation, the complete automated suite (**151/151 tests**), production client/server builds, production health verification, and the live security suite (**46/46 checks**) passed. Client deployment retained a timestamped rollback copy on the VPS.
+
+
+## 2026-08-13 — Permanent customer and order file-tracking names
+
+### User requirement
+
+> every file, document, and audio recording that is uploaded to the platform by either the customer or admin should have the customer id and order number pre-appended the file name so it can be easily tracked in the future ad when the files are on other systems
+>
+> this rule to pre-append the name should happen to every file uploaded in the future as well
+
+### Delivered enforcement
+
+A reusable server-side canonical filename formatter now generates order artifact names in this form:
+
+`<CUSTOMER_PUBLIC_ID>__<ORDER_NUMBER>__<SANITIZED_SOURCE_FILENAME>`
+
+For example:
+
+`RP-U-E571C762960E__RP-C000002-2608-683DB6__pitch-recording.webm`
+
+The central multipart upload endpoint applies the convention after authorization and magic-byte validation, before the file record is inserted or replaced. This covers future customer and administrator order uploads: supporting documents, direct WebM Business Pitch recordings, pre-recorded audio enabled by a workflow, staff phase uploads, replacements, and published deliverables. It is server-enforced and cannot be bypassed by altering the browser-provided filename.
+
+Administrator placeholder creation and administrator metadata renames use the same formatter. Generated future SharePoint intake-answer Markdown exports and placeholder files use the convention as well. Download responses and ZIP entries already consume the canonical database name, so exports and external copies retain the tracking reference.
+
+Opaque storage keys remain unchanged; the customer public ID and order number are placed in the display/download/external filename, not in the underlying filesystem path. User-supplied names are normalized, path components are removed, dangerous characters are replaced, extensions are preserved, and the 255-character database limit is enforced.
+
+Migration `0030_order_file_tracking_names.sql` backfilled active existing order-file display names without moving file bytes. Production verification found **0 active order files without the prefix** after the migration.
+
+### Validation and deployment
+
+The canonical naming unit tests passed, TypeScript validation passed, the full automated suite reported **155/155 tests passing**, production builds completed, the production health endpoint returned `{"status":"ok"}`, and the live security suite passed **46/46 checks**. Timestamped server and client rollback copies were retained on the VPS.

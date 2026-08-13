@@ -12,12 +12,13 @@ import multer from "multer";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { env } from "../config/env.js";
 import { db } from "../db/client.js";
-import { fileVersions, files, intakeAnswers, intakeSubmissions, orderPhaseLocks, orders, orderWorkflows } from "../db/schema.js";
+import { fileVersions, files, intakeAnswers, intakeSubmissions, orderPhaseLocks, orders, orderWorkflows, users } from "../db/schema.js";
 import { getSetting, getSettingNumber } from "../services/settings.js";
 import { resolveSession } from "../auth/session.js";
 import { CSRF_COOKIE, CSRF_HEADER } from "../security/csrf.js";
 import { constantTimeEqual } from "../security/crypto.js";
 import { putObject, validateUpload } from "../services/storage.js";
+import { buildOrderFileName } from "../services/fileNaming.js";
 import { logger } from "../observability/logger.js";
 import { recordActivity, recordSecurityEvent } from "../observability/audit.js";
 import { assertOrderAccess } from "../services/orders.js";
@@ -121,6 +122,22 @@ export function createUploadRouter(): Router {
           return;
         }
       }
+      if (orderId === null) {
+        res.status(400).json({ error: "An order is required for uploaded files so the customer and order tracking prefix can be applied." });
+        return;
+      }
+      const fileContextRows = await db
+        .select({ orderNumber: orders.orderNumber, customerPublicId: users.publicId })
+        .from(orders)
+        .innerJoin(users, eq(users.id, orders.userId))
+        .where(and(eq(orders.id, orderId), isNull(orders.deletedAt)))
+        .limit(1);
+      const fileContext = fileContextRows[0];
+      if (!fileContext?.customerPublicId) {
+        res.status(409).json({ error: "This order’s customer tracking ID is unavailable. Ask an administrator to repair the customer record before uploading files." });
+        return;
+      }
+
       if (!isStaff && orderId !== null) {
         const activeLocks = await db
           .select({ id: orderPhaseLocks.id })
@@ -240,6 +257,11 @@ export function createUploadRouter(): Router {
           continue;
         }
 
+        const canonicalOriginalName = buildOrderFileName({
+          customerPublicId: fileContext.customerPublicId,
+          orderNumber: fileContext.orderNumber,
+          sourceName: file.originalname,
+        });
         try {
           const stored = await putObject(file.buffer, validation.extension ?? "");
 
@@ -264,7 +286,7 @@ export function createUploadRouter(): Router {
                 .update(files)
                 .set({
                   storageKey: stored.storageKey,
-                  originalName: file.originalname.slice(0, 255),
+                  originalName: canonicalOriginalName,
                   detectedMime,
                   extension: validation.extension ?? null,
                   sizeBytes: stored.sizeBytes,
@@ -276,7 +298,7 @@ export function createUploadRouter(): Router {
 
               results.push({
                 fileId: existing.id,
-                originalName: file.originalname,
+                originalName: canonicalOriginalName,
                 sizeBytes: stored.sizeBytes,
                 detectedMime,
               });
@@ -299,7 +321,7 @@ export function createUploadRouter(): Router {
             orderId,
             ownerUserId: isStaff ? null : session.user.id,
             uploadedByUserId: session.user.id,
-            originalName: file.originalname.slice(0, 255),
+            originalName: canonicalOriginalName,
             detectedMime,
             extension: validation.extension ?? null,
             sizeBytes: stored.sizeBytes,
@@ -332,7 +354,7 @@ export function createUploadRouter(): Router {
 
           results.push({
             fileId,
-            originalName: file.originalname,
+            originalName: canonicalOriginalName,
             sizeBytes: stored.sizeBytes,
             detectedMime,
           });
@@ -343,7 +365,7 @@ export function createUploadRouter(): Router {
             action: "file.upload",
             entityType: "file",
             entityId: fileId,
-            summary: `Uploaded "${file.originalname}" (${category})`,
+            summary: `Uploaded "${canonicalOriginalName}" (${category})`,
             changes: { sizeBytes: stored.sizeBytes, orderId, phase },
             ipAddress: (res.locals.clientIp as string | undefined) ?? null,
           });

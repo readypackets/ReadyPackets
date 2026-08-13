@@ -33,6 +33,7 @@ import { insertedId } from "../db/result.js";
 import { decryptField } from "../security/crypto.js";
 import { getSetting } from "./settings.js";
 import { getUserById, displayNameOf } from "../db/users.js";
+import { buildOrderFileName } from "./fileNaming.js";
 import type { OrderStatus } from "../../shared/domain.js";
 
 // ---------------------------------------------------------------------------
@@ -380,19 +381,21 @@ export async function exportIntakeMarkdownToPhaseTwo(orderId: number, markdown: 
   const order = orderRows[0];
   const customer = await getUserById(order.userId);
   const customerFolder = customer?.customerNumber ?? `RP-CUST-${String(order.userId).padStart(6, "0")}`;
+  const customerPublicId = customer?.publicId ?? customerFolder;
+  const intakeFileName = buildOrderFileName({ customerPublicId, orderNumber: order.orderNumber, sourceName: "INTAKE_ANSWERS.md" });
   const folderPath = `${graphConfig.rootFolderPath}/customers/${customerFolder}/orders/${order.orderNumber}/Phase II/Docs`;
   const logInsert = await db.insert(sharepointSyncLog).values({
     orderId,
     operationType: "intake_markdown",
     status: "pending",
-    sharepointPath: `${folderPath}/INTAKE_ANSWERS.md`,
+    sharepointPath: `${folderPath}/${intakeFileName}`,
     attempts: 1,
   });
   const logId = insertedId(logInsert);
 
   try {
     const folderId = await ensureFolder(folderPath);
-    await uploadTextFile(folderId, "INTAKE_ANSWERS.md", markdown, "text/markdown; charset=utf-8");
+    await uploadTextFile(folderId, intakeFileName, markdown, "text/markdown; charset=utf-8");
     await db.update(sharepointSyncLog).set({ status: "succeeded" }).where(eq(sharepointSyncLog.id, logId));
     await recordActivity({
       actorUserId: null,
@@ -639,6 +642,7 @@ async function jobAttachPlaceholders(orderId: number, phase: string): Promise<vo
   const orderNumber = orderRows[0]!.orderNumber;
   const customer = await getUserById(orderRows[0]!.userId);
   const customerFolder = customer?.customerNumber ?? `RP-CUST-${String(orderRows[0]!.userId).padStart(6, "0")}`;
+  const customerPublicId = customer?.publicId ?? customerFolder;
 
   const placeholders = DEFAULT_PLACEHOLDERS[phase] ?? [];
   const phaseFolder = phase === "phase_1_intake" ? "Phase I/Docs" : phase === "phase_2_synthesis" ? "Phase II/Docs" : phase === "in_production" ? "Phase III/Context" : "Phase IV/Internal_Audit";
@@ -652,7 +656,8 @@ async function jobAttachPlaceholders(orderId: number, phase: string): Promise<vo
     folderId = await ensureFolder(`${graphConfig.rootFolderPath}/customers/${customerFolder}/orders/${orderNumber}`);
   }
 
-  for (const fileName of placeholders) {
+  for (const sourceFileName of placeholders) {
+    const fileName = buildOrderFileName({ customerPublicId, orderNumber, sourceName: sourceFileName });
     const content = `ReadyPackets Portal — Placeholder\nOrder: ${orderNumber}\nPhase: ${phase}\nFile: ${fileName}\n\nThis file was automatically created as a placeholder.\nReplace with actual content when ready.\n`;
     const itemId = await uploadPlaceholder(folderId, fileName, content);
 

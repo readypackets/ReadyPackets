@@ -9,13 +9,28 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
-import { fileAccessLog, fileVersions, files, orders } from "../db/schema.js";
+import { fileAccessLog, fileVersions, files, orders, users } from "../db/schema.js";
 import { displayNameOf, getUserById } from "../db/users.js";
 import { recordActivity } from "../observability/audit.js";
 import { deleteObject } from "../services/storage.js";
+import { buildOrderFileName } from "../services/fileNaming.js";
 import { queueTemplatedEmail, wrapHtmlBody } from "../services/email.js";
 import { staffProcedure, adminProcedure, router } from "../trpc/trpc.js";
 import { insertedId } from "../db/result.js";
+
+async function orderFilenameContext(orderId: number): Promise<{ customerPublicId: string; orderNumber: string }> {
+  const rows = await db
+    .select({ customerPublicId: users.publicId, orderNumber: orders.orderNumber })
+    .from(orders)
+    .innerJoin(users, eq(users.id, orders.userId))
+    .where(and(eq(orders.id, orderId), isNull(orders.deletedAt)))
+    .limit(1);
+  const context = rows[0];
+  if (!context?.customerPublicId) {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "The order does not have a customer tracking ID available for file naming." });
+  }
+  return { customerPublicId: context.customerPublicId, orderNumber: context.orderNumber };
+}
 
 const FILE_CATEGORIES = [
   "deliverable",
@@ -172,7 +187,11 @@ export const adminFilesRouter = router({
             message: "That filename extension is not permitted.",
           });
         }
-        patch.originalName = input.originalName;
+        const fileRows = await db.select({ orderId: files.orderId }).from(files).where(and(eq(files.id, input.fileId), isNull(files.deletedAt))).limit(1);
+        const orderId = fileRows[0]?.orderId;
+        if (!orderId) throw new TRPCError({ code: "BAD_REQUEST", message: "Only order-linked files can be renamed." });
+        const context = await orderFilenameContext(orderId);
+        patch.originalName = buildOrderFileName({ ...context, sourceName: input.originalName });
       }
       if (Object.keys(patch).length === 0) return { ok: true as const };
 
@@ -200,11 +219,12 @@ export const adminFilesRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      const context = await orderFilenameContext(input.orderId);
       const inserted = await db.insert(files).values({
         storageKey: `placeholder-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
         orderId: input.orderId,
         uploadedByUserId: ctx.session.user.id,
-        originalName: input.name,
+        originalName: buildOrderFileName({ ...context, sourceName: input.name }),
         detectedMime: "application/octet-stream",
         extension: null,
         sizeBytes: 0,
