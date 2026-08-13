@@ -110,3 +110,10 @@ Each workflow stage has a customer acknowledgement policy. Select **Required ack
 The workflow editor provides two complementary design modes. **Visual stage canvas** shows every stage and its detailed controls together. **Guided task wizard** walks an administrator through selecting a stage, customer tasks, administrator tasks, submission policy, and a review step using Previous and Next. Customer tasks can enable documents, questions, browser-recorded WebM audio, and approved pre-recorded audio. Administrator task documentation can record document upload, question assignment, customer-submission review, and approved automation execution. The existing administrator action controls can also change an order’s configured status, completion percentage, send an email, deliver a webhook, or create an administrator alert when a stage is run.
 
 Use **Manage order statuses** from the Order Workflows page to open the order-status manager. Core lifecycle states retain server-side safeguards, while custom statuses can be added, labelled, ordered, and made inactive. A custom status cannot be removed while it is assigned to an active order.
+
+
+### Separate document and audio SharePoint destinations
+
+Each workflow stage’s **SharePoint document and audio destinations** control keeps documents and audio in separate folders. Set **Document relative folder** for supporting documents, questions exported as documents, and other non-audio files. Set **Audio relative folder** for browser-recorded WebM audio and approved pre-recorded audio uploads. The values are relative to the configured SharePoint root, customer folder, and order number.
+
+If a destination is blank, ReadyPackets uses separate safe defaults: a `Docs` subfolder for non-audio material and an `Audio` subfolder for recorded or uploaded audio. A valid audio file cannot be routed to the document folder, and a document cannot be routed to the audio folder. Destination paths are server-validated and cannot contain `..` segments or escape the assigned order root.
