@@ -12,11 +12,12 @@ import {
   CheckCircle2,
   ClipboardCheck,
   FileSignature,
+  Mic,
   Save,
   Send,
   ShieldCheck,
 } from "lucide-react";
-import { INTEGRITY_CHOICE_LABELS } from "@shared/domain";
+import { INTAKE_OUTCOMES, INTEGRITY_CHOICES, INTEGRITY_CHOICE_LABELS } from "@shared/domain";
 import { BRAND } from "@shared/brand";
 import { trpc, errorMessage, refreshCsrfToken } from "@/lib/trpc";
 import { formatDateTime } from "@/lib/utils";
@@ -67,6 +68,8 @@ export function IntakePage() {
   const audioChunks = useRef<Blob[]>([]);
   const recordingInterval = useRef<NodeJS.Timeout | null>(null);
   const [pendingPitch, setPendingPitch] = useState<{ file: File; previewUrl: string } | null>(null);
+  const [saveChoiceOpen, setSaveChoiceOpen] = useState(false);
+  const [saveReturningLater, setSaveReturningLater] = useState(false);
 
   useEffect(() => {
     let permissionStatus: PermissionStatus | undefined;
@@ -384,17 +387,44 @@ export function IntakePage() {
     setDirty(true);
   };
 
-  const saveDraft = () => {
-    save.mutate({
-      orderId,
-      projectName: projectName.trim() || undefined,
-    });
+  const draftPayload = () => ({
+    orderId,
+    projectName: projectName.trim() || undefined,
+    desiredOutcomes: desiredOutcomes as (typeof INTAKE_OUTCOMES)[number][],
+    integrityChoice: (integrityChoice || undefined) as (typeof INTEGRITY_CHOICES)[number] | undefined,
+    answers,
+  });
+
+  const persistDraft = async (returnLater: boolean, includePendingRecording: boolean) => {
+    if (includePendingRecording && pendingPitch) {
+      const uploaded = await handleUpload([pendingPitch.file], true);
+      if (!uploaded) return;
+      URL.revokeObjectURL(pendingPitch.previewUrl);
+      setPendingPitch(null);
+    }
+    try {
+      await save.mutateAsync(draftPayload());
+      if (returnLater) {
+        toast.success("Order workspace saved", "Your form, uploaded files, and recording have been saved. You can return to this order at any time.");
+        navigate(`/portal/orders/${orderId}`);
+      } else {
+        toast.success("Order workspace saved", "Your current form, uploaded files, and recording are saved. You can continue working.");
+      }
+    } catch {
+      // The mutation-level error message is already shown by the shared handler.
+    }
   };
 
-  // Autosave a dirty draft every 45 seconds so a long session is not lost.
+  const openSaveChoices = () => {
+    setSaveReturningLater(false);
+    setSaveChoiceOpen(true);
+  };
+
+  // Autosave saves all typed draft fields. A locally held recording remains private
+  // until the customer explicitly chooses a save option that includes it.
   useEffect(() => {
     if (readOnly || !dirty) return;
-    const timer = setTimeout(saveDraft, 45_000);
+    const timer = setTimeout(() => { void persistDraft(false, false); }, 45_000);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dirty, projectName, readOnly]);
@@ -411,18 +441,12 @@ export function IntakePage() {
       toast.error("Some answers need attention", "Review the highlighted fields and try again.");
       return;
     }
-    // Persist the final state, then submit.
-    save.mutate(
-      {
-        orderId,
-        projectName: projectName.trim() || undefined,
-      },
-      {
-        onSuccess() {
-          submit.mutate({ orderId, confirmAccurate: true });
-        },
-      },
-    );
+    if (pendingPitch) {
+      toast.warning("Review the recording first", "Upload or discard the locally held WebM recording before submitting Phase 1.");
+      return;
+    }
+    // Persist all typed draft fields, then submit.
+    save.mutate(draftPayload(), { onSuccess() { submit.mutate({ orderId, confirmAccurate: true }); } });
   };
 
   if (questions.isLoading || existing.isLoading) {
@@ -477,7 +501,7 @@ export function IntakePage() {
               <Button
                 variant="outline"
                 busy={save.isPending}
-                onClick={saveDraft}
+                onClick={openSaveChoices}
                 leadingIcon={<Save className="size-4" aria-hidden="true" />}
               >
                 Save draft
@@ -487,7 +511,7 @@ export function IntakePage() {
                 onClick={validateAndSubmit}
                 leadingIcon={<Send className="size-4" aria-hidden="true" />}
               >
-                Submit intake
+                Submit and lock Phase 1
               </Button>
             </>
           )
@@ -593,7 +617,7 @@ export function IntakePage() {
               <p className="mt-1 text-xs text-muted">Record directly from your microphone in WebM format. Up to {limits?.maxPitchRecordings ?? 1} recording{(limits?.maxPitchRecordings ?? 1) === 1 ? "" : "s"}, maximum {Math.ceil((limits?.maxPitchLengthSeconds ?? 300) / 60)} minutes each.</p>
               {!readOnly && pitches.length < (limits?.maxPitchRecordings ?? 1) && !pendingPitch ? (
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <Button variant={recording ? "danger" : "primary"} onClick={() => recording ? stopRecording() : beginPitchRecording()} disabled={uploading}>{recording ? `Stop recording (${recordingTime}s)` : "Record Business Pitch Idea"}</Button>
+                  <Button variant={recording ? "danger" : "primary"} className={recording ? "animate-pulse ring-2 ring-danger/40 shadow-lg shadow-danger/20" : ""} leadingIcon={recording ? <span className="relative flex size-4 items-center justify-center"><span className="absolute size-3 animate-ping rounded-full bg-white/80" /><span className="relative size-2 rounded-full bg-white" /></span> : <Mic className="size-4" />} onClick={() => recording ? stopRecording() : beginPitchRecording()} disabled={uploading}>{recording ? `Recording — stop (${recordingTime}s)` : "Record Business Pitch Idea"}</Button>
                   {microphonePreflightEnabled && !recording ? <Button variant="outline" onClick={() => openPreflight(false)} disabled={uploading}>Test microphone</Button> : null}
                 </div>
               ) : null}
@@ -617,6 +641,8 @@ export function IntakePage() {
           </div>
         </Modal>
         <Modal open={microphonePromptOpen} onClose={() => setMicrophonePromptOpen(false)} title="Allow microphone access" description="ReadyPackets needs microphone access only while you record this Business Pitch Idea. Your browser will show its own permission prompt next. This step is skipped automatically once access is already granted."><div className="space-y-4"><Alert tone="info">Select <strong>Allow microphone</strong> in the browser prompt. The recording stays in your browser until you stop it, then it is uploaded as a WebM recording for this order.</Alert><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setMicrophonePromptOpen(false)}>Cancel</Button><Button onClick={requestMicrophone}>Allow microphone and record</Button></div></div></Modal>
+
+        <Modal open={saveChoiceOpen} onClose={() => setSaveChoiceOpen(false)} title="Save your order workspace" description="Your typed intake information is saved as a draft. Files and recordings already uploaded are already attached to this order."><div className="space-y-4"><Alert tone="info">{pendingPitch ? "Your reviewed WebM recording will be uploaded with this save, then attached to this order." : "All current answers, project details, uploaded documents, and uploaded recordings will remain available when you return."}</Alert><div className="rounded-lg border border-line bg-surface-soft p-3 text-sm text-body"><p className="font-medium text-ink">Choose what happens after saving</p><p className="mt-1">You can continue working now, or save and return to your order dashboard. Nothing is submitted or locked by either choice.</p></div><div className="flex flex-wrap justify-end gap-2"><Button variant="outline" onClick={() => setSaveChoiceOpen(false)}>Cancel</Button><Button variant="outline" busy={save.isPending || uploading} onClick={() => { setSaveReturningLater(false); void persistDraft(false, true).then(() => setSaveChoiceOpen(false)); }}>Save and continue working</Button><Button busy={save.isPending || uploading || saveReturningLater} onClick={() => { setSaveReturningLater(true); void persistDraft(true, true); }}>Save and return later</Button></div></div></Modal>
 
         <Card id="intake-desiredOutcomes" className="hidden">
           <CardHeader
@@ -707,8 +733,8 @@ export function IntakePage() {
               >
                 Submit and lock Phase 1
               </Button>
-              <Button variant="outline" busy={save.isPending} onClick={saveDraft}>
-                Save and finish later
+              <Button variant="outline" busy={save.isPending || uploading} onClick={openSaveChoices}>
+                Save workspace
               </Button>
             </div>
             <p className="mt-3 text-xs text-muted">

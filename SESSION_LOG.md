@@ -2085,3 +2085,23 @@ Administrators can review current and historic phase-lock records in **Admin →
 ### Validation and deployment
 
 The release passed TypeScript validation, the full automated suite (**151/151 tests**), client and server production builds, migration application, live health verification, and the live security suite (**46/46 checks**). The production `Permissions-Policy` continues to allow `microphone=(self)` while retaining `camera=()` and `display-capture=()`. Timestamped server and client rollback copies were retained in `/opt/readypackets/rollback/` on the VPS.
+
+
+## 2026-08-13 — Recording feedback and full workspace save flow
+
+### User request
+
+> 1. the audio recording button should be a pulsating button to show that the recording is working
+> 2. the save button in the order does not work when the order is saved it should should save the current files ans documents and audio and ask if the customer would like to save the order and return to it later or continue working in the order
+
+### Delivered changes
+
+The customer recording controls in Phase 1 Intake, Phase 2, and generic workflow phase workspaces now use a live pulsing danger treatment while recording. The control includes a pulsing recording indicator, elapsed-time text, and an explicit **Recording — stop** label. The inactive state remains visually distinct and uses the normal microphone icon.
+
+The Phase 1 intake draft-save defect was corrected. The client previously saved only `projectName`; current responses, desired outcomes, and the integrity choice were not included even though the server supports each field. The save payload now includes all current editable form values. Uploaded documents and recordings remain attached to the order immediately after their independently confirmed upload.
+
+Selecting **Save draft** in the page header or **Save workspace** in the form opens a choice dialog. The customer may choose **Save and continue working** or **Save and return later**. Both choices persist the complete draft. If a newly recorded WebM clip is still local and awaiting review, either save choice uploads it first; the customer stays on the page on a failed upload. The return-later choice navigates to the order dashboard only after successful persistence. Neither save action submits or locks the phase.
+
+### Validation and deployment
+
+TypeScript validation, the complete automated suite (**151/151 tests**), production client/server builds, production health verification, and the live security suite (**46/46 checks**) passed. Client deployment retained a timestamped rollback copy on the VPS.
