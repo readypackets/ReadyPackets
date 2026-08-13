@@ -19,7 +19,7 @@ type StageActions = {
   completionPercent?: number;
   webhookEndpointId?: number;
 };
-type Stage = { key: string; label: string; order: number; capabilities: StageCapability[]; actions: StageActions };
+type Stage = { key: string; label: string; order: number; capabilities: StageCapability[]; actions: StageActions; submissionNotice?: string };
 
 const CAPABILITIES: { key: StageCapability; label: string; description: string; icon: typeof FileText }[] = [
   { key: "documents", label: "Upload documents", description: "Customer may upload supporting files.", icon: FileText },
@@ -58,7 +58,7 @@ function normalizeActions(value: unknown): StageActions {
 function normalizeStages(value: unknown[]): Stage[] {
   if (!Array.isArray(value)) return [];
   return value
-    .filter((item): item is { key?: unknown; label?: unknown; order?: unknown; capabilities?: unknown; actions?: unknown } => Boolean(item) && typeof item === "object")
+    .filter((item): item is { key?: unknown; label?: unknown; order?: unknown; capabilities?: unknown; actions?: unknown; submissionNotice?: unknown } => Boolean(item) && typeof item === "object")
     .filter((item) => typeof item.key === "string" && typeof item.label === "string")
     .map((item, index) => ({
       key: item.key as string,
@@ -66,6 +66,7 @@ function normalizeStages(value: unknown[]): Stage[] {
       order: typeof item.order === "number" ? item.order : index + 1,
       capabilities: Array.isArray(item.capabilities) ? item.capabilities.filter((capability): capability is StageCapability => capability === "documents" || capability === "questions" || capability === "recording" || capability === "audio_upload") : ["documents", "questions", "recording"] as StageCapability[],
       actions: normalizeActions(item.actions),
+      submissionNotice: typeof item.submissionNotice === "string" ? item.submissionNotice : undefined,
     }))
     .sort((left, right) => left.order - right.order);
 }
@@ -137,7 +138,9 @@ export function AdminOrderWorkflowsPage() {
             <div className="flex gap-4"><div className="flex flex-col items-center text-muted"><GripVertical className="mt-1 size-5 cursor-grab" /><span className="mt-2 rounded-full bg-teal px-2 py-0.5 text-xs font-bold text-white">{index + 1}</span>{index < stages.length - 1 ? <ArrowDown className="mt-2 size-4 text-teal" /> : null}</div><div className="min-w-0 flex-1 space-y-4">
               <div className="grid gap-3 lg:grid-cols-[minmax(10rem,0.55fr)_minmax(14rem,1fr)]"><Input label="Stable stage key" value={stage.key} onChange={(event) => updateStage(index, { key: stageKey(event.target.value, index) })} help="Lowercase letters, numbers, and underscores." /><Input label="Customer-facing stage label" value={stage.label} onChange={(event) => updateStage(index, { label: event.target.value })} /></div>
               <div><p className="text-xs font-semibold uppercase tracking-wide text-muted">Customer actions enabled in this phase</p><div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{CAPABILITIES.map((capability) => { const Icon = capability.icon; return <label key={capability.key} className={`flex cursor-pointer gap-2 rounded-lg border p-2.5 text-sm ${stage.capabilities.includes(capability.key) ? "border-teal/50 bg-teal/5" : "border-line"}`}><Checkbox checked={stage.capabilities.includes(capability.key)} onChange={() => toggleCapability(index, capability.key)} label="" /><span><span className="flex items-center gap-1.5 font-medium text-ink"><Icon className="size-3.5 text-teal" />{capability.label}</span><span className="mt-0.5 block text-xs text-muted">{capability.description}</span></span></label>; })}</div></div>
-              <div className="rounded-lg border border-navy/15 bg-surface-soft p-3"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-semibold text-ink">Administrator-run stage actions</p><p className="text-xs text-muted">These execute only when an administrator runs this stage on an assigned order.</p></div><Badge tone={actionCount(stage.actions) ? "teal" : "neutral"}>{actionCount(stage.actions)} configured</Badge></div>
+                            <div className="rounded-lg border border-teal/20 bg-teal/5 p-3"><p className="text-sm font-semibold text-ink">Customer submission acknowledgement</p><p className="mt-1 text-xs text-muted">Shown before a customer submits this phase. Submission locks the phase until an administrator confirms an unlock.</p><Textarea className="mt-3" label="Acknowledgement message template" value={stage.submissionNotice ?? ""} onChange={(event) => updateStage(index, { submissionNotice: event.target.value || undefined })} help="Optional. When blank, the portal uses the standard irreversible-lock warning." /></div>
+              <div className="rounded-lg border border-navy/15 bg-surface-soft p-3"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-semibold text-ink">Administrator-run stage actions</p>
+<p className="text-xs text-muted">These execute only when an administrator runs this stage on an assigned order.</p></div><Badge tone={actionCount(stage.actions) ? "teal" : "neutral"}>{actionCount(stage.actions)} configured</Badge></div>
                 <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   <Select label="Email alert template" value={stage.actions.emailTemplateKey ?? ""} onChange={(event) => updateActions(index, { emailTemplateKey: event.target.value || undefined })}><option value="">No customer email</option>{(templates.data ?? []).filter((template) => template.enabled).map((template) => <option key={template.templateKey} value={template.templateKey}>{template.name}</option>)}</Select>
                   <Select label="Order status update" value={stage.actions.orderStatus ?? ""} onChange={(event) => updateActions(index, { orderStatus: event.target.value ? event.target.value as OrderStatus : undefined })}><option value="">Do not change status</option>{STATUS_OPTIONS.map((status) => <option key={status} value={status}>{statusLabel(status)}</option>)}</Select>

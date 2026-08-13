@@ -1472,6 +1472,25 @@ export const apiKeys = mysqlTable(
   }),
 );
 
+export const orderPhaseLocks = mysqlTable(
+  "order_phase_locks",
+  {
+    id: id(),
+    orderId: int("order_id").notNull(),
+    phaseKey: varchar("phase_key", { length: 64 }).notNull(),
+    acknowledgementText: text("acknowledgement_text").notNull(),
+    lockedByUserId: int("locked_by_user_id").notNull(),
+    lockedAt: timestamp("locked_at").notNull().defaultNow(),
+    unlockedByUserId: int("unlocked_by_user_id"),
+    unlockedAt: timestamp("unlocked_at"),
+    unlockReason: varchar("unlock_reason", { length: 1000 }),
+  },
+  (table) => ({
+    orderPhaseUnique: uniqueIndex("order_phase_locks_order_phase_unique").on(table.orderId, table.phaseKey),
+    activeLockIdx: index("order_phase_locks_active_idx").on(table.orderId, table.unlockedAt),
+  }),
+);
+
 export const workflowStageRuns = mysqlTable(
   "workflow_stage_runs",
   {

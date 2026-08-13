@@ -29,6 +29,7 @@ import {
   orderAnswers,
   orderAnswerHistory,
   orderItems,
+  orderPhaseLocks,
   orderWorkflows,
   workflowStageRuns,
   orderAutomationRules,
@@ -1219,7 +1220,7 @@ export const adminRouter = router({
       id: z.number().int().positive().optional(),
       name: z.string().trim().min(2).max(120),
       description: z.string().trim().max(4_000).optional(),
-      stages: z.array(z.object({ key: z.string().trim().regex(/^[a-z0-9_]+$/).max(48), label: z.string().trim().min(2).max(120), order: z.number().int().min(1).max(50), capabilities: z.array(z.enum(["documents", "questions", "recording", "audio_upload"])).max(4).default([]), actions: workflowStageActionsSchema })).min(1).max(20),
+      stages: z.array(z.object({ key: z.string().trim().regex(/^[a-z0-9_]+$/).max(48), label: z.string().trim().min(2).max(120), order: z.number().int().min(1).max(50), capabilities: z.array(z.enum(["documents", "questions", "recording", "audio_upload"])).max(4).default([]), submissionNotice: z.string().trim().min(10).max(2_000).optional(), actions: workflowStageActionsSchema })).min(1).max(20),
       isDefault: z.boolean().default(false),
       active: z.boolean().default(true),
     }))
@@ -1269,6 +1270,47 @@ export const adminRouter = router({
       if (Number((result as { affectedRows?: number }).affectedRows ?? 0) === 0) throw new TRPCError({ code: "NOT_FOUND", message: "Order not found." });
       void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "order.workflow_assigned", entityType: "order", entityId: input.orderId, summary: `Administrator assigned workflow ${workflow[0].name}`, changes: { workflowId: workflow[0].id }, ipAddress: ctx.clientIp });
       return { ok: true as const, workflow: workflow[0] };
+    }),
+
+  phaseLocks: staffProcedure
+    .input(z.object({ orderId: z.number().int().positive(), includeUnlocked: z.boolean().default(false) }))
+    .query(async ({ input }) => {
+      const conditions = [eq(orderPhaseLocks.orderId, input.orderId)];
+      if (!input.includeUnlocked) conditions.push(isNull(orderPhaseLocks.unlockedAt));
+      return db.select().from(orderPhaseLocks).where(and(...conditions)).orderBy(desc(orderPhaseLocks.lockedAt));
+    }),
+
+  unlockWorkflowPhase: adminProcedure
+    .input(z.object({
+      orderId: z.number().int().positive(),
+      phaseKey: z.string().trim().regex(/^[a-z0-9_]+$/).max(64),
+      reason: z.string().trim().min(10).max(1_000),
+      confirmation: z.literal("UNLOCK PHASE"),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const lockRows = await db
+        .select({ id: orderPhaseLocks.id })
+        .from(orderPhaseLocks)
+        .where(and(eq(orderPhaseLocks.orderId, input.orderId), eq(orderPhaseLocks.phaseKey, input.phaseKey), isNull(orderPhaseLocks.unlockedAt)))
+        .limit(1);
+      const lock = lockRows[0];
+      if (!lock) throw new TRPCError({ code: "NOT_FOUND", message: "An active lock for this workflow phase was not found." });
+      await db.update(orderPhaseLocks).set({ unlockedAt: new Date(), unlockedByUserId: ctx.session.user.id, unlockReason: input.reason }).where(eq(orderPhaseLocks.id, lock.id));
+      if (input.phaseKey === "phase_1") {
+        await db.update(intakeSubmissions).set({ status: "draft", submittedAt: null }).where(eq(intakeSubmissions.orderId, input.orderId));
+      }
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: "admin",
+        action: "order.phase_unlocked",
+        entityType: "order",
+        entityId: input.orderId,
+        severity: "warning",
+        summary: `Administrator unlocked workflow phase ${input.phaseKey}`,
+        changes: { phaseKey: input.phaseKey, reason: input.reason },
+        ipAddress: ctx.clientIp,
+      });
+      return { ok: true as const };
     }),
 
   workflowStageRuns: staffProcedure

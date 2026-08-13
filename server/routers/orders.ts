@@ -18,6 +18,7 @@ import {
   orderItems,
   orderNotes,
   orderQuestions,
+  orderPhaseLocks,
   orderWorkflows,
   orderShares,
   orders,
@@ -124,6 +125,15 @@ export const ordersRouter = router({
           )
           .orderBy(desc(files.createdAt));
 
+        const phaseLocks = await db
+          .select({
+            phaseKey: orderPhaseLocks.phaseKey,
+            acknowledgementText: orderPhaseLocks.acknowledgementText,
+            lockedAt: orderPhaseLocks.lockedAt,
+          })
+          .from(orderPhaseLocks)
+          .where(and(eq(orderPhaseLocks.orderId, input.orderId), isNull(orderPhaseLocks.unlockedAt)));
+
         // Customers see shared notes only; internal notes never leave the admin panel.
         const notes = await db
           .select({
@@ -155,6 +165,7 @@ export const ordersRouter = router({
             deliveredAt: detail.order.deliveredAt,
           },
           workflow: workflowRows[0] ?? null,
+          phaseLocks,
           items: detail.items.map((item) => ({
             id: item.id,
             sku: item.sku,
@@ -181,6 +192,45 @@ export const ordersRouter = router({
       } catch (error) {
         toTrpcError(error);
       }
+    }),
+
+  submitWorkflowPhase: protectedProcedure
+    .input(z.object({
+      orderId: z.number().int().positive(),
+      phaseKey: z.string().trim().regex(/^[a-z0-9_]+$/).max(64),
+      acknowledgementText: z.string().trim().min(10).max(2_000),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.session.user.role !== "customer") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Only customers can submit a workflow phase." });
+      }
+      try {
+        await assertOrderAccess(input.orderId, ctx.session.user.id, ctx.session.user.role);
+      } catch (error) {
+        toTrpcError(error);
+      }
+      const orderRows = await db.select({ workflowId: orders.workflowId }).from(orders).where(and(eq(orders.id, input.orderId), isNull(orders.deletedAt))).limit(1);
+      const workflowId = orderRows[0]?.workflowId;
+      const workflowRows = workflowId
+        ? await db.select({ stages: orderWorkflows.stages }).from(orderWorkflows).where(eq(orderWorkflows.id, workflowId)).limit(1)
+        : [];
+      const stages = Array.isArray(workflowRows[0]?.stages) ? workflowRows[0]!.stages as Array<{ key?: unknown }> : [];
+      const legacyPhase = input.phaseKey === "phase_1" || input.phaseKey === "phase_2";
+      if (!legacyPhase && !stages.some((stage) => stage.key === input.phaseKey)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "This workflow phase is not available for the order." });
+      }
+      const existing = await db.select({ id: orderPhaseLocks.id, unlockedAt: orderPhaseLocks.unlockedAt }).from(orderPhaseLocks).where(and(eq(orderPhaseLocks.orderId, input.orderId), eq(orderPhaseLocks.phaseKey, input.phaseKey))).limit(1);
+      if (existing[0] && !existing[0].unlockedAt) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "This workflow phase is already locked." });
+      }
+      const lockedAt = new Date();
+      if (existing[0]) {
+        await db.update(orderPhaseLocks).set({ acknowledgementText: input.acknowledgementText, lockedByUserId: ctx.session.user.id, lockedAt, unlockedByUserId: null, unlockedAt: null, unlockReason: null }).where(eq(orderPhaseLocks.id, existing[0].id));
+      } else {
+        await db.insert(orderPhaseLocks).values({ orderId: input.orderId, phaseKey: input.phaseKey, acknowledgementText: input.acknowledgementText, lockedByUserId: ctx.session.user.id, lockedAt });
+      }
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: ctx.session.user.role, action: "order.phase_submitted", entityType: "order", entityId: input.orderId, summary: `Customer submitted and locked workflow phase ${input.phaseKey}`, changes: { phaseKey: input.phaseKey }, ipAddress: ctx.clientIp });
+      return { ok: true as const, lockedAt };
     }),
 
   shares: protectedProcedure
@@ -326,7 +376,7 @@ export const ordersRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const rows = await db
-        .select({ id: orderQuestions.id, orderId: orderQuestions.orderId })
+        .select({ id: orderQuestions.id, orderId: orderQuestions.orderId, phase: orderQuestions.phase })
         .from(orderQuestions)
         .where(eq(orderQuestions.id, input.questionId))
         .limit(1);
@@ -337,6 +387,17 @@ export const ordersRouter = router({
         await assertOrderAccess(question.orderId, ctx.session.user.id, ctx.session.user.role);
       } catch (error) {
         toTrpcError(error);
+      }
+
+      if (ctx.session.user.role === "customer" && question.phase) {
+        const activeLocks = await db
+          .select({ id: orderPhaseLocks.id })
+          .from(orderPhaseLocks)
+          .where(and(eq(orderPhaseLocks.orderId, question.orderId), eq(orderPhaseLocks.phaseKey, question.phase), isNull(orderPhaseLocks.unlockedAt)))
+          .limit(1);
+        if (activeLocks[0]) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "This workflow phase has been submitted and locked. Ask an administrator to unlock it before changing answers." });
+        }
       }
 
       const existing = await db

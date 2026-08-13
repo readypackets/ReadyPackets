@@ -732,6 +732,7 @@ export function AdminOrderDetailPage() {
   const detail = trpc.admin.orderDetail.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
   const files = trpc.adminFiles.list.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
   const workflows = trpc.admin.orderWorkflows.useQuery();
+  const phaseLocks = trpc.admin.phaseLocks.useQuery({ orderId, includeUnlocked: true }, { enabled: Number.isFinite(orderId) });
 
   const [tab, setTab] = useState("overview");
   const [note, setNote] = useState("");
@@ -751,6 +752,9 @@ export function AdminOrderDetailPage() {
   const [phaseUpload, setPhaseUpload] = useState("phase_1");
   const [phaseUploading, setPhaseUploading] = useState(false);
   const [phaseUploadPreRecordedAudio, setPhaseUploadPreRecordedAudio] = useState(false);
+  const [unlockTarget, setUnlockTarget] = useState<{ phaseKey: string } | null>(null);
+  const [unlockReason, setUnlockReason] = useState("");
+  const [unlockConfirmation, setUnlockConfirmation] = useState("");
   const phaseFileInput = useRef<HTMLInputElement>(null);
 
   const assignedWorkflow = (workflows.data ?? []).find((workflow) => String(workflow.id) === (workflowId || String(detail.data?.order.workflowId ?? "")));
@@ -770,7 +774,7 @@ export function AdminOrderDetailPage() {
   const phaseAllowsPreRecordedAudio = selectedPhaseOption?.capabilities.includes("audio_upload") ?? false;
 
   const refetchAll = async () => {
-    await Promise.all([detail.refetch(), files.refetch()]);
+    await Promise.all([detail.refetch(), files.refetch(), phaseLocks.refetch()]);
   };
 
   const assignWorkflow = trpc.admin.assignOrderWorkflow.useMutation({
@@ -893,6 +897,17 @@ export function AdminOrderDetailPage() {
     }
   };
 
+  const unlockWorkflowPhase = trpc.admin.unlockWorkflowPhase.useMutation({
+    async onSuccess() {
+      setUnlockTarget(null);
+      setUnlockReason("");
+      setUnlockConfirmation("");
+      await refetchAll();
+      toast.success("Workflow phase unlocked", "The customer can update this phase again until it is resubmitted.");
+    },
+    onError(error) { toast.error("Could not unlock workflow phase", errorMessage(error)); },
+  });
+
   const softDelete = trpc.admin.softDeleteOrder.useMutation({
     async onSuccess() {
       setDeleteOpen(false);
@@ -972,6 +987,7 @@ export function AdminOrderDetailPage() {
           { id: "notes", label: `Notes (${notes.length})` },
                     { id: "questions", label: `Questions (${questions.length})` },
           { id: "files", label: `Files (${attachments.length})` },
+          { id: "phase-locks", label: `Phase locks (${(phaseLocks.data ?? []).filter((lock) => !lock.unlockedAt).length})` },
           { id: "automation", label: "Automation" },
         ]}
         active={tab}
@@ -1402,6 +1418,13 @@ export function AdminOrderDetailPage() {
           </div>
         ) : null}
 
+        {tab === "phase-locks" ? (
+          <Card>
+            <CardHeader title="Workflow phase locks" description="Customer submissions lock their own files, recordings, and answers. Unlocking is an administrator-only, audited action." />
+            {(phaseLocks.data ?? []).length === 0 ? <p className="mt-4 text-sm text-muted">No workflow phases have been submitted yet.</p> : <div className="mt-4 space-y-3">{(phaseLocks.data ?? []).map((lock) => <div key={lock.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line p-4"><div><p className="font-medium text-ink">{lock.phaseKey.replaceAll("_", " ")}</p><p className="mt-1 text-xs text-muted">Submitted {formatDateTime(lock.lockedAt)}{lock.unlockedAt ? ` · Unlocked ${formatDateTime(lock.unlockedAt)}` : " · Customer changes are locked"}</p>{lock.unlockReason ? <p className="mt-1 text-xs text-muted">Unlock reason: {lock.unlockReason}</p> : null}</div>{!lock.unlockedAt ? <Button variant="danger" size="sm" disabled={!session.isAdmin} onClick={() => { setUnlockTarget({ phaseKey: lock.phaseKey }); setUnlockReason(""); setUnlockConfirmation(""); }}>Unlock phase</Button> : <Badge tone="success">Unlocked</Badge>}</div>)}</div>}
+          </Card>
+        ) : null}
+
         {tab === "files" ? (
           <Card>
             <CardHeader
@@ -1450,6 +1473,8 @@ export function AdminOrderDetailPage() {
       </div>
 
       <Modal open={phaseUploadOpen} onClose={() => setPhaseUploadOpen(false)} title="Upload phase documents" description="Attach administrator documents to this order and assign them to the correct workflow phase." footer={<><Button variant="outline" onClick={() => setPhaseUploadOpen(false)}>Cancel</Button><Button busy={phaseUploading} leadingIcon={<Upload className="size-4" />} onClick={() => phaseFileInput.current?.click()}>Choose documents</Button></>}><div className="space-y-4"><Select label="Order phase" value={phaseUpload} onChange={(event) => { setPhaseUpload(event.target.value); setPhaseUploadPreRecordedAudio(false); }} options={phaseUploadOptions} />{phaseAllowsPreRecordedAudio ? <Checkbox label="Upload pre-recorded audio files for this phase" checked={phaseUploadPreRecordedAudio} onChange={(event) => setPhaseUploadPreRecordedAudio(event.target.checked)} /> : null}<Alert tone="info">Uploaded administrator documents are initially internal. Use the visibility control in the Files tab to publish a file to the customer inside this order’s matching phase workspace.</Alert><input ref={phaseFileInput} className="hidden" type="file" accept={phaseUploadPreRecordedAudio ? "audio/*,.webm,.ogg" : undefined} multiple onChange={(event) => void uploadPhaseDocuments(event.target.files)} /></div></Modal>
+
+      <Modal open={Boolean(unlockTarget)} onClose={() => setUnlockTarget(null)} title="Unlock customer workflow phase" description="This reopens customer changes for the selected phase. The action is audited and should be used only when a correction is needed." footer={<><Button variant="outline" onClick={() => setUnlockTarget(null)}>Cancel</Button><Button variant="danger" busy={unlockWorkflowPhase.isPending} disabled={unlockConfirmation !== "UNLOCK PHASE" || unlockReason.trim().length < 10} onClick={() => { if (unlockTarget) unlockWorkflowPhase.mutate({ orderId, phaseKey: unlockTarget.phaseKey, reason: unlockReason.trim(), confirmation: "UNLOCK PHASE" }); }}>Unlock phase</Button></>}><div className="space-y-4"><Alert tone="warning">Unlocking allows the customer to add, remove, or update files, recordings, and answers until they submit this phase again.</Alert><Input label="Reason for unlock" value={unlockReason} onChange={(event) => setUnlockReason(event.target.value)} help="Required; recorded in the audit trail." maxLength={1000} /><Input label="Type UNLOCK PHASE to confirm" value={unlockConfirmation} onChange={(event) => setUnlockConfirmation(event.target.value)} /></div></Modal>
 
       <ConfirmDialog
         open={deleteOpen}

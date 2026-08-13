@@ -2058,3 +2058,30 @@ The server independently enforces this restriction. A recorded Business Pitch ac
 ### Validation
 
 The approved fix passed 151/151 tests, TypeScript checking, server build, production health validation, and the full 46/46 live security verification. It is now being committed and pushed to the private ReadyPackets repository.
+
+
+## 2026-08-13 — WebM recording reliability and customer workflow phase locks
+
+### User report and request
+
+> when i record i am not able to play back what i recorded and i still get the recording upload rejected because of the file format
+>
+> The customer should be able to remove any documents they upload or record items until they press the submit button then that part of the order phase is locked and can only be unlocked by the admin with confirmation when unlocking it. There should be a notification given to the customer before each submission of files and documents at any point of the order phases. the message should be able to be a template configurable in the workflow designer the customer will be prompte with the notification prompt acknowledging that that phase will be locked and and can not be undone.
+
+### Root cause and WebM correction
+
+The browser recorder correctly creates a WebM audio file, but the installed `file-type` signature detector classifies a generic WebM container as `video/webm`; the container header does not identify its track type. The upload endpoint previously required the detector to return exactly `audio/webm`, so it rejected valid browser recordings before storage. The release keeps magic-byte and `.webm` extension validation, accepts the safe generic WebM signature for an explicitly browser-recorded pitch, and normalizes a successful recorded-pitch record to `audio/webm`. Other files remain subject to existing extension, magic-byte, size, category, CSRF, authorization, and workflow-capability controls.
+
+The Phase 1 intake now retains a newly stopped recording locally, renders an HTML audio playback control, and gives the customer explicit **Upload WebM recording** or **Discard recording** choices. A failed upload leaves the local recording available for retry rather than silently losing it.
+
+### Workflow phase submission and locking
+
+Migration `0029_order_phase_locks.sql` created an auditable current-state lock table keyed by order and phase. Customer phase workspaces now provide a clear submit-and-lock confirmation modal. The message defaults to an irreversible-lock warning but is configurable per workflow stage through the Workflow Designer’s **Acknowledgement message template** field. Customers must check an acknowledgement before submitting.
+
+While a phase is unlocked, customers may add and remove their own files and recordings. When submitted, server-side controls prevent customer uploads, removals, and question changes in that phase. The customer UI reflects the locked state. This covers generic workflow phases, the legacy Phase 1 intake workflow, and the legacy Phase 2 workspace.
+
+Administrators can review current and historic phase-lock records in **Admin → Orders → [Order] → Phase locks**. Unlocking requires an administrator, a reason of at least ten characters, and the exact typed confirmation `UNLOCK PHASE`. The action is audited. Unlocking legacy `phase_1` also reopens the intake draft; customer changes resume until the next submission.
+
+### Validation and deployment
+
+The release passed TypeScript validation, the full automated suite (**151/151 tests**), client and server production builds, migration application, live health verification, and the live security suite (**46/46 checks**). The production `Permissions-Policy` continues to allow `microphone=(self)` while retaining `camera=()` and `display-capture=()`. Timestamped server and client rollback copies were retained in `/opt/readypackets/rollback/` on the VPS.

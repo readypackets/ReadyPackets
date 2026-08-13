@@ -11,13 +11,13 @@ import { useToast } from "@/components/ui/Toast";
 import { PageHeader } from "@/components/layout/PortalLayout";
 
 type Capability = "documents" | "questions" | "recording" | "audio_upload";
-type WorkflowStage = { key: string; label: string; order: number; capabilities?: Capability[] };
+type WorkflowStage = { key: string; label: string; order: number; capabilities?: Capability[]; submissionNotice?: string };
 const AUDIO_EXTENSIONS = new Set(["webm", "wav", "mp3", "m4a", "ogg"]);
 
 function stagesFromUnknown(value: unknown): WorkflowStage[] {
   if (!Array.isArray(value)) return [];
   return value
-    .filter((item): item is { key?: unknown; label?: unknown; order?: unknown; capabilities?: unknown } => Boolean(item) && typeof item === "object")
+    .filter((item): item is { key?: unknown; label?: unknown; order?: unknown; capabilities?: unknown; submissionNotice?: unknown } => Boolean(item) && typeof item === "object")
     .filter((item) => typeof item.key === "string" && typeof item.label === "string")
     .map((item, index) => ({
       key: item.key as string,
@@ -26,6 +26,7 @@ function stagesFromUnknown(value: unknown): WorkflowStage[] {
       capabilities: Array.isArray(item.capabilities)
         ? item.capabilities.filter((capability): capability is Capability => capability === "documents" || capability === "questions" || capability === "recording" || capability === "audio_upload")
         : ["documents", "questions", "recording"] as Capability[],
+      submissionNotice: typeof item.submissionNotice === "string" ? item.submissionNotice : undefined,
     }))
     .sort((left, right) => left.order - right.order);
 }
@@ -48,6 +49,8 @@ export function WorkflowStagePage() {
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [microphoneOpen, setMicrophoneOpen] = useState(false);
   const [answers, setAnswers] = useState<Record<number, string>>({});
+  const [submissionOpen, setSubmissionOpen] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
 
   const deleteFile = trpc.files.delete.useMutation({
     async onSuccess() { await filesQuery.refetch(); toast.success("File removed"); },
@@ -56,6 +59,15 @@ export function WorkflowStagePage() {
   const answerQuestion = trpc.orders.answerQuestion.useMutation({
     async onSuccess() { await questions.refetch(); toast.success("Answer saved"); },
     onError(error) { toast.error("Could not save answer", errorMessage(error)); },
+  });
+  const submitPhase = trpc.orders.submitWorkflowPhase.useMutation({
+    async onSuccess() {
+      await Promise.all([detail.refetch(), filesQuery.refetch(), questions.refetch()]);
+      setSubmissionOpen(false);
+      setAcknowledged(false);
+      toast.success("Phase submitted and locked", "Your project team must confirm an unlock before this phase can be changed.");
+    },
+    onError(error) { toast.error("Could not submit phase", errorMessage(error)); },
   });
 
   async function upload(selected: FileList | File[] | null, recordedPitch = false, prerecordedAudio = false) {
@@ -131,6 +143,9 @@ export function WorkflowStagePage() {
   if (!stage) return <><PageHeader title="Workflow phase unavailable" breadcrumb={{ href: `/portal/orders/${orderId}`, label: "Back to order" }} /><Card className="max-w-2xl"><CardHeader title="This phase is not part of the assigned workflow" description="Ask your project team to review the order workflow assignment." /><LinkButton className="mt-5" href={`/portal/orders/${orderId}`} variant="outline">Back to order</LinkButton></Card></>;
 
   const capabilities = new Set(stage.capabilities ?? []);
+  const phaseLock = detail.data.phaseLocks?.find((lock) => lock.phaseKey === stage.key);
+  const phaseLocked = Boolean(phaseLock);
+  const submissionNotice = stage.submissionNotice?.trim() || `You are about to submit ${stage.label}. This locks all customer files, recordings, and answers in this phase. It cannot be undone by a customer; an administrator must confirm an unlock.`;
   const phaseFiles = (filesQuery.data ?? []).filter((file) => file.phase === stage.key && file.category !== "deliverable");
   const audioFiles = phaseFiles.filter((file) => AUDIO_EXTENSIONS.has((file.extension ?? "").toLowerCase()));
   const documentFiles = phaseFiles.filter((file) => !audioFiles.includes(file));
@@ -139,20 +154,22 @@ export function WorkflowStagePage() {
 
   return <>
     <PageHeader title={stage.label} description={`Order ${order.orderNumber} · workflow phase ${stage.order}`} breadcrumb={{ href: `/portal/orders/${orderId}`, label: "Back to order" }} />
-    <Alert tone="info" className="mb-6">Files, questions, and recordings in this area belong only to <strong>{stage.label}</strong>. Final deliverables are published separately in My Business Packets.</Alert>
+    <Alert tone={phaseLocked ? "warning" : "info"} className="mb-6">{phaseLocked ? <>This phase was submitted on {formatDate(phaseLock?.lockedAt ?? new Date())} and is locked. Contact your project team if it must be reopened.</> : <>Files, questions, and recordings in this area belong only to <strong>{stage.label}</strong>. You may remove your own materials until you submit and lock this phase. Final deliverables are published separately in My Business Packets.</>}</Alert>
     <div className="grid gap-6 lg:grid-cols-2">
       <Card>
         <CardHeader title={`${stage.label} documents`} description={capabilities.has("documents") ? "Upload supporting documents requested by your project team." : "Documents published by your project team for this phase."} />
-        {capabilities.has("documents") ? <><input ref={fileInput} type="file" className="hidden" multiple onChange={(event) => void upload(event.target.files)} /><Button className="mt-4" leadingIcon={<Upload className="size-4" />} busy={uploading} onClick={() => fileInput.current?.click()}>Upload documents</Button></> : null}
-        <ul className="mt-4 space-y-2">{documentFiles.length ? documentFiles.map((file) => <li key={file.id} className="flex items-center justify-between gap-3 rounded border border-line px-3 py-2 text-sm"><span className="min-w-0 truncate"><FileText className="mr-1 inline size-4" />{file.originalName} <span className="text-xs text-muted">· {formatBytes(file.sizeBytes)} · {formatDate(file.createdAt)}</span></span>{!file.uploadedByStaff ? <Button size="sm" variant="ghost" onClick={() => deleteFile.mutate({ fileId: file.id })}>Remove</Button> : <Badge tone="teal">Team document</Badge>}</li>) : <li className="text-sm text-muted">No documents for this phase yet.</li>}</ul>
+        {capabilities.has("documents") && !phaseLocked ? <><input ref={fileInput} type="file" className="hidden" multiple onChange={(event) => void upload(event.target.files)} /><Button className="mt-4" leadingIcon={<Upload className="size-4" />} busy={uploading} onClick={() => fileInput.current?.click()}>Upload documents</Button></> : null}
+        <ul className="mt-4 space-y-2">{documentFiles.length ? documentFiles.map((file) => <li key={file.id} className="flex items-center justify-between gap-3 rounded border border-line px-3 py-2 text-sm"><span className="min-w-0 truncate"><FileText className="mr-1 inline size-4" />{file.originalName} <span className="text-xs text-muted">· {formatBytes(file.sizeBytes)} · {formatDate(file.createdAt)}</span></span>{!file.uploadedByStaff && !phaseLocked ? <Button size="sm" variant="ghost" onClick={() => deleteFile.mutate({ fileId: file.id })}>Remove</Button> : file.uploadedByStaff ? <Badge tone="teal">Team document</Badge> : <Badge tone="neutral">Locked</Badge>}</li>) : <li className="text-sm text-muted">No documents for this phase yet.</li>}</ul>
       </Card>
       <Card>
         <CardHeader title={`${stage.label} audio recording`} description={capabilities.has("recording") || capabilities.has("audio_upload") ? "Record an in-browser WebM update or upload approved prerecorded audio when this phase enables the relevant action." : "No customer audio action is enabled for this phase."} />
-        <div className="mt-4 flex flex-wrap gap-2">{capabilities.has("recording") ? <Button leadingIcon={<Mic className="size-4" />} variant={recording ? "danger" : "primary"} busy={uploading} onClick={() => recording ? stopRecording() : setMicrophoneOpen(true)}>{recording ? `Stop recording (${recordingSeconds}s)` : `Record ${stage.label} audio`}</Button> : null}{capabilities.has("audio_upload") ? <><input id={`audio-upload-${stage.key}`} className="hidden" type="file" accept="audio/*,.webm,.ogg" onChange={(event) => void upload(event.target.files, false, true)} /><Button variant="outline" leadingIcon={<Upload className="size-4" />} busy={uploading} onClick={() => document.getElementById(`audio-upload-${stage.key}`)?.click()}>Upload audio file</Button></> : null}</div>
-        <ul className="mt-4 space-y-2">{audioFiles.length ? audioFiles.map((file) => <li key={file.id} className="flex items-center justify-between gap-3 rounded border border-line px-3 py-2 text-sm"><span className="truncate"><FileAudio className="mr-1 inline size-4" />{file.originalName}</span>{!file.uploadedByStaff ? <Button size="sm" variant="ghost" onClick={() => deleteFile.mutate({ fileId: file.id })}>Remove</Button> : <Badge tone="teal">Team recording</Badge>}</li>) : <li className="text-sm text-muted">No recordings for this phase yet.</li>}</ul>
+        <div className="mt-4 flex flex-wrap gap-2">{capabilities.has("recording") && !phaseLocked ? <Button leadingIcon={<Mic className="size-4" />} variant={recording ? "danger" : "primary"} busy={uploading} onClick={() => recording ? stopRecording() : setMicrophoneOpen(true)}>{recording ? `Stop recording (${recordingSeconds}s)` : `Record ${stage.label} audio`}</Button> : null}{capabilities.has("audio_upload") && !phaseLocked ? <><input id={`audio-upload-${stage.key}`} className="hidden" type="file" accept="audio/*,.webm,.ogg" onChange={(event) => void upload(event.target.files, false, true)} /><Button variant="outline" leadingIcon={<Upload className="size-4" />} busy={uploading} onClick={() => document.getElementById(`audio-upload-${stage.key}`)?.click()}>Upload audio file</Button></> : null}</div>
+        <ul className="mt-4 space-y-2">{audioFiles.length ? audioFiles.map((file) => <li key={file.id} className="flex items-center justify-between gap-3 rounded border border-line px-3 py-2 text-sm"><span className="truncate"><FileAudio className="mr-1 inline size-4" />{file.originalName}</span>{!file.uploadedByStaff && !phaseLocked ? <Button size="sm" variant="ghost" onClick={() => deleteFile.mutate({ fileId: file.id })}>Remove</Button> : file.uploadedByStaff ? <Badge tone="teal">Team recording</Badge> : <Badge tone="neutral">Locked</Badge>}</li>) : <li className="text-sm text-muted">No recordings for this phase yet.</li>}</ul>
       </Card>
-      {capabilities.has("questions") ? <Card className="lg:col-span-2"><CardHeader title={`${stage.label} questions`} description="Questions assigned by your project team for this specific workflow phase." /><div className="mt-4 space-y-4">{phaseQuestions.length ? phaseQuestions.map((question) => <div key={question.id} className="rounded border border-line p-4"><p className="text-sm font-medium text-ink">{question.question}</p>{question.status === "answered" || question.status === "resolved" ? <p className="mt-2 flex items-center gap-1.5 text-sm text-success"><CheckCircle2 className="size-4" /> Answer received</p> : <><Textarea className="mt-3" label="Your answer" value={answers[question.id] ?? ""} onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))} rows={3} /><Button className="mt-3" size="sm" busy={answerQuestion.isPending} disabled={(answers[question.id] ?? "").trim().length === 0} onClick={() => answerQuestion.mutate({ questionId: question.id, body: (answers[question.id] ?? "").trim() })}>Save answer</Button></>}</div>) : <p className="text-sm text-muted">No questions have been assigned to this phase.</p>}</div></Card> : null}
+      {capabilities.has("questions") ? <Card className="lg:col-span-2"><CardHeader title={`${stage.label} questions`} description="Questions assigned by your project team for this specific workflow phase." /><div className="mt-4 space-y-4">{phaseQuestions.length ? phaseQuestions.map((question) => <div key={question.id} className="rounded border border-line p-4"><p className="text-sm font-medium text-ink">{question.question}</p>{question.status === "answered" || question.status === "resolved" ? <p className="mt-2 flex items-center gap-1.5 text-sm text-success"><CheckCircle2 className="size-4" /> Answer received</p> : phaseLocked ? <p className="mt-2 text-sm text-muted">This phase is locked and answers can no longer be changed.</p> : <><Textarea className="mt-3" label="Your answer" value={answers[question.id] ?? ""} onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))} rows={3} /><Button className="mt-3" size="sm" busy={answerQuestion.isPending} disabled={(answers[question.id] ?? "").trim().length === 0} onClick={() => answerQuestion.mutate({ questionId: question.id, body: (answers[question.id] ?? "").trim() })}>Save answer</Button></>}</div>) : <p className="text-sm text-muted">No questions have been assigned to this phase yet.</p>}</div></Card> : null}
+      {!phaseLocked ? <Card className="lg:col-span-2"><CardHeader title={`Submit ${stage.label}`} description="Review your files, recordings, and answers before submitting. Submission locks this phase." /><Button className="mt-4" variant="primary" onClick={() => { setAcknowledged(false); setSubmissionOpen(true); }}>Submit and lock this phase</Button></Card> : null}
     </div>
     <Modal open={microphoneOpen} onClose={() => setMicrophoneOpen(false)} title="Allow microphone access" description={`Your browser will ask for microphone permission for ${stage.label}.`}><div className="space-y-4"><Alert tone="info">Select <strong>Allow microphone</strong> in the browser prompt. The recording is not uploaded until you stop it.</Alert><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setMicrophoneOpen(false)}>Cancel</Button><Button onClick={() => void startRecording()}>Allow microphone and record</Button></div></div></Modal>
+    <Modal open={submissionOpen} onClose={() => setSubmissionOpen(false)} title={`Submit and lock ${stage.label}`} description="This action locks the phase. Only an administrator can reopen it after confirmation."><div className="space-y-4"><Alert tone="warning">{submissionNotice}</Alert><label className="flex cursor-pointer items-start gap-2 rounded-lg border border-line p-3 text-sm"><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} className="mt-1" /><span>I acknowledge that submitting this phase locks its customer files, recordings, and answers. I understand that I cannot undo this action myself.</span></label><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setSubmissionOpen(false)}>Cancel</Button><Button busy={submitPhase.isPending} disabled={!acknowledged} onClick={() => submitPhase.mutate({ orderId, phaseKey: stage.key, acknowledgementText: submissionNotice })}>Submit and lock</Button></div></div></Modal>
   </>;
 }

@@ -12,7 +12,7 @@ import multer from "multer";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { env } from "../config/env.js";
 import { db } from "../db/client.js";
-import { fileVersions, files, intakeAnswers, intakeSubmissions, orders, orderWorkflows } from "../db/schema.js";
+import { fileVersions, files, intakeAnswers, intakeSubmissions, orderPhaseLocks, orders, orderWorkflows } from "../db/schema.js";
 import { getSetting, getSettingNumber } from "../services/settings.js";
 import { resolveSession } from "../auth/session.js";
 import { CSRF_COOKIE, CSRF_HEADER } from "../security/csrf.js";
@@ -121,6 +121,17 @@ export function createUploadRouter(): Router {
           return;
         }
       }
+      if (!isStaff && orderId !== null) {
+        const activeLocks = await db
+          .select({ id: orderPhaseLocks.id })
+          .from(orderPhaseLocks)
+          .where(and(eq(orderPhaseLocks.orderId, orderId), eq(orderPhaseLocks.phaseKey, phase), isNull(orderPhaseLocks.unlockedAt)))
+          .limit(1);
+        if (activeLocks[0]) {
+          res.status(403).json({ error: "This workflow phase has been submitted and locked. Ask an administrator to unlock it before changing files or recordings." });
+          return;
+        }
+      }
       let stageCapabilities: string[] | null = null;
       if (orderId !== null && requestedPhase && !["phase_1", "phase_2", "unassigned"].includes(phase)) {
         const orderRows = await db.select({ workflowId: orders.workflowId }).from(orders).where(and(eq(orders.id, orderId), isNull(orders.deletedAt))).limit(1);
@@ -209,10 +220,17 @@ export function createUploadRouter(): Router {
         }
 
         const isAudio = validation.mime?.startsWith("audio/") || validation.mime === "video/webm" || validation.mime === "video/ogg";
-        if (recordedPitch && validation.mime !== "audio/webm") {
-          rejected.push({ name: file.originalname, reason: "Business Pitch recordings must be recorded in WebM format." });
+        // file-type safely verifies the WebM container from magic bytes, but a
+        // generic WebM header is classified as video/webm before its tracks are
+        // inspected. Browser-recorded pitches are audio-only by construction.
+        const recordedPitchWebm = validation.extension === "webm" && (
+          validation.mime === "audio/webm" || validation.mime === "video/webm"
+        );
+        if (recordedPitch && !recordedPitchWebm) {
+          rejected.push({ name: file.originalname, reason: "Business Pitch recordings must be recorded in WebM audio format." });
           continue;
         }
+        const detectedMime = recordedPitch ? "audio/webm" : (validation.mime ?? "application/octet-stream");
         if (isAudio && !recordedPitch && !prerecordedAudio) {
           rejected.push({ name: file.originalname, reason: "Choose the pre-recorded audio upload option for an audio file and enable it for this workflow phase." });
           continue;
@@ -247,7 +265,7 @@ export function createUploadRouter(): Router {
                 .set({
                   storageKey: stored.storageKey,
                   originalName: file.originalname.slice(0, 255),
-                  detectedMime: validation.mime ?? "application/octet-stream",
+                  detectedMime,
                   extension: validation.extension ?? null,
                   sizeBytes: stored.sizeBytes,
                   sha256: stored.sha256,
@@ -260,7 +278,7 @@ export function createUploadRouter(): Router {
                 fileId: existing.id,
                 originalName: file.originalname,
                 sizeBytes: stored.sizeBytes,
-                detectedMime: validation.mime ?? "application/octet-stream",
+                detectedMime,
               });
 
               void recordActivity({
@@ -282,7 +300,7 @@ export function createUploadRouter(): Router {
             ownerUserId: isStaff ? null : session.user.id,
             uploadedByUserId: session.user.id,
             originalName: file.originalname.slice(0, 255),
-            detectedMime: validation.mime ?? "application/octet-stream",
+            detectedMime,
             extension: validation.extension ?? null,
             sizeBytes: stored.sizeBytes,
             sha256: stored.sha256,
@@ -316,7 +334,7 @@ export function createUploadRouter(): Router {
             fileId,
             originalName: file.originalname,
             sizeBytes: stored.sizeBytes,
-            detectedMime: validation.mime ?? "application/octet-stream",
+            detectedMime,
           });
 
           void recordActivity({

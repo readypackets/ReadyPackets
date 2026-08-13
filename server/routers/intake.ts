@@ -14,6 +14,7 @@ import {
   intakeAnswers,
   intakeSubmissions,
   files,
+  orderPhaseLocks,
   mndaAcceptances,
   policyAcceptances,
   policyDocuments,
@@ -449,6 +450,22 @@ export const intakeRouter = router({
         .update(intakeSubmissions)
         .set({ status: "submitted", submittedAt })
         .where(eq(intakeSubmissions.id, submission.id));
+      await db.insert(orderPhaseLocks).values({
+        orderId: input.orderId,
+        phaseKey: "phase_1",
+        acknowledgementText: "I acknowledge that submitting this Phase 1 intake locks my customer files, WebM recording, and responses until an administrator confirms an unlock.",
+        lockedByUserId: ctx.session.user.id,
+        lockedAt: submittedAt,
+      }).onDuplicateKeyUpdate({
+        set: {
+          acknowledgementText: "I acknowledge that submitting this Phase 1 intake locks my customer files, WebM recording, and responses until an administrator confirms an unlock.",
+          lockedByUserId: ctx.session.user.id,
+          lockedAt: submittedAt,
+          unlockedByUserId: null,
+          unlockedAt: null,
+          unlockReason: null,
+        },
+      });
 
       const intakeMarkdown = renderIntakeMarkdown({
         orderId: input.orderId,

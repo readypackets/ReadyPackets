@@ -27,16 +27,31 @@ export function Phase2ArtifactsPage() {
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [microphoneOpen, setMicrophoneOpen] = useState(false);
+  const [submissionOpen, setSubmissionOpen] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
 
   const deleteFile = trpc.files.delete.useMutation({
     async onSuccess() { await filesQuery.refetch(); toast.success("File removed"); },
     onError(error) { toast.error("Could not remove file", errorMessage(error)); },
   });
 
+  const submitPhase = trpc.orders.submitWorkflowPhase.useMutation({
+    async onSuccess() {
+      await Promise.all([detail.refetch(), filesQuery.refetch()]);
+      setSubmissionOpen(false);
+      setAcknowledged(false);
+      toast.success("Phase 2 submitted and locked", "An administrator must confirm an unlock before you can change this phase.");
+    },
+    onError(error) { toast.error("Could not submit Phase 2", errorMessage(error)); },
+  });
+
   const phase2Ready = Boolean(detail.data && PHASE_2_STATUSES.has(detail.data.order.status));
   const phaseFiles = (filesQuery.data ?? []).filter((file) => file.phase === "phase_2");
   const audioFiles = phaseFiles.filter((file) => ["webm", "wav", "mp3", "m4a", "ogg"].includes((file.extension ?? "").toLowerCase()));
   const documentFiles = phaseFiles.filter((file) => !audioFiles.includes(file));
+  const phaseLock = detail.data?.phaseLocks?.find((lock) => lock.phaseKey === "phase_2");
+  const phaseLocked = Boolean(phaseLock);
+  const submissionNotice = "You are about to submit Phase 2. This locks your customer documents and recordings in this phase. Only an administrator can confirm an unlock.";
 
   async function upload(selected: FileList | File[] | null, recordedPitch = false) {
     if (!selected || selected.length === 0) return;
@@ -111,9 +126,10 @@ export function Phase2ArtifactsPage() {
   if (!phase2Ready) return <><PageHeader title="Phase 2 materials" breadcrumb={{ href: `/portal/orders/${orderId}`, label: "Back to order" }} /><Card className="max-w-2xl"><CardHeader title="Phase 2 is not open yet" description="Phase 2 documents and recordings become available after your Phase 1 intake is reviewed and the engagement enters Phase 2." /><LinkButton className="mt-5" href={`/portal/orders/${orderId}`} variant="outline">Back to order</LinkButton></Card></>;
 
   return <><PageHeader title="Phase 2 materials" description={`Add supporting documents and a recorded audio update for ${order.orderNumber}.`} breadcrumb={{ href: `/portal/orders/${orderId}`, label: "Back to order" }} />
-    <Alert tone="info" className="mb-6">Your files are stored only after successful upload confirmation. The page refreshes its security token automatically before upload, so you do not need to reload after an inactive tab.</Alert>
-    <div className="grid gap-6 lg:grid-cols-2"><Card><CardHeader title="Phase 2 documents" description="Upload supporting documents requested by your project team." /><input ref={fileInput} type="file" className="hidden" multiple onChange={(event) => void upload(event.target.files)} /><Button className="mt-4" leadingIcon={<Upload className="size-4" />} busy={uploading} onClick={() => fileInput.current?.click()}>Upload Phase 2 documents</Button><ul className="mt-4 space-y-2">{documentFiles.length ? documentFiles.map((file) => <li key={file.id} className="flex items-center justify-between gap-3 rounded border border-line px-3 py-2 text-sm"><span className="truncate">{file.originalName}</span><Button size="sm" variant="ghost" onClick={() => deleteFile.mutate({ fileId: file.id })}>Remove</Button></li>) : <li className="text-sm text-muted">No Phase 2 documents yet.</li>}</ul></Card>
-      <Card><CardHeader title="Phase 2 audio recording" description="Record an in-browser WebM audio update. Audio files cannot be uploaded from your device." /><Button className="mt-4" leadingIcon={<Mic className="size-4" />} variant={recording ? "danger" : "primary"} busy={uploading} onClick={() => recording ? stopRecording() : setMicrophoneOpen(true)}>{recording ? `Stop recording (${seconds}s)` : "Record Phase 2 audio"}</Button><ul className="mt-4 space-y-2">{audioFiles.length ? audioFiles.map((file) => <li key={file.id} className="flex items-center justify-between gap-3 rounded border border-line px-3 py-2 text-sm"><span className="truncate"><FileAudio className="mr-1 inline size-4" />{file.originalName} <Badge tone="teal">WebM recording</Badge></span><Button size="sm" variant="ghost" onClick={() => deleteFile.mutate({ fileId: file.id })}>Remove</Button></li>) : <li className="text-sm text-muted">No Phase 2 audio recording yet.</li>}</ul></Card></div>
+    <Alert tone={phaseLocked ? "warning" : "info"} className="mb-6">{phaseLocked ? "Phase 2 is submitted and locked. Contact your project team if it must be reopened." : "Your files are stored only after successful upload confirmation. You may remove your own materials until you submit and lock this phase."}</Alert>
+    <div className="grid gap-6 lg:grid-cols-2"><Card><CardHeader title="Phase 2 documents" description="Upload supporting documents requested by your project team." />{!phaseLocked ? <><input ref={fileInput} type="file" className="hidden" multiple onChange={(event) => void upload(event.target.files)} /><Button className="mt-4" leadingIcon={<Upload className="size-4" />} busy={uploading} onClick={() => fileInput.current?.click()}>Upload Phase 2 documents</Button></> : null}<ul className="mt-4 space-y-2">{documentFiles.length ? documentFiles.map((file) => <li key={file.id} className="flex items-center justify-between gap-3 rounded border border-line px-3 py-2 text-sm"><span className="truncate">{file.originalName}</span>{!phaseLocked ? <Button size="sm" variant="ghost" onClick={() => deleteFile.mutate({ fileId: file.id })}>Remove</Button> : <Badge tone="neutral">Locked</Badge>}</li>) : <li className="text-sm text-muted">No Phase 2 documents yet.</li>}</ul></Card>
+      <Card><CardHeader title="Phase 2 audio recording" description="Record an in-browser WebM audio update. Audio files cannot be uploaded from your device." />{!phaseLocked ? <Button className="mt-4" leadingIcon={<Mic className="size-4" />} variant={recording ? "danger" : "primary"} busy={uploading} onClick={() => recording ? stopRecording() : setMicrophoneOpen(true)}>{recording ? `Stop recording (${seconds}s)` : "Record Phase 2 audio"}</Button> : null}<ul className="mt-4 space-y-2">{audioFiles.length ? audioFiles.map((file) => <li key={file.id} className="flex items-center justify-between gap-3 rounded border border-line px-3 py-2 text-sm"><span className="truncate"><FileAudio className="mr-1 inline size-4" />{file.originalName} <Badge tone="teal">WebM recording</Badge></span>{!phaseLocked ? <Button size="sm" variant="ghost" onClick={() => deleteFile.mutate({ fileId: file.id })}>Remove</Button> : <Badge tone="neutral">Locked</Badge>}</li>) : <li className="text-sm text-muted">No Phase 2 audio recording yet.</li>}</ul></Card>{!phaseLocked ? <Card className="lg:col-span-2"><CardHeader title="Submit Phase 2" description="Review your files and recording before submitting. Submission locks this phase." /><Button className="mt-4" onClick={() => { setAcknowledged(false); setSubmissionOpen(true); }}>Submit and lock Phase 2</Button></Card> : null}</div>
     <Modal open={microphoneOpen} onClose={() => setMicrophoneOpen(false)} title="Allow microphone access" description="Your browser will ask for microphone permission for this Phase 2 recording."><div className="space-y-4"><Alert tone="info">Select <strong>Allow microphone</strong> in the browser prompt. The recording is not uploaded until you stop it.</Alert><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setMicrophoneOpen(false)}>Cancel</Button><Button onClick={() => void beginRecording()}>Allow microphone and record</Button></div></div></Modal>
+    <Modal open={submissionOpen} onClose={() => setSubmissionOpen(false)} title="Submit and lock Phase 2" description="Only an administrator can reopen this phase after confirmation."><div className="space-y-4"><Alert tone="warning">{submissionNotice}</Alert><label className="flex cursor-pointer items-start gap-2 rounded-lg border border-line p-3 text-sm"><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} className="mt-1" /><span>I acknowledge that I cannot undo this submission myself.</span></label><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setSubmissionOpen(false)}>Cancel</Button><Button busy={submitPhase.isPending} disabled={!acknowledged} onClick={() => submitPhase.mutate({ orderId, phaseKey: "phase_2", acknowledgementText: submissionNotice })}>Submit and lock</Button></div></div></Modal>
   </>;
 }

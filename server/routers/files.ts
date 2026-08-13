@@ -11,7 +11,7 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
-import { fileAccessLog, files, orders, intakeSubmissions, users } from "../db/schema.js";
+import { fileAccessLog, files, orders, intakeSubmissions, orderPhaseLocks, users } from "../db/schema.js";
 import { recordSecurityEvent, recordActivity } from "../observability/audit.js";
 import { OrderStateError, assertOrderAccess } from "../services/orders.js";
 import { allowedExtensions } from "../services/storage.js";
@@ -253,7 +253,17 @@ export const filesRouter = router({
             throw new TRPCError({ code: "FORBIDDEN", message: "You do not own this file." });
           }
           
-          // Check if intake is already submitted
+          const activePhaseLocks = await db
+            .select({ id: orderPhaseLocks.id })
+            .from(orderPhaseLocks)
+            .where(and(eq(orderPhaseLocks.orderId, file.orderId), eq(orderPhaseLocks.phaseKey, file.phase ?? "phase_1"), isNull(orderPhaseLocks.unlockedAt)))
+            .limit(1);
+          if (activePhaseLocks[0]) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "This workflow phase has been submitted and locked. Ask an administrator to unlock it before removing files." });
+          }
+
+          // Retain the legacy Phase 1 intake lock for orders not yet using
+          // configurable phase locks.
           const intakeRows = await db
             .select({ status: intakeSubmissions.status })
             .from(intakeSubmissions)

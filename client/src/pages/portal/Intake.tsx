@@ -66,6 +66,7 @@ export function IntakePage() {
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const audioChunks = useRef<Blob[]>([]);
   const recordingInterval = useRef<NodeJS.Timeout | null>(null);
+  const [pendingPitch, setPendingPitch] = useState<{ file: File; previewUrl: string } | null>(null);
 
   useEffect(() => {
     let permissionStatus: PermissionStatus | undefined;
@@ -79,6 +80,10 @@ export function IntakePage() {
     }).catch(() => setMicrophonePermission("unknown"));
     return () => { cancelled = true; if (permissionStatus) permissionStatus.onchange = null; };
   }, []);
+
+  useEffect(() => () => {
+    if (pendingPitch) URL.revokeObjectURL(pendingPitch.previewUrl);
+  }, [pendingPitch]);
 
   // Hydrate the form once from the saved draft.
   useEffect(() => {
@@ -131,8 +136,8 @@ export function IntakePage() {
     return match && match[1] ? decodeURIComponent(match[1]) : null;
   };
 
-  const handleUpload = async (selected: FileList | File[] | null, isAudio = false) => {
-    if (!selected || selected.length === 0) return;
+  const handleUpload = async (selected: FileList | File[] | null, isAudio = false): Promise<boolean> => {
+    if (!selected || selected.length === 0) return false;
     setUploading(true);
     try {
       type UploadPayload = {
@@ -169,6 +174,7 @@ export function IntakePage() {
 
       if (!result.response.ok) {
         toast.error("Upload rejected", result.payload.error ?? "The upload could not be processed.");
+        return false;
       } else {
         const accepted = result.payload.files?.length ?? 0;
         toast.success(`${accepted} file${accepted === 1 ? "" : "s"} uploaded`);
@@ -179,9 +185,11 @@ export function IntakePage() {
           );
         }
         await orderFiles.refetch();
+        return accepted > 0;
       }
     } catch (err) {
       toast.error("Upload failed", "A network error occurred. Please try again.");
+      return false;
     } finally {
       setUploading(false);
       if (fileInput.current) fileInput.current.value = "";
@@ -283,7 +291,10 @@ export function IntakePage() {
         toast.error("Microphone unavailable", "No enabled microphone was found. Choose an input device in your browser or operating-system settings and try again.");
         return;
       }
-      const recorder = new MediaRecorder(stream, MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? { mimeType: "audio/webm;codecs=opus" } : undefined);
+      const recorderMimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
+      const recorder = new MediaRecorder(stream, { mimeType: recorderMimeType });
       mediaRecorder.current = recorder;
       audioChunks.current = [];
 
@@ -293,9 +304,21 @@ export function IntakePage() {
 
       recorder.onstop = () => {
         const audioBlob = new Blob(audioChunks.current, { type: "audio/webm" });
-        const file = new File([audioBlob], `pitch-recording-${formatDateTime(new Date()).replace(/[^a-zA-Z0-9]/g, "-")}.webm`, { type: "audio/webm" });
-        void handleUpload([file], true);
         stream.getTracks().forEach(track => track.stop());
+        if (audioBlob.size === 0) {
+          toast.error("Recording was empty", "No audio data was captured. Check your selected microphone and try again.");
+          return;
+        }
+        const file = new File(
+          [audioBlob],
+          `pitch-recording-${formatDateTime(new Date()).replace(/[^a-zA-Z0-9]/g, "-")}.webm`,
+          { type: "audio/webm" },
+        );
+        setPendingPitch((current) => {
+          if (current) URL.revokeObjectURL(current.previewUrl);
+          return { file, previewUrl: URL.createObjectURL(audioBlob) };
+        });
+        toast.success("Recording ready to review", "Play it back, then upload it or discard and record again.");
       };
 
       recorder.start();
@@ -568,12 +591,13 @@ export function IntakePage() {
             <div>
               <p className="text-sm font-medium text-ink">Business Pitch Idea</p>
               <p className="mt-1 text-xs text-muted">Record directly from your microphone in WebM format. Up to {limits?.maxPitchRecordings ?? 1} recording{(limits?.maxPitchRecordings ?? 1) === 1 ? "" : "s"}, maximum {Math.ceil((limits?.maxPitchLengthSeconds ?? 300) / 60)} minutes each.</p>
-              {!readOnly && pitches.length < (limits?.maxPitchRecordings ?? 1) ? (
+              {!readOnly && pitches.length < (limits?.maxPitchRecordings ?? 1) && !pendingPitch ? (
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <Button variant={recording ? "danger" : "primary"} onClick={() => recording ? stopRecording() : beginPitchRecording()} disabled={uploading}>{recording ? `Stop recording (${recordingTime}s)` : "Record Business Pitch Idea"}</Button>
                   {microphonePreflightEnabled && !recording ? <Button variant="outline" onClick={() => openPreflight(false)} disabled={uploading}>Test microphone</Button> : null}
                 </div>
               ) : null}
+              {pendingPitch ? <div className="mt-3 space-y-3 rounded-lg border border-teal/40 bg-teal/5 p-3"><div><p className="text-sm font-semibold text-ink">Review your WebM recording</p><p className="mt-1 text-xs text-muted">This recording remains in your browser until you choose Upload. You may discard it and record again.</p></div><audio className="w-full" controls preload="metadata" src={pendingPitch.previewUrl}>Your browser cannot play this recording.</audio><div className="flex flex-wrap gap-2"><Button busy={uploading} onClick={() => void (async () => { const uploaded = await handleUpload([pendingPitch.file], true); if (uploaded) { URL.revokeObjectURL(pendingPitch.previewUrl); setPendingPitch(null); } })()}>Upload WebM recording</Button><Button variant="outline" disabled={uploading} onClick={() => { URL.revokeObjectURL(pendingPitch.previewUrl); setPendingPitch(null); }}>Discard recording</Button></div></div> : null}
               <ul className="mt-3 space-y-2 text-sm">{pitches.map((file) => <li key={file.id} className="flex items-center justify-between gap-2 rounded border border-line px-3 py-2"><span className="truncate">{file.originalName} <Badge tone="teal">WebM recording</Badge></span>{!readOnly && <Button size="sm" variant="ghost" onClick={() => deleteFileMut.mutate({ fileId: file.id })}>Remove</Button>}</li>)}</ul>
             </div>
           </div>
@@ -665,8 +689,9 @@ export function IntakePage() {
 
         {!readOnly ? (
           <Card id="intake-confirmAccurate">
+            <Alert tone="warning" className="mb-4">Submitting Phase 1 locks your customer documents, WebM recording, and answers. You may remove or replace your own materials until you submit. After submission, only an administrator can confirm an unlock.</Alert>
             <Checkbox
-              label="I confirm that the information I have provided is accurate and complete to the best of my knowledge."
+              label="I confirm that the information I have provided is accurate and complete to the best of my knowledge, and I acknowledge that submitting this intake locks Phase 1 until an administrator confirms an unlock."
               checked={confirmAccurate}
               onChange={(event) => {
                 setConfirmAccurate(event.target.checked);
@@ -680,7 +705,7 @@ export function IntakePage() {
                 onClick={validateAndSubmit}
                 leadingIcon={<Send className="size-4" aria-hidden="true" />}
               >
-                Submit intake
+                Submit and lock Phase 1
               </Button>
               <Button variant="outline" busy={save.isPending} onClick={saveDraft}>
                 Save and finish later
