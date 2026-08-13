@@ -23,7 +23,7 @@ import { processEmailQueue } from "./email.js";
 
 import { invalidateIpCaches, purgeExpiredBlacklistEntries } from "../security/ipBlacklist.js";
 import { getSettingNumber, invalidateSettingsCache } from "./settings.js";
-import { processPhaseJobs, deliverWebhooks } from "./sharepoint.js";
+import { processPhaseJobs, processPendingFileSyncs, deliverWebhooks } from "./sharepoint.js";
 
 interface Job {
   name: string;
@@ -174,6 +174,12 @@ const JOBS: Job[] = [
     intervalMs: 60_000,
     initialDelayMs: 15_000,
     run: processPhaseJobs,
+  },
+  {
+    name: "sharepoint_file_sync",
+    intervalMs: 60_000,
+    initialDelayMs: 25_000,
+    run: processPendingFileSyncs,
   },
   {
     name: "webhook_delivery",

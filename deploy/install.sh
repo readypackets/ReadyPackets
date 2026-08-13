@@ -107,7 +107,7 @@ if [[ "$SKIP_PACKAGES" == "false" ]]; then
   apt-get update -qq
   apt-get install -y --no-install-recommends \
     ca-certificates curl gnupg git build-essential python3 \
-    mysql-server nginx nginx-extras ufw fail2ban unzip
+    mysql-server nginx nginx-extras ufw fail2ban unzip ffmpeg
 
   if ! command -v node >/dev/null 2>&1 || \
      [[ "$(node --version | sed 's/v\([0-9]*\).*/\1/')" -lt "$NODE_MAJOR" ]]; then

@@ -206,6 +206,7 @@ export const filesRouter = router({
           originalName: files.originalName,
           extension: files.extension,
           sizeBytes: files.sizeBytes,
+          durationSeconds: files.durationSeconds,
           category: files.category,
           phase: files.phase,
           visibleToCustomer: files.visibleToCustomer,

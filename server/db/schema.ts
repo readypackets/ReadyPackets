@@ -682,6 +682,8 @@ export const files = mysqlTable(
     detectedMime: varchar("detected_mime", { length: 128 }).notNull(),
     extension: varchar("extension", { length: 16 }),
     sizeBytes: int("size_bytes").notNull(),
+    /** Server-probed audio duration in whole seconds; null for non-audio or legacy files. */
+    durationSeconds: int("duration_seconds"),
     sha256: varchar("sha256", { length: 64 }).notNull(),
     category: varchar("category", { length: 32 }).notNull().default("deliverable"),
     /** Lifecycle phase assigned by the intake or staff workflow. */

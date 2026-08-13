@@ -19,6 +19,8 @@ import { CSRF_COOKIE, CSRF_HEADER } from "../security/csrf.js";
 import { constantTimeEqual } from "../security/crypto.js";
 import { putObject, validateUpload } from "../services/storage.js";
 import { buildOrderFileName } from "../services/fileNaming.js";
+import { probeAudioDurationSeconds } from "../services/audioDuration.js";
+import { queueOrderFileSharePointSync } from "../services/sharepoint.js";
 import { logger } from "../observability/logger.js";
 import { recordActivity, recordSecurityEvent } from "../observability/audit.js";
 import { assertCustomerWorkflowStageAccess, assertOrderAccess, OrderStateError } from "../services/orders.js";
@@ -149,9 +151,9 @@ export function createUploadRouter(): Router {
           return;
         }
       }
-      type StageUploadLimits = { documentMaxFiles?: unknown; documentMaxSizeMb?: unknown; audioMaxFiles?: unknown; audioMaxSizeMb?: unknown };
+      type StageUploadLimits = { documentMaxFiles?: unknown; documentMaxSizeMb?: unknown; audioMaxFiles?: unknown; audioMaxSizeMb?: unknown; recordingMaxDurationSeconds?: unknown; audioTotalDurationSeconds?: unknown };
       let stageCapabilities: string[] | null = null;
-      let stageUploadLimits: { documentMaxFiles?: number; documentMaxSizeMb?: number; audioMaxFiles?: number; audioMaxSizeMb?: number } | null = null;
+      let stageUploadLimits: { documentMaxFiles?: number; documentMaxSizeMb?: number; audioMaxFiles?: number; audioMaxSizeMb?: number; recordingMaxDurationSeconds?: number; audioTotalDurationSeconds?: number } | null = null;
       if (requestedPhase && phase !== "unassigned") {
         const orderRows = await db.select({ workflowId: orders.workflowId }).from(orders).where(and(eq(orders.id, orderId), isNull(orders.deletedAt))).limit(1);
         const workflowId = orderRows[0]?.workflowId;
@@ -185,6 +187,8 @@ export function createUploadRouter(): Router {
             documentMaxSizeMb: limit(rawLimits.documentMaxSizeMb, 100),
             audioMaxFiles: limit(rawLimits.audioMaxFiles, 50),
             audioMaxSizeMb: limit(rawLimits.audioMaxSizeMb, 100),
+            recordingMaxDurationSeconds: limit(rawLimits.recordingMaxDurationSeconds, 7_200),
+            audioTotalDurationSeconds: limit(rawLimits.audioTotalDurationSeconds, 7_200),
           };
         }
       }
@@ -219,12 +223,15 @@ export function createUploadRouter(): Router {
 
       let existingDocumentCount = 0;
       let existingAudioCount = 0;
-      if (stageUploadLimits && (stageUploadLimits.documentMaxFiles || stageUploadLimits.audioMaxFiles)) {
-        const existingRows = await db.select({ detectedMime: files.detectedMime }).from(files).where(and(eq(files.orderId, orderId), eq(files.phase, phase), isNull(files.deletedAt), eq(files.isPlaceholder, false)));
+      let existingAudioDurationSeconds = 0;
+      if (stageUploadLimits && (stageUploadLimits.documentMaxFiles || stageUploadLimits.audioMaxFiles || stageUploadLimits.audioTotalDurationSeconds)) {
+        const existingRows = await db.select({ detectedMime: files.detectedMime, durationSeconds: files.durationSeconds }).from(files).where(and(eq(files.orderId, orderId), eq(files.phase, phase), isNull(files.deletedAt), eq(files.isPlaceholder, false)));
         for (const row of existingRows) {
           const audio = row.detectedMime.startsWith("audio/") || row.detectedMime === "video/webm" || row.detectedMime === "video/ogg";
-          if (audio) existingAudioCount += 1;
-          else existingDocumentCount += 1;
+          if (audio) {
+            existingAudioCount += 1;
+            existingAudioDurationSeconds += Math.max(0, row.durationSeconds ?? 0);
+          } else existingDocumentCount += 1;
         }
       }
 
@@ -282,6 +289,20 @@ export function createUploadRouter(): Router {
         }
         const detectedMime = recordedPitch ? "audio/webm" : (validation.mime ?? "application/octet-stream");
         const countsAsAudio = recordedPitch || isAudio || prerecordedAudio;
+        const audioDurationSeconds = countsAsAudio ? await probeAudioDurationSeconds(file.buffer, validation.extension ?? "") : null;
+        const durationGoverned = Boolean(stageUploadLimits?.recordingMaxDurationSeconds || stageUploadLimits?.audioTotalDurationSeconds);
+        if (countsAsAudio && durationGoverned && !audioDurationSeconds) {
+          rejected.push({ name: file.originalname, reason: "The recording duration could not be verified, so this governed audio file was not accepted." });
+          continue;
+        }
+        if (recordedPitch && stageUploadLimits?.recordingMaxDurationSeconds && audioDurationSeconds && audioDurationSeconds > stageUploadLimits.recordingMaxDurationSeconds) {
+          rejected.push({ name: file.originalname, reason: `This WebM recording is ${audioDurationSeconds} seconds; this phase allows up to ${stageUploadLimits.recordingMaxDurationSeconds} seconds per browser recording.` });
+          continue;
+        }
+        if (!replaceFileId && stageUploadLimits?.audioTotalDurationSeconds && audioDurationSeconds && existingAudioDurationSeconds + audioDurationSeconds > stageUploadLimits.audioTotalDurationSeconds) {
+          rejected.push({ name: file.originalname, reason: `This phase allows ${stageUploadLimits.audioTotalDurationSeconds} total audio seconds. Remove an existing recording or choose a shorter recording.` });
+          continue;
+        }
         const maxFiles = countsAsAudio ? stageUploadLimits?.audioMaxFiles : stageUploadLimits?.documentMaxFiles;
         const maxSizeMb = countsAsAudio ? stageUploadLimits?.audioMaxSizeMb : stageUploadLimits?.documentMaxSizeMb;
         const existingCount = countsAsAudio ? existingAudioCount : existingDocumentCount;
@@ -335,6 +356,7 @@ export function createUploadRouter(): Router {
                   detectedMime,
                   extension: validation.extension ?? null,
                   sizeBytes: stored.sizeBytes,
+                  durationSeconds: audioDurationSeconds,
                   sha256: stored.sha256,
                   version: existing.version + 1,
                   isPlaceholder: false,
@@ -348,6 +370,7 @@ export function createUploadRouter(): Router {
                 detectedMime,
               });
 
+              void queueOrderFileSharePointSync(existing.id).catch((error) => logger.warn("SharePoint file sync could not be queued", { fileId: existing.id, error }));
               void recordActivity({
                 actorUserId: session.user.id,
                 actorRole: session.user.role,
@@ -370,6 +393,7 @@ export function createUploadRouter(): Router {
             detectedMime,
             extension: validation.extension ?? null,
             sizeBytes: stored.sizeBytes,
+            durationSeconds: audioDurationSeconds,
             sha256: stored.sha256,
             category,
             phase,
@@ -403,9 +427,12 @@ export function createUploadRouter(): Router {
             sizeBytes: stored.sizeBytes,
             detectedMime,
           });
-          if (countsAsAudio) existingAudioCount += 1;
-          else existingDocumentCount += 1;
+          if (countsAsAudio) {
+            existingAudioCount += 1;
+            existingAudioDurationSeconds += audioDurationSeconds ?? 0;
+          } else existingDocumentCount += 1;
 
+          void queueOrderFileSharePointSync(fileId).catch((error) => logger.warn("SharePoint file sync could not be queued", { fileId, error }));
           void recordActivity({
             actorUserId: session.user.id,
             actorRole: session.user.role,
@@ -413,7 +440,7 @@ export function createUploadRouter(): Router {
             entityType: "file",
             entityId: fileId,
             summary: `Uploaded "${canonicalOriginalName}" (${category})`,
-            changes: { sizeBytes: stored.sizeBytes, orderId, phase },
+            changes: { sizeBytes: stored.sizeBytes, durationSeconds: audioDurationSeconds, orderId, phase },
             ipAddress: (res.locals.clientIp as string | undefined) ?? null,
           });
         } catch (error) {

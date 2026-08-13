@@ -20,6 +20,7 @@ import { db } from "../db/client.js";
 import {
   files,
   orders,
+  orderWorkflows,
   phaseJobs,
   phaseKickoffConfigs,
   webhookDeliveries,
@@ -34,6 +35,7 @@ import { decryptField } from "../security/crypto.js";
 import { getSetting } from "./settings.js";
 import { getUserById, displayNameOf } from "../db/users.js";
 import { buildOrderFileName } from "./fileNaming.js";
+import { getObjectBuffer } from "./storage.js";
 import type { OrderStatus } from "../../shared/domain.js";
 
 // ---------------------------------------------------------------------------
@@ -342,6 +344,85 @@ async function uploadPlaceholder(folderId: string, fileName: string, content: st
   return uploadTextFile(folderId, fileName, content);
 }
 
+async function uploadBinaryFile(folderId: string, fileName: string, content: Buffer, contentType: string): Promise<string> {
+  const { driveId } = await getGraphRuntimeConfig();
+  if (!driveId) throw new Error("GRAPH_SHAREPOINT_DRIVE_ID must be set.");
+  const token = await getGraphToken();
+  const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}:/content`;
+  const body = content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength) as ArrayBuffer;
+  const response = await fetch(url, { method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Type": contentType }, body });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`SharePoint binary upload failed (${response.status}): ${text.slice(0, 300)}`);
+  }
+  const data = (await response.json()) as { id: string };
+  return data.id;
+}
+
+type WorkflowSharePointStage = { key?: unknown; sharePointDestination?: unknown };
+
+function workflowStageKeyForPhase(phase: string): string {
+  return phase === "phase_1" ? "phase_1_intake" : phase === "phase_2" ? "phase_2_synthesis" : phase;
+}
+
+function normalizeSharePointRelativePath(value: string): string {
+  const normalized = value.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  if (!normalized || normalized.length > 240 || normalized.includes("..")) throw new Error("The SharePoint stage destination must be a relative folder path without dot segments.");
+  const segments = normalized.split("/");
+  if (segments.some((segment) => !segment || !/^[A-Za-z0-9 _().-]{1,96}$/.test(segment))) throw new Error("The SharePoint stage destination contains unsupported folder characters.");
+  return segments.join("/");
+}
+
+async function resolveOrderStageFolder(orderId: number, phase: string, graphConfig: GraphRuntimeConfig): Promise<{ folderPath: string; orderNumber: string }> {
+  const rows = await db.select({ orderNumber: orders.orderNumber, userId: orders.userId, workflowId: orders.workflowId }).from(orders).where(eq(orders.id, orderId)).limit(1);
+  const order = rows[0];
+  if (!order) throw new Error("Order not found for SharePoint synchronization.");
+  const customer = await getUserById(order.userId);
+  const customerFolder = customer?.customerNumber ?? `RP-CUST-${String(order.userId).padStart(6, "0")}`;
+  const stageRows = order.workflowId ? await db.select({ stages: orderWorkflows.stages }).from(orderWorkflows).where(eq(orderWorkflows.id, order.workflowId)).limit(1) : [];
+  const stages = Array.isArray(stageRows[0]?.stages) ? stageRows[0]!.stages as WorkflowSharePointStage[] : [];
+  const stageKey = workflowStageKeyForPhase(phase);
+  const configuredDestination = stages.find((stage) => stage.key === stageKey)?.sharePointDestination;
+  const fallback = DEFAULT_FOLDER_TEMPLATES[stageKey]?.find((path) => /\/(Docs|Audio|Client_Facing|Context)$/i.test(path)) ?? `Workflow/${stageKey}/Files`;
+  const destination = normalizeSharePointRelativePath(typeof configuredDestination === "string" && configuredDestination.trim() ? configuredDestination : fallback);
+  return { folderPath: `${graphConfig.rootFolderPath}/customers/${customerFolder}/orders/${order.orderNumber}/${destination}`, orderNumber: order.orderNumber };
+}
+
+/** Queue an accepted local order file for asynchronous Graph synchronization when SharePoint is configured. */
+export async function queueOrderFileSharePointSync(fileId: number): Promise<void> {
+  const graphConfig = await getGraphRuntimeConfig();
+  if (!graphConfig.enabled) return;
+  const rows = await db.select({ id: files.id, orderId: files.orderId, phase: files.phase, originalName: files.originalName, isPlaceholder: files.isPlaceholder }).from(files).where(eq(files.id, fileId)).limit(1);
+  const file = rows[0];
+  if (!file?.orderId || file.isPlaceholder) return;
+  const { folderPath } = await resolveOrderStageFolder(file.orderId, file.phase, graphConfig);
+  await db.insert(sharepointSyncLog).values({ orderId: file.orderId, fileId: file.id, operationType: "file_sync", status: "pending", sharepointPath: `${folderPath}/${file.originalName}`, attempts: 0 });
+}
+
+/** Process bounded pending file uploads so customer requests never wait on Microsoft Graph. */
+export async function processPendingFileSyncs(): Promise<void> {
+  const graphConfig = await getGraphRuntimeConfig();
+  if (!graphConfig.enabled) return;
+  const pending = await db.select().from(sharepointSyncLog).where(and(eq(sharepointSyncLog.operationType, "file_sync"), eq(sharepointSyncLog.status, "pending"), sql`${sharepointSyncLog.fileId} IS NOT NULL`, sql`${sharepointSyncLog.attempts} < 5`)).limit(10);
+  for (const log of pending) {
+    await db.update(sharepointSyncLog).set({ status: "running", attempts: log.attempts + 1 }).where(eq(sharepointSyncLog.id, log.id));
+    try {
+      const fileRows = await db.select({ id: files.id, orderId: files.orderId, phase: files.phase, originalName: files.originalName, storageKey: files.storageKey, detectedMime: files.detectedMime, deletedAt: files.deletedAt }).from(files).where(eq(files.id, log.fileId!)).limit(1);
+      const file = fileRows[0];
+      if (!file?.orderId || file.deletedAt) throw new Error("The queued order file is no longer available for synchronization.");
+      const { folderPath, orderNumber } = await resolveOrderStageFolder(file.orderId, file.phase, graphConfig);
+      const folderId = await ensureFolder(folderPath);
+      await uploadBinaryFile(folderId, file.originalName, await getObjectBuffer(file.storageKey), file.detectedMime);
+      await db.update(sharepointSyncLog).set({ status: "succeeded", sharepointPath: `${folderPath}/${file.originalName}`, errorMessage: null }).where(eq(sharepointSyncLog.id, log.id));
+      void recordActivity({ actorUserId: null, action: "sharepoint.file_synced", entityType: "file", entityId: file.id, summary: `Synchronized ${file.originalName} to SharePoint for ${orderNumber}` });
+    } catch (error) {
+      const attempts = log.attempts + 1;
+      await db.update(sharepointSyncLog).set({ status: attempts >= 5 ? "failed" : "pending", errorMessage: error instanceof Error ? error.message.slice(0, 800) : String(error).slice(0, 800) }).where(eq(sharepointSyncLog.id, log.id));
+      logger.warn("sharepoint.file_sync.failed", { logId: log.id, fileId: log.fileId, attempt: attempts, error });
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Phase kickoff automation
 // ---------------------------------------------------------------------------
@@ -383,7 +464,7 @@ export async function exportIntakeMarkdownToPhaseTwo(orderId: number, markdown: 
   const customerFolder = customer?.customerNumber ?? `RP-CUST-${String(order.userId).padStart(6, "0")}`;
   const customerPublicId = customer?.publicId ?? customerFolder;
   const intakeFileName = buildOrderFileName({ customerPublicId, orderNumber: order.orderNumber, sourceName: "INTAKE_ANSWERS.md" });
-  const folderPath = `${graphConfig.rootFolderPath}/customers/${customerFolder}/orders/${order.orderNumber}/Phase II/Docs`;
+  const { folderPath } = await resolveOrderStageFolder(orderId, "phase_2_synthesis", graphConfig);
   const logInsert = await db.insert(sharepointSyncLog).values({
     orderId,
     operationType: "intake_markdown",
@@ -601,9 +682,10 @@ async function jobCreateFolders(orderId: number, phase: string): Promise<void> {
     [];
 
   const orderRoot = `${graphConfig.rootFolderPath}/customers/${customerFolder}/orders/${orderNumber}`;
+  const { folderPath: configuredStageFolder } = await resolveOrderStageFolder(orderId, phase, graphConfig);
+  const folderPaths = new Set([...folderTemplate.map((subFolder) => `${orderRoot}/${subFolder}`), configuredStageFolder]);
 
-  for (const subFolder of folderTemplate) {
-    const folderPath = `${orderRoot}/${subFolder}`;
+  for (const folderPath of folderPaths) {
     await ensureFolder(folderPath);
     
     // Log to the sharepoint_sync_log table
@@ -645,8 +727,7 @@ async function jobAttachPlaceholders(orderId: number, phase: string): Promise<vo
   const customerPublicId = customer?.publicId ?? customerFolder;
 
   const placeholders = DEFAULT_PLACEHOLDERS[phase] ?? [];
-  const phaseFolder = phase === "phase_1_intake" ? "Phase I/Docs" : phase === "phase_2_synthesis" ? "Phase II/Docs" : phase === "in_production" ? "Phase III/Context" : "Phase IV/Internal_Audit";
-  const folderPath = `${graphConfig.rootFolderPath}/customers/${customerFolder}/orders/${orderNumber}/${phaseFolder}`;
+  const { folderPath } = await resolveOrderStageFolder(orderId, phase, graphConfig);
 
   let folderId: string;
   try {

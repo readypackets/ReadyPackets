@@ -2243,3 +2243,18 @@ All order workflows are now persisted as `wizard` presentation through migration
 
 
 **Follow-up publication completed:** The guided-workflow legacy-route fix was published as `5c1be6c0bc2660cf225db28f23884b55d0b35178`; production `RELEASE_COMMIT` now matches and the portal health check remained `{"status":"ok"}`.
+
+
+## 2026-08-13 — Workflow governance, audio-duration, and SharePoint routing release
+
+**User request:** Correct the workflow stage-key input that lost focus after one character; add per-recording and cumulative audio duration limits; and permit each workflow stage to define where its order files synchronize within SharePoint.
+
+**Delivered:**
+
+- Replaced the workflow editor card key derived from the editable stage key with the stable stage order. Editing a stage key no longer remounts the focused field or scrolls the editor.
+- Added per-stage `recordingMaxDurationSeconds` and `audioTotalDurationSeconds` controls to the workflow upload-governance UI and validation contract. Browser recording controls display limits and auto-stop at the available duration; server-side `ffprobe` measures accepted audio and independently rejects recordings that exceed per-recording or cumulative limits.
+- Added `files.duration_seconds` through migration `0033_file_audio_durations.sql`, backfilled six existing audio files successfully with zero unresolved files, and exposes duration to the customer workflow workspace.
+- Added durable, background Microsoft Graph synchronization for future accepted customer and staff order files. Each workflow stage can define a safe relative `sharePointDestination`; blank destinations retain phase defaults. File transfers are queued in `sharepoint_sync_log`, processed with bounded retries, and use the configured order/customer root without returning Graph secrets or file content to configuration pages.
+- Updated native and Docker installation paths to include `ffmpeg`/`ffprobe` for server-side duration validation. Production installed `ffmpeg` because the prior host did not contain `/usr/bin/ffprobe`; Ubuntu reported a pending kernel update but did not reboot the host.
+
+**Validation and deployment:** TypeScript validation passed; the automated suite passed 155/155 tests; production health returned `{"status":"ok"}`; migration `0033` was applied; and server/client rollback copies were retained under `/opt/readypackets/rollback-20260813165944-workflow-governance`.
