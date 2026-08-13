@@ -1,0 +1,51 @@
+[Unit]
+Description=ReadyPackets protected backup control socket daemon
+Documentation=file:/opt/readypackets/docs/DEPLOYMENT_AND_INSTALL.md
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+Type=simple
+User=root
+# The daemon remains root-owned but creates its 0660 socket in this group so the
+# unprivileged web service can send allowlisted requests without sudo.
+Group=readypackets
+ExecStart=/usr/bin/node /opt/readypackets/deploy/backup-control-daemon.mjs
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+# The daemon stores cloud credentials only in root-owned /root/.config/rclone.
+# Its fixed action allowlist prevents browser-controlled path access.
+ProtectHome=false
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=true
+MemoryDenyWriteExecute=false
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RemoveIPC=true
+PrivateUsers=false
+ProtectSystem=full
+# Each path below exists before the namespace is created. Narrow child paths
+# cannot be listed when first created, so the fixed-action daemon uses their
+# existing parents for timer drop-ins and root rclone configuration.
+ReadWritePaths=/run /var/backups/readypackets /var/lib/readypackets /etc/readypackets /etc/systemd/system /root
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete @mount @swap @reboot @module @raw-io @debug @clock @cpu-emulation
+SystemCallArchitectures=native
+SystemCallErrorNumber=EPERM
+LimitNOFILE=1024
+LimitNPROC=64
+
+[Install]
+WantedBy=multi-user.target

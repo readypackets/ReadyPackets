@@ -487,15 +487,16 @@ install -m 0644 "${APP_DIR}/deploy/logrotate.conf" /etc/logrotate.d/readypackets
 log "Installing the nightly backup timer"
 install -m 0750 "${APP_DIR}/deploy/backup.sh" /usr/local/sbin/readypackets-backup
 install -m 0750 "${APP_DIR}/deploy/backup-control.sh" /usr/local/sbin/readypackets-backup-control
+chmod 0750 "${APP_DIR}/deploy/backup-control-daemon.mjs"
 install -m 0750 "${APP_DIR}/deploy/platform-upgrade-control.sh" /usr/local/sbin/readypackets-platform-update
 install -m 0750 "${APP_DIR}/deploy/auto-deploy-approved.sh" /usr/local/sbin/readypackets-auto-deploy-approved
 install -m 0644 "${APP_DIR}/deploy/readypackets-backup.service" /etc/systemd/system/
+install -m 0644 "${APP_DIR}/deploy/readypackets-backup-control.service" /etc/systemd/system/
 install -m 0644 "${APP_DIR}/deploy/readypackets-backup.timer" /etc/systemd/system/
-# The application can invoke only the allowlisted helper; the helper validates every
-# argument and keeps backup credentials/configuration out of the browser and app files.
-printf 'readypackets ALL=(root) NOPASSWD: /usr/local/sbin/readypackets-backup-control *\n' > /etc/sudoers.d/readypackets-backup-control
-chmod 0440 /etc/sudoers.d/readypackets-backup-control
-visudo -cf /etc/sudoers.d/readypackets-backup-control
+# Backups use a root-owned Unix-socket daemon with a fixed action allowlist.
+# The web service has no sudo rule for backup operations; it can reach only the
+# group-writable local socket and cannot pass arbitrary commands or paths.
+rm -f /etc/sudoers.d/readypackets-backup-control
 # Platform upgrades have a separate root-owned allowlisted helper. The web
 # service can request only status, validated approved upgrades, or rollback by
 # a recorded run ID; it cannot execute arbitrary shell commands.
@@ -509,6 +510,7 @@ install -d -m 0700 -o root -g root /var/lib/readypackets/platform-upgrades
 install -d -m 0750 -o root -g readypackets /var/backups/readypackets
 install -d -m 0750 -o root -g readypackets /var/lib/readypackets/storage/admin-exports
 systemctl daemon-reload
+systemctl enable --now readypackets-backup-control.service
 systemctl enable --now readypackets-backup.timer
 
 # Run one backup now. An untested backup is not a backup, and discovering that

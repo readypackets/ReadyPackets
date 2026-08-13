@@ -5,7 +5,7 @@
  * subscription plans, and API access logs.
  */
 import { TRPCError } from "@trpc/server";
-import { spawn } from "node:child_process";
+import net from "node:net";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { and, asc, count, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
@@ -538,20 +538,31 @@ const announcementsRouter = router({
 });
 
 // ── System backups ────────────────────────────────────────────────────────────
-const BACKUP_CONTROL = "/usr/local/sbin/readypackets-backup-control";
+const BACKUP_CONTROL_SOCKET = "/run/readypackets/backup-control.sock";
 const BACKUP_DIR = "/var/backups/readypackets";
 const BACKUP_EXPORT_DIR = "/var/lib/readypackets/storage/admin-exports";
 const BACKUP_FILENAME = /^readypackets-[0-9TZ-]+\\.tar\\.gz(?:\\.(?:age|gpg))?$/;
 
-function runBackupControl(args: string[], stdin?: string): Promise<string> {
+function parseBackupControl(output: string) {
+  return Object.fromEntries(output.split("\n").map((line) => line.split("=", 2)).filter(([key, value]) => Boolean(key) && value !== undefined));
+}
+
+function runBackupControl(args: string[], stdin = ""): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn("sudo", ["-n", BACKUP_CONTROL, ...args], { stdio: ["pipe", "pipe", "pipe"] });
-    let output = ""; let error = "";
-    child.stdout.on("data", (chunk) => { output += String(chunk); });
-    child.stderr.on("data", (chunk) => { error += String(chunk); });
-    child.once("error", reject);
-    child.once("close", (code) => code === 0 ? resolve(output.trim()) : reject(new Error(error.trim() || `Backup control exited with ${code}`)));
-    child.stdin.end(stdin ?? "");
+    const socket = net.createConnection({ path: BACKUP_CONTROL_SOCKET });
+    let response = "";
+    const timer = setTimeout(() => { socket.destroy(); reject(new Error("Backup control request timed out.")); }, 30_000);
+    socket.setEncoding("utf8");
+    socket.once("connect", () => socket.write(`${JSON.stringify({ action: args[0], args: args.slice(1), stdin })}\n`));
+    socket.on("data", (chunk) => { response += chunk; if (response.includes("\n")) socket.end(); });
+    socket.once("error", (error) => { clearTimeout(timer); reject(error); });
+    socket.once("close", () => {
+      clearTimeout(timer);
+      try {
+        const payload = JSON.parse(response.trim()) as { ok?: boolean; output?: string; error?: string };
+        payload.ok ? resolve(payload.output ?? "") : reject(new Error(payload.error ?? "Backup control rejected the request."));
+      } catch { reject(new Error("Backup control returned an invalid response.")); }
+    });
   });
 }
 
@@ -601,6 +612,23 @@ const systemBackupsRouter = router({
     void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "backup.cloud_targets_updated", entityType: "backup", entityId: 0, summary: `Administrator configured ${input.targets.length} cloud backup target(s)`, changes: { providers: input.targets.map((target) => target.provider) }, ipAddress: ctx.clientIp });
     return { ok: true as const };
   }),
+  configureCloudRemote: adminProcedure.input(z.object({
+    provider: z.enum(["Amazon S3", "Wasabi S3", "Backblaze B2", "Azure Blob Storage", "SharePoint", "Google Drive", "OneDrive", "Dropbox"]),
+    remote: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{1,63}$/),
+    destination: z.string().trim().max(512).regex(/^[A-Za-z0-9._/-]*$/, "Use a folder, bucket prefix, or container path without .. segments."),
+    accessKey: z.string().max(2048).optional(), secretKey: z.string().max(4096).optional(), region: z.string().max(256).optional(), endpoint: z.string().url().max(512).optional(),
+    account: z.string().max(2048).optional(), key: z.string().max(4096).optional(), clientId: z.string().max(2048).optional(), clientSecret: z.string().max(4096).optional(), tenant: z.string().max(2048).optional(), oauthToken: z.string().max(20_000).optional(),
+  })).mutation(async ({ ctx, input }) => {
+    const fields: Record<string, string> = { provider: input.provider, remote: input.remote, destination: input.destination, access_key: input.accessKey ?? "", secret_key: input.secretKey ?? "", region: input.region ?? "", endpoint: input.endpoint ?? "", account: input.account ?? "", key: input.key ?? "", client_id: input.clientId ?? "", client_secret: input.clientSecret ?? "", tenant: input.tenant ?? "", token_b64: input.oauthToken ? Buffer.from(input.oauthToken, "utf8").toString("base64") : "" };
+    const result = parseBackupControl(await runBackupControl(["configure-remote"], Object.entries(fields).map(([key, value]) => `${key}=${value}`).join("\n") + "\n"));
+    void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "backup.cloud_remote_configured", entityType: "backup", entityId: 0, severity: "warning", summary: `Administrator configured ${input.provider} backup remote ${input.remote}`, changes: { provider: input.provider, remote: input.remote, destination: result.destination ?? null }, ipAddress: ctx.clientIp });
+    return { provider: result.provider ?? input.provider, destination: result.destination ?? `${input.remote}:${input.destination}` };
+  }),
+  testCloudTarget: adminProcedure.input(z.object({ destination: z.string().trim().min(3).max(512).regex(/^[A-Za-z0-9._-]+:.+$/, "Use an rclone remote and destination path.") })).mutation(async ({ ctx, input }) => {
+    const result = parseBackupControl(await runBackupControl(["test-target", input.destination]));
+    void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "backup.cloud_target_tested", entityType: "backup", entityId: 0, summary: `Administrator tested cloud backup target ${input.destination}`, ipAddress: ctx.clientIp });
+    return { reachable: result.reachable === "true", destination: result.destination ?? input.destination };
+  }),
   exportConfiguration: adminProcedure.input(z.object({ passphrase: z.string().min(16).max(512) })).mutation(async ({ ctx, input }) => {
     const filename = await runBackupControl(["export-config"], `${input.passphrase}\\n`);
     void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "backup.configuration_exported", entityType: "backup", entityId: 0, severity: "warning", summary: "Administrator exported an encrypted configuration migration bundle", ipAddress: ctx.clientIp });
@@ -610,6 +638,21 @@ const systemBackupsRouter = router({
     const filename = await runBackupControl(["prepare-download", input.filename]);
     void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "backup.downloaded", entityType: "backup", entityId: 0, severity: "warning", summary: `Administrator prepared protected backup ${filename} for download`, ipAddress: ctx.clientIp });
     return readProtectedExport(filename);
+  }),
+  verifyArchive: adminProcedure.input(z.object({ filename: z.string().regex(BACKUP_FILENAME, "Invalid backup filename.") })).mutation(async ({ ctx, input }) => {
+    const verification = parseBackupControl(await runBackupControl(["verify-archive", input.filename]));
+    void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "backup.verified", entityType: "backup", entityId: 0, summary: `Administrator verified backup archive ${input.filename}`, ipAddress: ctx.clientIp });
+    return { archive: verification.archive ?? input.filename, databaseBytes: Number(verification.database_bytes ?? 0), includesFiles: verification.includes_files === "true" };
+  }),
+  restoreStatus: adminProcedure.query(async () => {
+    const status = parseBackupControl(await runBackupControl(["restore-status"]));
+    return { status: status.status ?? "unknown", unit: status.unit ?? null, archive: status.archive ?? null, mode: status.mode ?? null, started: status.started ?? null, result: status.result ?? null };
+  }),
+  startRestore: adminProcedure.input(z.object({ filename: z.string().regex(BACKUP_FILENAME, "Invalid backup filename."), confirmation: z.string().max(512) })).mutation(async ({ ctx, input }) => {
+    if (input.confirmation !== `RESTORE ${input.filename}`) throw new TRPCError({ code: "BAD_REQUEST", message: `Type RESTORE ${input.filename} to confirm production recovery.` });
+    const started = parseBackupControl(await runBackupControl(["start-restore", input.filename], `${input.confirmation}\n`));
+    void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "backup.restore_started", entityType: "backup", entityId: 0, severity: "warning", summary: `Administrator started production restore from ${input.filename}`, changes: { restoreUnit: started.unit ?? null }, ipAddress: ctx.clientIp });
+    return { unit: started.unit ?? null, archive: started.archive ?? input.filename };
   }),
   record: adminProcedure
     .input(z.object({

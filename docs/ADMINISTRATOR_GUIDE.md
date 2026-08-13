@@ -75,3 +75,22 @@ A confirmed paid or partially refunded order exposes an **Invoice** action in bo
 ## Activity replay public ID search
 
 Activity Replay accepts the opaque public customer/user reference in the form `RP-U-XXXXXXXXXXXX` for **Entity history**, **User timeline**, and **Advanced operational search**. Public ID resolution happens on the administrator-only server procedure before searching internal audit records. Legacy numeric IDs remain accepted for historical operational use, but new support and audit workflows should use public IDs.
+
+
+## Protected backups, recovery, and cloud destinations
+
+Open **Admin → Backups** to operate the protected backup workflow. The portal communicates with a root-owned local control daemon over a group-restricted Unix socket. The web application receives no backup `sudo` permission, no cloud credentials, and no direct root shell capability.
+
+| Administrative task | Required action |
+|---|---|
+| Create an archive | Select **Run backup now**. The protected job creates a database dump, uploaded-file archive, manifest, checksums, and required environment keys in root-owned local backup storage. |
+| Confirm archive integrity | Select **Verify** next to an unencrypted local archive. The system checks the archive, required database dump, manifest, checksums, and whether uploaded files are included. |
+| Download an archive | Select **Download**. The server copies the approved archive into protected export storage and records the administrator action. Browser delivery is limited to 50 MB. |
+| Restore production | Select **Restore** only after verification. Enter the exact `RESTORE <archive filename>` phrase. The protected restore job creates a safety dump, stops the service, restores the database and stored files, applies migrations, restarts the service, and reports its status. |
+| Configure off-site copies | Select **Configure cloud provider**, enter a dedicated provider remote and destination, save it, then select **Test connection**. Every completed archive copies to each configured destination. |
+
+Use dedicated, least-privilege storage credentials and an isolated folder, bucket prefix, or container for backups. Provider credentials and OAuth token JSON are transferred once over TLS, written only to the root-owned rclone configuration, and are never returned to the portal. The supported provider-specific input profiles are Amazon S3 and Wasabi S3 access keys, Backblaze B2 key ID/application key, Azure Blob Storage account/key, and OAuth-based SharePoint, OneDrive, Google Drive, and Dropbox remotes.
+
+> A production restore is destructive. It replaces data written after the selected archive was created. Run a non-production restore drill from the host periodically and retain independent off-site backup copies according to the organisation’s recovery policy.
+
+The documented setup-configuration export/import bundle remains a future roadmap item. It will produce a Git-tracked, secret-safe template for first-run wizard selections while keeping runtime credentials, encryption keys, customer data, and live OAuth tokens outside Git.

@@ -59,13 +59,10 @@ StateDirectoryMode=0750
 # ---------------------------------------------------------------------------
 # Privilege and kernel isolation
 # ---------------------------------------------------------------------------
-# The application invokes only root-owned, absolute-path, argument-validating
-# maintenance helpers through narrowly scoped sudoers rules (for backups and
-# approved platform updates). `NoNewPrivileges=true` prevents sudo from
-# elevating even for those allowlisted helpers, so it must remain false. The
-# empty capability set, system-call restrictions, immutable filesystem, and
-# restrictive sudoers policies remain mandatory compensating controls.
-NoNewPrivileges=false
+# Backup operations use a root-owned local socket daemon with a fixed action
+# allowlist, so the web service never requires sudo. Keep no-new-privileges and
+# SUID restrictions enabled for the customer-facing application process.
+NoNewPrivileges=true
 # The service binds a high port, so it needs no capabilities at all.
 CapabilityBoundingSet=
 AmbientCapabilities=

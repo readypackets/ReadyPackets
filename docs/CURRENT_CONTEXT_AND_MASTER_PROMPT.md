@@ -41,7 +41,9 @@ The platform includes protected backup, restore, configuration export, cloud syn
 | Priority | Remaining item |
 |---|---|
 | **P0** | Configure and perform verified Stripe test-mode/live-mode webhook and payment lifecycle tests. |
-| **P0** | Configure Microsoft Graph consent and perform a real SharePoint folder-sync test; configure cloud backup remotes and perform a restore drill. |
+| **P0** | Repair protected backup execution and restore readiness; add provider-specific cloud remote configuration for Amazon S3, Wasabi, Backblaze B2, Azure Blob Storage, SharePoint, Google Drive, OneDrive, and Dropbox; then perform verified backup and restore drills. |
+| **P1** | Add a secret-safe platform-setup configuration bundle that records setup-wizard selections, supports administrator-authorized export/import during a new install, and can be retained under a Git-tracked `config/` template directory without committing runtime secrets or customer data. |
+| **P1** | Configure Microsoft Graph consent and perform a real SharePoint folder-sync test. |
 | **Completed — 2026-08-12** | Administrator-published FAQ system, public WCAG 2.2 AA-focused remediation and accessibility statement, server-rendered SEO/discovery metadata with sitemap and structured data, and administrator marketing workspace are deployed. Continue periodic accessibility, Search Console, and campaign-performance review. |
 | **P1** | Add browser-level end-to-end regression coverage for SAML, magic links/MFA, checkout, file upload, policies, backup download, and rollback authorization. |
 | **P2** | Migrate the production host to provider-managed encrypted storage or an encrypted volume with a planned downtime/restore procedure. |
