@@ -2334,3 +2334,8 @@ The customer status and numeric progress implementation was published in commit 
 - Updated administrator guidance with the configuration workflow and WebM tenant/library policy troubleshooting.
 
 **Validation:** TypeScript passed with zero errors; automated suite passed 155/155; production health returned `{"status":"ok"}`. The current runtime confirms documents have previously synchronized; the retained failed WebM retry demonstrates the outstanding SharePoint file-policy action.
+
+
+### Publication record
+
+The SharePoint repair and connection-management implementation was published in commit `49313148f3430ed375580a4dd62d7cfab603554b` (`fix: improve SharePoint sync and configuration controls`). The production release marker was updated after a successful `{"status":"ok"}` health response. The remaining failed WebM retry is retained in `sharepoint_sync_log` as auditable evidence of the SharePoint tenant/library `invalidRequest` policy response.
