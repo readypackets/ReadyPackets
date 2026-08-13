@@ -2234,3 +2234,6 @@ All order workflows are now persisted as `wizard` presentation through migration
 **Validation and deployment:** TypeScript passed with zero errors; `pnpm test` passed 155/155 tests; client/server bundles built successfully. Migration 0032 was applied to production and verified `0` non-wizard workflows. The final health check returned `{"status":"ok"}`. Production retained rollback directories including `/opt/readypackets/rollback-20260813145925-status-integrity`.
 
 **Publication:** Pending commit and GitHub push at time of this entry.
+
+
+**Publication completed:** Implementation commit `156d66bdd74c93644227b8ae2423a190d0ffd5fe` was pushed to `main`; production `RELEASE_COMMIT` was updated to the same value and service health remained `{"status":"ok"}`.
