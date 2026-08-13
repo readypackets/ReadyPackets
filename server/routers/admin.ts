@@ -912,6 +912,7 @@ export const adminRouter = router({
 
       return list.map((user) => ({
         id: user.id,
+        publicId: user.publicId,
         name: displayNameOf(user),
         email: user.email,
         company: user.company,

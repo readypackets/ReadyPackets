@@ -2339,3 +2339,18 @@ The customer status and numeric progress implementation was published in commit 
 ### Publication record
 
 The SharePoint repair and connection-management implementation was published in commit `49313148f3430ed375580a4dd62d7cfab603554b` (`fix: improve SharePoint sync and configuration controls`). The production release marker was updated after a successful `{"status":"ok"}` health response. The remaining failed WebM retry is retained in `sharepoint_sync_log` as auditable evidence of the SharePoint tenant/library `invalidRequest` policy response.
+
+
+## 2026-08-13 — Finance controls, coupon audit, admin navigation, and activity history release
+
+**User request:** Add portal-administered refunds with a double confirmation, make payments/refunds easily visible on a dashboard, track coupon creation/use/account attribution and lifecycle actions, reorganize and collapse the administration navigation, and provide searchable account selection in entity and user activity timelines.
+
+**Implemented and deployed:**
+
+- Added **Finance → Refunds** two-step workflow. Administrators first review the successful Stripe payment and remaining refundable balance, then must type `REFUND ORDER` before Stripe is called. The server requires the exact literal confirmation, requires a reason of at least ten characters, reserves the refund record before the provider call, uses Stripe idempotency, and records provider references and audit events without storing card data.
+- Added Finance summary cards for collected, pending, refunded, and pending-refund amounts and counts. Payments and refund history remain visible in the same workspace.
+- Added `coupon_redemptions` immutable audit records, creator/updated/disabled attribution fields, historic paid-order backfill, coupon usage modal with account/order/discount/timestamp, and activity events for creation, update, enablement, disablement, redemption, and deletion. Coupons with redemption history cannot be deleted.
+- Reorganized the admin menu into collapsible Order operations; Customers & support; Finance & payments; Email & marketing; Content & policies; and Platform, security & administration sections. Collapse state is local to the administrator browser.
+- Added searchable customer selection to Activity Replay Entity history (User entity type) and User timeline. Search accepts customer name, email, or public `RP-U-…` ID.
+- Migration `0034_finance_coupon_audit.sql` was confirmed already applied after a staged deployment attempted the idempotent release path; the second activation intentionally skipped duplicate column DDL and preserved client/server rollback copies. Schema confirms `coupon_redemptions`, coupon actor fields, and `refunds.provider_reference` are present.
+- Validation: TypeScript passed, `pnpm test` passed 155/155, production health returned `{"status":"ok"}`. The production release remains pending Git commit at the time of this log entry.

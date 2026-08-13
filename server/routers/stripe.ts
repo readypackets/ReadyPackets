@@ -8,12 +8,15 @@ import { z } from "zod";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
+  couponRedemptions,
   coupons,
   orders,
   orderItems,
+  payments,
   payouts,
   referrals,
   refunds,
+  users,
 } from "../db/schema.js";
 import { env } from "../config/env.js";
 import {
@@ -227,6 +230,35 @@ export const stripeRouter = router({
   }),
 
   // -------------------------------------------------------------------------
+  // Admin: concise payment and refund dashboard
+  // -------------------------------------------------------------------------
+  financeOverview: staffProcedure.query(async () => {
+    const [paymentTotals, refundTotals, counts] = await Promise.all([
+      db.select({ collected: sql<number>`coalesce(sum(case when ${payments.status} = 'succeeded' then ${payments.amountCents} else 0 end), 0)`, pending: sql<number>`coalesce(sum(case when ${payments.status} = 'pending' then ${payments.amountCents} else 0 end), 0)` }).from(payments),
+      db.select({ completed: sql<number>`coalesce(sum(case when ${refunds.status} = 'completed' then ${refunds.amountCents} else 0 end), 0)`, pending: sql<number>`coalesce(sum(case when ${refunds.status} in ('requested', 'pending') then ${refunds.amountCents} else 0 end), 0)` }).from(refunds),
+      db.select({ payments: sql<number>`count(*)`, refunds: sql<number>`(select count(*) from refunds)` }).from(payments),
+    ]);
+    return {
+      collectedCents: Number(paymentTotals[0]?.collected ?? 0),
+      pendingPaymentCents: Number(paymentTotals[0]?.pending ?? 0),
+      refundedCents: Number(refundTotals[0]?.completed ?? 0),
+      pendingRefundCents: Number(refundTotals[0]?.pending ?? 0),
+      paymentCount: Number(counts[0]?.payments ?? 0),
+      refundCount: Number(counts[0]?.refunds ?? 0),
+    };
+  }),
+
+  refundQuote: adminProcedure
+    .input(z.object({ orderId: z.number().int().positive() }))
+    .query(async ({ input }) => {
+      const paymentRows = await db.select().from(payments).where(and(eq(payments.orderId, input.orderId), eq(payments.provider, "stripe"), eq(payments.status, "succeeded"))).orderBy(desc(payments.receivedAt)).limit(1);
+      if (!paymentRows[0]) throw new TRPCError({ code: "NOT_FOUND", message: "No successful Stripe payment was found for this order." });
+      const payment = paymentRows[0];
+      const prior = await db.select({ total: sql<number>`coalesce(sum(${refunds.amountCents}), 0)` }).from(refunds).where(and(eq(refunds.paymentId, payment.id), sql`${refunds.status} IN ('requested', 'pending', 'completed')`));
+      return { orderId: input.orderId, paymentId: payment.id, paidCents: payment.amountCents, remainingCents: Math.max(0, payment.amountCents - Number(prior[0]?.total ?? 0)) };
+    }),
+
+  // -------------------------------------------------------------------------
   // Admin: list all payments
   // -------------------------------------------------------------------------
   payments: staffProcedure
@@ -238,16 +270,18 @@ export const stripeRouter = router({
   // -------------------------------------------------------------------------
   // Admin: list coupons
   // -------------------------------------------------------------------------
-  coupons: staffProcedure.query(async () => {
-    return db.select().from(coupons).orderBy(desc(coupons.createdAt));
-  }),
+  coupons: staffProcedure.query(async () => db
+    .select({ id: coupons.id, code: coupons.code, description: coupons.description, discountType: coupons.discountType, discountValue: coupons.discountValue, maxRedemptions: coupons.maxRedemptions, redemptionCount: coupons.redemptionCount, startsAt: coupons.startsAt, expiresAt: coupons.expiresAt, active: coupons.active, createdAt: coupons.createdAt, createdByUserId: coupons.createdByUserId, creatorPublicId: users.publicId, disabledAt: coupons.disabledAt, disabledByUserId: coupons.disabledByUserId })
+    .from(coupons)
+    .leftJoin(users, eq(users.id, coupons.createdByUserId))
+    .orderBy(desc(coupons.createdAt))),
 
   // -------------------------------------------------------------------------
   // Admin: create or update a coupon
   // -------------------------------------------------------------------------
   upsertCoupon: adminProcedure
     .input(couponInput)
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const data = {
         code: input.code,
         description: input.description ?? null,
@@ -257,15 +291,18 @@ export const stripeRouter = router({
         startsAt: input.startsAt ? new Date(input.startsAt) : null,
         expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
         active: input.active,
+        updatedByUserId: ctx.session.user.id,
       };
 
       if (input.id) {
         await db.update(coupons).set(data).where(eq(coupons.id, input.id));
+        void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "coupon.updated", entityType: "coupon", entityId: input.id, summary: `Updated coupon ${input.code}`, changes: { active: input.active, discountType: input.discountType, discountValue: input.discountValue }, ipAddress: ctx.clientIp });
         return { id: input.id };
-      } else {
-        const result = await db.insert(coupons).values({ ...data, redemptionCount: 0 });
-        return { id: (result[0] as any).insertId as number };
       }
+      const result = await db.insert(coupons).values({ ...data, createdByUserId: ctx.session.user.id, redemptionCount: 0 });
+      const id = (result[0] as { insertId: number }).insertId;
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "coupon.created", entityType: "coupon", entityId: id, summary: `Created coupon ${input.code}`, changes: { discountType: input.discountType, discountValue: input.discountValue, maxRedemptions: input.maxRedemptions ?? null }, ipAddress: ctx.clientIp });
+      return { id };
     }),
 
   // -------------------------------------------------------------------------
@@ -273,9 +310,23 @@ export const stripeRouter = router({
   // -------------------------------------------------------------------------
   setCouponActive: adminProcedure
     .input(z.object({ id: z.number().int().positive(), active: z.boolean() }))
-    .mutation(async ({ input }) => {
-      await db.update(coupons).set({ active: input.active }).where(eq(coupons.id, input.id));
+    .mutation(async ({ input, ctx }) => {
+      const rows = await db.select({ code: coupons.code }).from(coupons).where(eq(coupons.id, input.id)).limit(1);
+      if (!rows[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Coupon not found." });
+      await db.update(coupons).set({ active: input.active, updatedByUserId: ctx.session.user.id, disabledByUserId: input.active ? null : ctx.session.user.id, disabledAt: input.active ? null : new Date() }).where(eq(coupons.id, input.id));
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: input.active ? "coupon.enabled" : "coupon.disabled", entityType: "coupon", entityId: input.id, severity: input.active ? "info" : "warning", summary: `${input.active ? "Enabled" : "Disabled"} coupon ${rows[0].code}`, changes: { active: input.active }, ipAddress: ctx.clientIp });
     }),
+
+  couponUsage: staffProcedure
+    .input(z.object({ couponId: z.number().int().positive(), limit: z.number().int().min(1).max(200).default(100) }))
+    .query(async ({ input }) => db
+      .select({ id: couponRedemptions.id, code: couponRedemptions.codeSnapshot, orderId: couponRedemptions.orderId, orderNumber: orders.orderNumber, userId: couponRedemptions.userId, userPublicId: users.publicId, discountCents: couponRedemptions.discountCents, redeemedAt: couponRedemptions.redeemedAt })
+      .from(couponRedemptions)
+      .leftJoin(orders, eq(orders.id, couponRedemptions.orderId))
+      .leftJoin(users, eq(users.id, couponRedemptions.userId))
+      .where(eq(couponRedemptions.couponId, input.couponId))
+      .orderBy(desc(couponRedemptions.redeemedAt))
+      .limit(input.limit)),
 
   // -------------------------------------------------------------------------
   // Admin: permanently delete an unused, inactive coupon
@@ -405,7 +456,8 @@ export const stripeRouter = router({
       z.object({
         orderId: z.number().int().positive(),
         amountCents: z.number().int().positive(),
-        reason: z.string().min(1).max(500),
+        reason: z.string().min(10).max(500),
+        confirmation: z.literal("REFUND ORDER"),
       })
     )
     .mutation(async ({ input, ctx }) => {

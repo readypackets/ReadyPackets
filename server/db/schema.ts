@@ -360,11 +360,36 @@ export const coupons = mysqlTable(
     startsAt: timestamp("starts_at"),
     expiresAt: timestamp("expires_at"),
     active: boolean("active").notNull().default(true),
+    createdByUserId: int("created_by_user_id"),
+    updatedByUserId: int("updated_by_user_id"),
+    disabledByUserId: int("disabled_by_user_id"),
+    disabledAt: timestamp("disabled_at"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (table) => ({
     codeUnique: uniqueIndex("coupons_code_unique").on(table.code),
+    creatorIdx: index("coupons_creator_idx").on(table.createdByUserId),
+  }),
+);
+
+/** One immutable record per successful paid checkout that used a coupon. */
+export const couponRedemptions = mysqlTable(
+  "coupon_redemptions",
+  {
+    id: id(),
+    couponId: int("coupon_id").notNull(),
+    orderId: int("order_id").notNull(),
+    userId: int("user_id").notNull(),
+    paymentId: int("payment_id"),
+    codeSnapshot: varchar("code_snapshot", { length: 48 }).notNull(),
+    discountCents: int("discount_cents").notNull().default(0),
+    redeemedAt: timestamp("redeemed_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    couponIdx: index("coupon_redemptions_coupon_idx").on(table.couponId, table.redeemedAt),
+    orderUnique: uniqueIndex("coupon_redemptions_order_unique").on(table.orderId),
+    userIdx: index("coupon_redemptions_user_idx").on(table.userId, table.redeemedAt),
   }),
 );
 
@@ -1245,6 +1270,7 @@ export const refunds = mysqlTable(
     reason: varchar("reason", { length: 255 }),
     completionStage: int("completion_stage"),
     status: varchar("status", { length: 16 }).notNull().default("requested"),
+    providerReference: varchar("provider_reference", { length: 190 }),
     requestedByUserId: int("requested_by_user_id").notNull(),
     approvedByUserId: int("approved_by_user_id"),
     processedAt: timestamp("processed_at"),

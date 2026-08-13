@@ -138,3 +138,24 @@ Open **Admin → Integrations → SharePoint & SAML** to configure the Microsoft
 Select **Test SharePoint connection** after saving. The test authenticates to Microsoft Graph and verifies read access to the configured site, document library, and selected root folder without creating, changing, or uploading SharePoint content. The portal keeps the client secret encrypted at rest and never returns it to the browser.
 
 If document synchronization succeeds but a WebM recording records a SharePoint `invalidRequest`, the Graph credentials, selected site, drive, and folder route are working. The Microsoft 365 tenant or library is then rejecting the `.webm` extension or the media content through a blocked-file-type, Purview/DLP, retention, or similar library policy. Have a Microsoft 365/SharePoint administrator permit `.webm` for the intended document library if appropriate, then retry the failed file or record a new pitch. Do not weaken the portal's WebM validation or replace the encrypted Graph credentials as a workaround for a tenant-side policy.
+
+
+## Finance, coupon audit, and administration navigation
+
+### Protected portal refunds
+
+Administrators initiate Stripe refunds from **Finance → Refunds**. Enter the order ID, amount in cents, and a reason of at least ten characters. The portal loads the latest successful Stripe payment and shows the remaining refundable balance before allowing review. Selecting **Review refund** is the first confirmation. The second screen requires the exact typed phrase `REFUND ORDER` before ReadyPackets requests the refund from Stripe.
+
+Each request is reserved in the local refund ledger before the Stripe call, has an idempotency key, and is then recorded with the Stripe refund reference and final status. Payments, completed refunds, pending payments, and pending refunds are visible in the Finance dashboard. The activity log records the initiating administrator, order, payment, amount, reason, and Stripe reference without storing card data.
+
+### Coupon accountability
+
+The Finance coupon table records the administrator public ID that created each new coupon. Selecting the usage count opens a redemption history with each paid order, customer public ID, discount amount, and redemption date. Coupon creation, update, enablement, disablement, redemption, and permanent deletion are recorded in Activity Replay. Coupons with redemption history remain retained for audit and cannot be deleted; an unused coupon must be disabled before permanent deletion.
+
+### Reorganized administration menu
+
+The administration sidebar is grouped as **Order operations**, **Customers & support**, **Finance & payments**, **Email & marketing**, **Content & policies**, and **Platform, security & administration**. Select any section heading to collapse or expand it. The selected state is retained locally in the administrator's browser.
+
+### Searchable activity history
+
+In **Activity Replay**, both **Entity history** when Entity type is User and **User timeline** provide a searchable account selector. Search by customer name, email, or public `RP-U-…` identifier, select the account, and use **Load history** or **Load timeline** to retrieve its recorded activity.

@@ -251,6 +251,8 @@ function CouponsTab() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<NonNullable<typeof data>[0] | null>(null);
   const [deleting, setDeleting] = useState<{ id: number; code: string } | null>(null);
+  const [usageCoupon, setUsageCoupon] = useState<{ id: number; code: string } | null>(null);
+  const usage = trpc.stripe.couponUsage.useQuery({ couponId: usageCoupon?.id ?? 1, limit: 200 }, { enabled: Boolean(usageCoupon) });
   const [form, setForm] = useState({
     code: "", description: "", discountType: "percent" as "percent" | "fixed" | "cart_price",
     discountValue: 10, maxRedemptions: "", expiresAt: "", active: true,
@@ -305,6 +307,7 @@ function CouponsTab() {
             <tr className="border-b text-left text-gray-500">
               <th className="py-2 pr-4">Code</th>
               <th className="py-2 pr-4">Discount</th>
+              <th className="py-2 pr-4">Created by</th>
               <th className="py-2 pr-4">Used</th>
               <th className="py-2 pr-4">Expires</th>
               <th className="py-2 pr-4">Status</th>
@@ -318,8 +321,11 @@ function CouponsTab() {
                 <td className="py-2 pr-4">
                   {c.discountType === "percent" ? `${c.discountValue}% off` : c.discountType === "cart_price" ? `Cart price ${formatCents(c.discountValue)}` : `${formatCents(c.discountValue)} off`}
                 </td>
+                <td className="py-2 pr-4 font-mono text-xs text-gray-600">{c.creatorPublicId ?? "Historic / unavailable"}</td>
                 <td className="py-2 pr-4">
-                  {c.redemptionCount}{c.maxRedemptions ? ` / ${c.maxRedemptions}` : ""}
+                  <button type="button" onClick={() => setUsageCoupon({ id: c.id, code: c.code })} className="font-medium text-brand-teal hover:underline" title="View every account and order that redeemed this coupon">
+                    {c.redemptionCount}{c.maxRedemptions ? ` / ${c.maxRedemptions}` : ""}
+                  </button>
                 </td>
                 <td className="py-2 pr-4 text-gray-500">
                   {c.expiresAt ? new Date(c.expiresAt).toLocaleDateString() : "Never"}
@@ -351,7 +357,7 @@ function CouponsTab() {
               </tr>
             ))}
             {!data?.length && (
-              <tr><td colSpan={6} className="py-8 text-center text-gray-400">No coupons yet.</td></tr>
+              <tr><td colSpan={7} className="py-8 text-center text-gray-400">No coupons yet.</td></tr>
             )}
           </tbody>
         </table>
@@ -396,6 +402,10 @@ function CouponsTab() {
         </div>
       </Modal>
 
+      <Modal open={Boolean(usageCoupon)} onClose={() => setUsageCoupon(null)} title={`Coupon usage: ${usageCoupon?.code ?? ""}`} description="Each entry records the paid order and account that redeemed this coupon.">
+        {usage.isLoading ? <p className="text-sm text-gray-500">Loading redemption history…</p> : usage.data?.length ? <div className="max-h-80 overflow-y-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-xs uppercase text-gray-500"><th className="py-2">Account</th><th className="py-2">Order</th><th className="py-2">Discount</th><th className="py-2">Redeemed</th></tr></thead><tbody>{usage.data.map((entry) => <tr key={entry.id} className="border-b"><td className="py-2 font-mono text-xs">{entry.userPublicId ?? `User #${entry.userId}`}</td><td className="py-2 font-mono text-xs">{entry.orderNumber ?? `Order #${entry.orderId}`}</td><td className="py-2">{formatCents(entry.discountCents)}</td><td className="py-2 text-xs text-gray-500">{new Date(entry.redeemedAt).toLocaleString()}</td></tr>)}</tbody></table></div> : <p className="text-sm text-gray-500">No paid redemptions have been recorded for this coupon.</p>}
+      </Modal>
+
       <ConfirmDialog
         open={Boolean(deleting)}
         onClose={() => setDeleting(null)}
@@ -416,83 +426,49 @@ function CouponsTab() {
 // ---------------------------------------------------------------------------
 
 function RefundsTab() {
-  const [page, setPage] = useState(1);
-  const { data } = trpc.stripe.refunds.useQuery({ page });
-  const initiate = trpc.stripe.initiateRefund.useMutation();
+  const [page] = useState(1);
+  const { data, refetch } = trpc.stripe.refunds.useQuery({ page });
+  const initiate = trpc.stripe.initiateRefund.useMutation({ onSuccess: () => void refetch() });
   const toast = useToast();
   const [open, setOpen] = useState(false);
+  const [confirmationOpen, setConfirmationOpen] = useState(false);
+  const [typedConfirmation, setTypedConfirmation] = useState("");
   const [form, setForm] = useState({ orderId: "", amountCents: "", reason: "" });
+  const orderId = Number(form.orderId);
+  const quote = trpc.stripe.refundQuote.useQuery({ orderId }, { enabled: open && Number.isInteger(orderId) && orderId > 0, retry: false });
 
-  async function submit() {
+  function reviewRefund() {
+    const amount = Number(form.amountCents);
+    if (!orderId || !Number.isInteger(amount) || amount <= 0 || form.reason.trim().length < 10) {
+      toast.error("Enter a valid order, amount, and a reason of at least 10 characters.");
+      return;
+    }
+    if (!quote.data || amount > quote.data.remainingCents) {
+      toast.error("The requested amount exceeds the remaining refundable balance.");
+      return;
+    }
+    setTypedConfirmation("");
+    setConfirmationOpen(true);
+  }
+
+  async function executeRefund() {
     try {
-      const result = await initiate.mutateAsync({
-        orderId: Number(form.orderId),
-        amountCents: Number(form.amountCents),
-        reason: form.reason,
-      });
-      toast.success(`Refund initiated: ${result.refundId}`);
+      const result = await initiate.mutateAsync({ orderId, amountCents: Number(form.amountCents), reason: form.reason.trim(), confirmation: "REFUND ORDER" });
+      toast.success("Refund request submitted", `Stripe refund ${result.refundId} was created.`);
+      setConfirmationOpen(false);
       setOpen(false);
-    } catch (e: any) {
-      toast.error(e.message ?? "Failed to initiate refund.");
+      setForm({ orderId: "", amountCents: "", reason: "" });
+    } catch (error: any) {
+      toast.error("Refund was not completed", error.message ?? "Stripe rejected the refund request.");
     }
   }
 
   return (
     <div>
-      <div className="flex justify-end mb-4">
-        <Button size="sm" onClick={() => setOpen(true)}>Initiate refund</Button>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <thead>
-            <tr className="border-b text-left text-gray-500">
-              <th className="py-2 pr-4">Order</th>
-              <th className="py-2 pr-4">Amount</th>
-              <th className="py-2 pr-4">Reason</th>
-              <th className="py-2 pr-4">Status</th>
-              <th className="py-2">Date</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data?.rows.map((r) => (
-              <tr key={r.id} className="border-b hover:bg-gray-50">
-                <td className="py-2 pr-4">#{r.orderId}</td>
-                <td className="py-2 pr-4">{formatCents(r.amountCents)}</td>
-                <td className="py-2 pr-4 text-gray-600">{r.reason ?? "—"}</td>
-                <td className="py-2 pr-4">
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${r.status === "completed" ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"}`}>
-                    {r.status}
-                  </span>
-                </td>
-                <td className="py-2 text-gray-500">
-                  {r.processedAt ? new Date(r.processedAt).toLocaleDateString() : "—"}
-                </td>
-              </tr>
-            ))}
-            {!data?.rows.length && (
-              <tr><td colSpan={5} className="py-8 text-center text-gray-400">No refunds yet.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <Modal open={open} onClose={() => setOpen(false)} title="Initiate Stripe refund">
-        <div className="space-y-4">
-          <Field label="Order ID">
-            <Input type="number" value={form.orderId} onChange={e => setForm(f => ({ ...f, orderId: e.target.value }))} />
-          </Field>
-          <Field label="Amount (cents)">
-            <Input type="number" value={form.amountCents} onChange={e => setForm(f => ({ ...f, amountCents: e.target.value }))} />
-          </Field>
-          <Field label="Reason">
-            <Input value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} />
-          </Field>
-        </div>
-        <div className="flex justify-end gap-3 mt-6">
-          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button onClick={submit} busy={initiate.isPending}>Initiate refund</Button>
-        </div>
-      </Modal>
+      <div className="mb-4 flex justify-end"><Button size="sm" onClick={() => setOpen(true)}>Initiate refund</Button></div>
+      <div className="overflow-x-auto"><table className="min-w-full text-sm"><thead><tr className="border-b text-left text-gray-500"><th className="py-2 pr-4">Order</th><th className="py-2 pr-4">Amount</th><th className="py-2 pr-4">Reason</th><th className="py-2 pr-4">Status</th><th className="py-2">Date</th></tr></thead><tbody>{data?.rows.map((r) => <tr key={r.id} className="border-b hover:bg-gray-50"><td className="py-2 pr-4">#{r.orderId}</td><td className="py-2 pr-4">{formatCents(r.amountCents)}</td><td className="py-2 pr-4 text-gray-600">{r.reason ?? "—"}</td><td className="py-2 pr-4"><span className={`rounded px-2 py-0.5 text-xs font-medium ${r.status === "completed" ? "bg-green-100 text-green-800" : r.status === "failed" ? "bg-red-100 text-red-800" : "bg-yellow-100 text-yellow-800"}`}>{r.status}</span></td><td className="py-2 text-gray-500">{r.processedAt ? new Date(r.processedAt).toLocaleDateString() : new Date(r.createdAt).toLocaleDateString()}</td></tr>)}{!data?.rows.length && <tr><td colSpan={5} className="py-8 text-center text-gray-400">No refunds yet.</td></tr>}</tbody></table></div>
+      <Modal open={open} onClose={() => setOpen(false)} title="Prepare Stripe refund" description="This first step reviews the request. A second typed confirmation is required before Stripe is called."><div className="space-y-4"><Field label="Order ID"><Input type="number" value={form.orderId} onChange={e => setForm(f => ({ ...f, orderId: e.target.value }))} /></Field>{quote.data && <div className="rounded-lg border border-line bg-surface-soft p-3 text-sm"><p>Successful payment: <strong>{formatCents(quote.data.paidCents)}</strong></p><p className="mt-1">Remaining refundable balance: <strong>{formatCents(quote.data.remainingCents)}</strong></p></div>}{quote.error && <p className="text-sm text-red-700">{quote.error.message}</p>}<Field label="Refund amount (cents)"><Input type="number" value={form.amountCents} onChange={e => setForm(f => ({ ...f, amountCents: e.target.value }))} /></Field><Field label="Reason (required, 10+ characters)"><Input value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} /></Field></div><div className="mt-6 flex justify-end gap-3"><Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={reviewRefund} disabled={quote.isFetching}>Review refund</Button></div></Modal>
+      <Modal open={confirmationOpen} onClose={() => setConfirmationOpen(false)} title="Final refund confirmation" description={`You are about to submit a ${formatCents(Number(form.amountCents) || 0)} refund for order #${form.orderId}. This sends the request to Stripe.`}><div className="space-y-4"><p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900">This action cannot be undone from ReadyPackets. Type the confirmation exactly to continue.</p><Field label="Type REFUND ORDER to confirm"><Input value={typedConfirmation} onChange={e => setTypedConfirmation(e.target.value.toUpperCase())} placeholder="REFUND ORDER" /></Field></div><div className="mt-6 flex justify-end gap-3"><Button variant="ghost" onClick={() => setConfirmationOpen(false)}>Cancel</Button><Button variant="danger" busy={initiate.isPending} disabled={typedConfirmation !== "REFUND ORDER"} onClick={executeRefund}>Submit refund to Stripe</Button></div></Modal>
     </div>
   );
 }
@@ -503,10 +479,13 @@ function RefundsTab() {
 
 export function AdminFinancePage() {
   const [tab, setTab] = useState("settings");
+  const overview = trpc.stripe.financeOverview.useQuery();
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
-      <h1 className="text-2xl font-bold text-brand-navy mb-6">Finance</h1>
+      <h1 className="text-2xl font-bold text-brand-navy mb-2">Finance</h1>
+      <p className="mb-6 text-sm text-gray-500">Track every payment, refund, and coupon-backed checkout from one audited workspace.</p>
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Card><p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Collected payments</p><p className="mt-1 text-2xl font-bold text-brand-navy">{formatCents(overview.data?.collectedCents ?? 0)}</p><p className="text-xs text-gray-500">{overview.data?.paymentCount ?? 0} recorded payments</p></Card><Card><p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Completed refunds</p><p className="mt-1 text-2xl font-bold text-red-700">{formatCents(overview.data?.refundedCents ?? 0)}</p><p className="text-xs text-gray-500">{overview.data?.refundCount ?? 0} refund records</p></Card><Card><p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Pending payments</p><p className="mt-1 text-2xl font-bold text-amber-700">{formatCents(overview.data?.pendingPaymentCents ?? 0)}</p></Card><Card><p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Pending refunds</p><p className="mt-1 text-2xl font-bold text-amber-700">{formatCents(overview.data?.pendingRefundCents ?? 0)}</p></Card></div>
       <Tabs
         items={[
           { id: "settings", label: "Stripe Settings" },

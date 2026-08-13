@@ -29,6 +29,16 @@ const ENTITY_TYPES = [
   { value: "forum_topic", label: "Forum topic" },
 ];
 
+function UserHistorySelector({ value, onSelect }: { value: string; onSelect: (value: string) => void }) {
+  const [query, setQuery] = useState("");
+  const users = trpc.admin.customers.useQuery({ search: query.trim(), limit: 20 }, { enabled: query.trim().length >= 2 });
+  const selectUser = (user: { id: number; publicId?: string | null; name: string; email: string }) => {
+    onSelect(user.publicId ?? String(user.id));
+    setQuery("");
+  };
+  return <div className="relative"><Input value={query || value} onChange={(event) => { setQuery(event.target.value); if (!event.target.value) onSelect(""); }} placeholder="Search customer name, email, or RP-U ID" />{query.trim().length >= 2 && <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-line bg-white shadow-lg">{users.isLoading ? <p className="px-3 py-2 text-sm text-muted">Searching accounts…</p> : users.data?.length ? users.data.map((user) => <button type="button" key={user.id} onClick={() => selectUser(user)} className="block w-full border-b border-line px-3 py-2 text-left hover:bg-surface-soft"><span className="block text-sm font-medium text-ink">{user.name || user.email}</span><span className="block font-mono text-xs text-muted">{user.publicId ?? `User #${user.id}`} · {user.email}</span></button>) : <p className="px-3 py-2 text-sm text-muted">No matching accounts.</p>}</div>}</div>;
+}
+
 export function AdminActivityReplay() {
   const [tab, setTab] = useState("entity");
 
@@ -115,12 +125,8 @@ export function AdminActivityReplay() {
                     options={ENTITY_TYPES}
                   />
                 </FieldShell>
-                <FieldShell label={entityType === "user" ? "Customer / user ID" : "Entity ID"}>
-                  <Input
-                    value={entityId}
-                    onChange={(e) => { setEntityId(e.target.value); setEntitySearched(false); }}
-                    placeholder={entityType === "user" ? "RP-U-XXXXXXXXXXXX" : "e.g. 42"}
-                  />
+                <FieldShell label={entityType === "user" ? "Customer / user" : "Entity ID"}>
+                  {entityType === "user" ? <UserHistorySelector value={entityId} onSelect={(value) => { setEntityId(value); setEntitySearched(false); }} /> : <Input value={entityId} onChange={(e) => { setEntityId(e.target.value); setEntitySearched(false); }} placeholder="e.g. 42" />}
                 </FieldShell>
                 <div className="flex items-end">
                   <Button
@@ -197,12 +203,8 @@ export function AdminActivityReplay() {
             <Card>
               <CardHeader title="User timeline" />
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <FieldShell label="Customer / user ID">
-                  <Input
-                    value={userId}
-                    onChange={(e) => { setUserId(e.target.value.toUpperCase()); setUserSearched(false); }}
-                    placeholder="RP-U-XXXXXXXXXXXX"
-                  />
+                <FieldShell label="Search and select customer / user">
+                  <UserHistorySelector value={userId} onSelect={(value) => { setUserId(value); setUserSearched(false); }} />
                 </FieldShell>
                 <div className="flex items-end">
                   <Button

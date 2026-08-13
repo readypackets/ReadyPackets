@@ -22,6 +22,7 @@ import Stripe from "stripe";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
+  couponRedemptions,
   coupons,
   orders,
   payments,
@@ -400,12 +401,32 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   // downstream order automations. Browser success redirects are never trusted.
   await activatePaidOrder(orderId);
 
-  // Increment coupon redemption count.
+  // Persist an immutable coupon redemption record alongside the aggregate counter.
+  // The successful Stripe webhook is the sole source of truth for redemption.
   if (couponId) {
-    await db
-      .update(coupons)
-      .set({ redemptionCount: sql`${coupons.redemptionCount} + 1` })
-      .where(eq(coupons.id, couponId));
+    const couponRows = await db.select({ code: coupons.code }).from(coupons).where(eq(coupons.id, couponId)).limit(1);
+    const paymentRows = await db.select({ id: payments.id }).from(payments).where(and(eq(payments.orderId, orderId), eq(payments.status, "succeeded"))).orderBy(desc(payments.receivedAt)).limit(1);
+    const customerId = session.metadata?.userId ? Number(session.metadata.userId) : null;
+    if (couponRows[0] && customerId) {
+      await db.insert(couponRedemptions).values({
+        couponId,
+        orderId,
+        userId: customerId,
+        paymentId: paymentRows[0]?.id ?? null,
+        codeSnapshot: couponRows[0].code,
+        discountCents: Math.max(0, (session.amount_subtotal ?? amountCents) - amountCents),
+      });
+      await db.update(coupons).set({ redemptionCount: sql`${coupons.redemptionCount} + 1` }).where(eq(coupons.id, couponId));
+      await recordActivity({
+        actorUserId: customerId,
+        actorRole: "customer",
+        action: "coupon.redeemed",
+        entityType: "coupon",
+        entityId: couponId,
+        summary: `Coupon ${couponRows[0].code} redeemed on order ${orderId}`,
+        changes: { orderId, discountCents: Math.max(0, (session.amount_subtotal ?? amountCents) - amountCents) },
+      });
+    }
   }
 
   // Record referral commission (5% of amount).
@@ -470,15 +491,26 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
     .set({ paymentStatus: isFullRefund ? "refunded" : "partially_refunded" })
     .where(eq(orders.id, orderId));
 
-  await db.insert(refunds).values({
-    orderId,
-    paymentId: null,
-    amountCents: refundedCents,
-    reason: `Stripe webhook: charge ${charge.id}`,
-    status: "completed",
-    requestedByUserId: 0, // system-initiated
-    processedAt: new Date(),
-  });
+  // Complete the reserved portal refund when this webhook corresponds to an
+  // administrator-initiated request. Direct Stripe-dashboard refunds retain a
+  // separate system-attributed record for reconciliation.
+  const pending = await db.select({ id: refunds.id }).from(refunds)
+    .where(and(eq(refunds.orderId, orderId), sql`${refunds.status} IN ('requested', 'pending')`))
+    .orderBy(desc(refunds.createdAt)).limit(1);
+  if (pending[0]) {
+    await db.update(refunds).set({ status: "completed", processedAt: new Date() }).where(eq(refunds.id, pending[0].id));
+  } else {
+    await db.insert(refunds).values({
+      orderId,
+      paymentId: null,
+      amountCents: refundedCents,
+      reason: `Stripe webhook: charge ${charge.id}`,
+      providerReference: `charge:${charge.id}`,
+      status: "completed",
+      requestedByUserId: 0,
+      processedAt: new Date(),
+    });
+  }
 
   logger.info("stripe.charge.refunded", { orderId, refundedCents, isFullRefund });
 }
@@ -492,7 +524,7 @@ export async function initiateRefund(
   amountCents: number,
   reason: string,
   requestedByUserId: number
-): Promise<{ refundId: string }> {
+ ): Promise<{ refundId: string; localRefundId: number; remainingCents: number }> {
   const stripe = await getStripeAsync();
 
   const paymentRows = await db
@@ -514,25 +546,53 @@ export async function initiateRefund(
 
   const payment = paymentRows[0]!;
 
-  const refund = await stripe.refunds.create({
-    payment_intent: payment.providerReference!,
-    amount: amountCents,
-    reason: "requested_by_customer",
-    metadata: { orderId: String(orderId), reason },
-  });
+  const prior = await db.select({ total: sql<number>`coalesce(sum(${refunds.amountCents}), 0)` }).from(refunds).where(and(eq(refunds.paymentId, payment.id), sql`${refunds.status} IN ('requested', 'pending', 'completed')`));
+  const alreadyCommitted = Number(prior[0]?.total ?? 0);
+  const availableCents = payment.amountCents - alreadyCommitted;
+  if (amountCents > availableCents) {
+    throw new Error(`Refund exceeds the remaining refundable amount of ${availableCents} cents.`);
+  }
 
-  await db.insert(refunds).values({
+  const created = await db.insert(refunds).values({
     orderId,
     paymentId: payment.id,
     amountCents,
     reason,
-    status: refund.status === "succeeded" ? "completed" : "pending",
+    status: "requested",
     requestedByUserId,
-    processedAt: refund.status === "succeeded" ? new Date() : null,
   });
+  const localRefundId = Number((created[0] as { insertId?: number }).insertId ?? 0);
+  if (!localRefundId) throw new Error("Could not reserve the refund request.");
 
-  logger.info("stripe.refund.initiated", { orderId, amountCents, refundId: refund.id });
-  return { refundId: refund.id };
+  try {
+    const refund = await stripe.refunds.create({
+      payment_intent: payment.providerReference!,
+      amount: amountCents,
+      reason: "requested_by_customer",
+      metadata: { orderId: String(orderId), reason, readyPacketsRefundId: String(localRefundId) },
+    }, { idempotencyKey: `readypackets-refund-${localRefundId}` });
+    await db.update(refunds).set({
+      providerReference: refund.id,
+      status: refund.status === "succeeded" ? "completed" : "pending",
+      approvedByUserId: requestedByUserId,
+      processedAt: refund.status === "succeeded" ? new Date() : null,
+    }).where(eq(refunds.id, localRefundId));
+    await recordActivity({
+      actorUserId: requestedByUserId,
+      actorRole: "admin",
+      action: "refund.initiated",
+      entityType: "refund",
+      entityId: localRefundId,
+      severity: "warning",
+      summary: `Initiated Stripe refund of ${amountCents} cents for order ${orderId}`,
+      changes: { orderId, paymentId: payment.id, amountCents, stripeRefundId: refund.id, reason },
+    });
+    logger.info("stripe.refund.initiated", { orderId, amountCents, refundId: refund.id, localRefundId });
+    return { refundId: refund.id, localRefundId, remainingCents: availableCents - amountCents };
+  } catch (error) {
+    await db.update(refunds).set({ status: "failed" }).where(eq(refunds.id, localRefundId));
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------

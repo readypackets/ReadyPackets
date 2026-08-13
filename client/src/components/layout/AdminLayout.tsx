@@ -15,6 +15,7 @@ import {
   BarChart3,
   Bot,
   Calendar,
+  ChevronDown,
   ClipboardList,
   CreditCard,
   FileText,
@@ -62,85 +63,65 @@ interface NavItem {
 }
 
 const NAV: { section: string; items: NavItem[] }[] = [
-  {
-    section: "Operations",
-    items: [
-      { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
-      { href: "/admin/orders", label: "Orders", icon: ClipboardList },
-      { href: "/admin/customers", label: "Customers", icon: Users },
-      { href: "/admin/tickets", label: "Support", icon: LifeBuoy },
-      { href: "/admin/files", label: "Files", icon: FileText },
-      { href: "/admin/reports", label: "Reports", icon: BarChart3, adminOnly: true },
-    ],
-  },
-  {
-    section: "Content",
-    items: [
-      { href: "/admin/catalog", label: "Catalogue", icon: Package, adminOnly: true },
-      { href: "/admin/moderation", label: "Moderation", icon: Star },
-      { href: "/admin/content", label: "Site content", icon: ScrollText, adminOnly: true },
-      { href: "/admin/faqs", label: "Public FAQs", icon: LifeBuoy, adminOnly: true },
-      { href: "/admin/marketing", label: "Marketing", icon: Newspaper, adminOnly: true },
-      { href: "/admin/changelog", label: "Changelog", icon: Newspaper, adminOnly: true },
-      { href: "/admin/policy-center", label: "Policy center", icon: Shield, adminOnly: true },
-      { href: "/admin/knowledge-base", label: "Knowledge base", icon: FileText, adminOnly: true },
-    ],
-  },
-  {
-    section: "Email",
-    items: [
-      { href: "/admin/email-settings", label: "Email settings", icon: Mail, adminOnly: true },
-      { href: "/admin/email-center", label: "Email Template Center", icon: Mail, adminOnly: true },
-      { href: "/admin/email-automations", label: "Email automations", icon: Zap, adminOnly: true },
-      { href: "/admin/order-automations", label: "Order automations", icon: Zap, adminOnly: true },
-      { href: "/admin/order-workflows", label: "Order workflows", icon: ClipboardList, adminOnly: true },
-      { href: "/admin/order-statuses", label: "Order status options", icon: ClipboardList, adminOnly: true },
-      { href: "/admin/question-templates", label: "Order Question Banks", icon: ClipboardList, adminOnly: true },
-    ],
-  },
-  {
-    section: "Finance",
-    items: [
-      { href: "/admin/finance", label: "Finance", icon: CreditCard, adminOnly: true },
-      { href: "/admin/subscriptions", label: "Subscriptions", icon: Subscript, adminOnly: true },
-      { href: "/admin/coupons", label: "Coupons", icon: Tag, adminOnly: true },
-      { href: "/admin/payouts", label: "Payouts", icon: Gift, adminOnly: true },
-      { href: "/admin/referrals", label: "Referrals", icon: Gift, adminOnly: true },
-      { href: "/admin/newsletter", label: "Newsletter", icon: Mail, adminOnly: true },
-    ],
-  },
-  {
-    section: "CRM",
-    items: [
-      { href: "/admin/crm", label: "CRM", icon: Users, adminOnly: true },
-      { href: "/admin/scheduling", label: "Scheduling", icon: Calendar, adminOnly: true },
-    ],
-  },
-  {
-    section: "Platform",
-    items: [
-      { href: "/admin/platform-setup", label: "Platform setup", icon: Server, adminOnly: true },
-      { href: "/admin/integrations", label: "Integrations", icon: Link2, adminOnly: true },
-      { href: "/admin/entra-setup", label: "Microsoft Entra ID", icon: ShieldCheck, adminOnly: true },
-      { href: "/admin/api-keys", label: "API keys", icon: Key, adminOnly: true },
-      { href: "/admin/inbound-webhooks", label: "Inbound webhooks", icon: Webhook, adminOnly: true },
-      { href: "/admin/outbound", label: "Outbound connections", icon: Plug, adminOnly: true },
-      { href: "/admin/ai-hub", label: "AI hub", icon: Bot, adminOnly: true },
-      { href: "/admin/ab-tests", label: "A/B tests", icon: FlaskConical, adminOnly: true },
-      { href: "/admin/wizard-slides", label: "Wizard slides", icon: ScrollText, adminOnly: true },
-      { href: "/admin/announcements", label: "Announcements", icon: Mail, adminOnly: true },
-      { href: "/admin/support-permissions", label: "Support permissions", icon: ShieldCheck, adminOnly: true },
-      { href: "/admin/backups", label: "Backups", icon: Server, adminOnly: true },
-      { href: "/admin/platform-updates", label: "Platform updates", icon: RefreshCw, adminOnly: true },
-      { href: "/admin/security", label: "Security centre", icon: ShieldAlert, adminOnly: true },
-      { href: "/admin/siem-export", label: "SIEM export", icon: ShieldAlert, adminOnly: true },
-      { href: "/admin/activity-replay", label: "Activity replay", icon: History, adminOnly: true },
-      { href: "/admin/login-config", label: "Login page", icon: LogIn, adminOnly: true },
-      { href: "/admin/preferences", label: "My preferences", icon: Gauge, adminOnly: true },
-      { href: "/admin/navigation", label: "Navigation menu", icon: Menu, adminOnly: true },
-      { href: "/admin/system", label: "System", icon: Server, adminOnly: true },
-    ],
-  },
+  { section: "Order operations", items: [
+    { href: "/admin", label: "Operations dashboard", icon: LayoutDashboard },
+    { href: "/admin/orders", label: "Orders", icon: ClipboardList },
+    { href: "/admin/order-workflows", label: "Order workflows", icon: ClipboardList, adminOnly: true },
+    { href: "/admin/order-statuses", label: "Order status options", icon: ClipboardList, adminOnly: true },
+    { href: "/admin/order-automations", label: "Order automations", icon: Zap, adminOnly: true },
+    { href: "/admin/question-templates", label: "Order Question Banks", icon: ClipboardList, adminOnly: true },
+    { href: "/admin/files", label: "Order files", icon: FileText },
+    { href: "/admin/reports", label: "Reports", icon: BarChart3, adminOnly: true },
+  ] },
+  { section: "Customers & support", items: [
+    { href: "/admin/customers", label: "Customers", icon: Users },
+    { href: "/admin/crm", label: "CRM", icon: Users, adminOnly: true },
+    { href: "/admin/tickets", label: "Support", icon: LifeBuoy },
+    { href: "/admin/scheduling", label: "Scheduling", icon: Calendar, adminOnly: true },
+    { href: "/admin/referrals", label: "Referrals", icon: Gift, adminOnly: true },
+    { href: "/admin/moderation", label: "Moderation", icon: Star },
+    { href: "/admin/knowledge-base", label: "Knowledge base", icon: FileText, adminOnly: true },
+  ] },
+  { section: "Finance & payments", items: [
+    { href: "/admin/finance", label: "Finance dashboard", icon: CreditCard, adminOnly: true },
+    { href: "/admin/coupons", label: "Coupons", icon: Tag, adminOnly: true },
+    { href: "/admin/subscriptions", label: "Subscriptions", icon: Subscript, adminOnly: true },
+    { href: "/admin/payouts", label: "Payouts", icon: Gift, adminOnly: true },
+  ] },
+  { section: "Email & marketing", items: [
+    { href: "/admin/email-settings", label: "Email settings", icon: Mail, adminOnly: true },
+    { href: "/admin/email-center", label: "Email Template Center", icon: Mail, adminOnly: true },
+    { href: "/admin/email-automations", label: "Email automations", icon: Zap, adminOnly: true },
+    { href: "/admin/marketing", label: "Marketing", icon: Newspaper, adminOnly: true },
+    { href: "/admin/newsletter", label: "Newsletter", icon: Mail, adminOnly: true },
+    { href: "/admin/announcements", label: "Announcements", icon: Mail, adminOnly: true },
+  ] },
+  { section: "Content & policies", items: [
+    { href: "/admin/catalog", label: "Catalogue", icon: Package, adminOnly: true },
+    { href: "/admin/content", label: "Site content", icon: ScrollText, adminOnly: true },
+    { href: "/admin/faqs", label: "Public FAQs", icon: LifeBuoy, adminOnly: true },
+    { href: "/admin/policy-center", label: "Policy center", icon: Shield, adminOnly: true },
+    { href: "/admin/changelog", label: "Changelog", icon: Newspaper, adminOnly: true },
+  ] },
+  { section: "Platform, security & administration", items: [
+    { href: "/admin/platform-setup", label: "Platform setup", icon: Server, adminOnly: true },
+    { href: "/admin/integrations", label: "Integrations", icon: Link2, adminOnly: true },
+    { href: "/admin/entra-setup", label: "Microsoft Entra ID", icon: ShieldCheck, adminOnly: true },
+    { href: "/admin/api-keys", label: "API keys", icon: Key, adminOnly: true },
+    { href: "/admin/inbound-webhooks", label: "Inbound webhooks", icon: Webhook, adminOnly: true },
+    { href: "/admin/outbound", label: "Outbound connections", icon: Plug, adminOnly: true },
+    { href: "/admin/backups", label: "Backups", icon: Server, adminOnly: true },
+    { href: "/admin/platform-updates", label: "Platform updates", icon: RefreshCw, adminOnly: true },
+    { href: "/admin/security", label: "Security centre", icon: ShieldAlert, adminOnly: true },
+    { href: "/admin/siem-export", label: "SIEM export", icon: ShieldAlert, adminOnly: true },
+    { href: "/admin/activity-replay", label: "Activity replay", icon: History, adminOnly: true },
+    { href: "/admin/login-config", label: "Login page", icon: LogIn, adminOnly: true },
+    { href: "/admin/wizard-slides", label: "Wizard slides", icon: ScrollText, adminOnly: true },
+    { href: "/admin/support-permissions", label: "Support permissions", icon: ShieldCheck, adminOnly: true },
+    { href: "/admin/navigation", label: "Navigation menu", icon: Menu, adminOnly: true },
+    { href: "/admin/preferences", label: "My preferences", icon: Gauge, adminOnly: true },
+    { href: "/admin/system", label: "System", icon: Server, adminOnly: true },
+  ] },
 ];
 
 export function AdminLayout({ children }: { children: ReactNode }) {
@@ -148,6 +129,14 @@ export function AdminLayout({ children }: { children: ReactNode }) {
   const session = useSession();
   const toast = useToast();
   const [open, setOpen] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem("readypackets.admin.collapsedGroups") ?? "{}"); } catch { return {}; }
+  });
+  const toggleGroup = (section: string) => setCollapsedGroups((current) => {
+    const next = { ...current, [section]: !current[section] };
+    localStorage.setItem("readypackets.admin.collapsedGroups", JSON.stringify(next));
+    return next;
+  });
   const navigationConfig = trpc.adminNavigation.get.useQuery(undefined, { enabled: session.isAdmin });
   const navigationGroups = useMemo(() => {
     const overrides = new Map((navigationConfig.data ?? []).filter((item) => !item.custom).map((item) => [item.href, item]));
@@ -188,11 +177,11 @@ export function AdminLayout({ children }: { children: ReactNode }) {
         const items = group.items.filter((item) => !item.adminOnly || session.isAdmin);
         if (items.length === 0) return null;
         return (
-          <div key={group.section} className="mb-5">
-            <p className="px-3 pb-1.5 text-xs font-semibold uppercase tracking-wider text-white/40">
-              {group.section}
-            </p>
-            <ul className="space-y-0.5">
+          <div key={group.section} className="mb-4">
+            <button type="button" onClick={() => toggleGroup(group.section)} className="flex w-full items-center justify-between rounded px-3 pb-1.5 text-left text-xs font-semibold uppercase tracking-wider text-white/50 hover:text-white" aria-expanded={!collapsedGroups[group.section]}>
+              {group.section}<ChevronDown className={`size-3 transition-transform ${collapsedGroups[group.section] ? "-rotate-90" : ""}`} aria-hidden="true" />
+            </button>
+            <ul className={`space-y-0.5 overflow-hidden transition-all ${collapsedGroups[group.section] ? "max-h-0 opacity-0" : "max-h-[1200px] opacity-100"}`}>
               {items.map((item) => {
                 const Icon = item.icon;
                 const active = isActive(item.href);
