@@ -2317,3 +2317,20 @@ Customer order progress is now explicit across every major portal surface. The d
 ### Publication record
 
 The customer status and numeric progress implementation was published in commit `cef797da31c5a031fd29ae46dad1f14eee364f25` (`feat: show customer order status and progress`). The production release marker was updated after a successful `{"status":"ok"}` health response, and the VPS operations record includes the rollback locations.
+
+
+## 2026-08-13 — SharePoint sync repair and connection management
+
+**User request:** Diagnose why order files were not syncing to SharePoint, identify where SharePoint is configured, add a connection test and root-folder selection, and repair the failing audio upload path.
+
+**Production diagnosis:** The Microsoft Graph credentials, selected site, drive, root path, folder provisioning, and document uploads were all functioning. SharePoint sync-log entries confirmed that Office documents had succeeded. The failed item was a WebM recording (`file_id=38`), with five Graph `400 invalidRequest` responses after its folder already existed. The portal retried the item after switching its binary request to an opaque stream, but the selected SharePoint library still returned `invalidRequest`. This isolates the remaining rejection to the Microsoft 365/SharePoint library or tenant policy for the WebM file type, not ReadyPackets credentials or routing.
+
+**Implemented:**
+
+- Added a non-destructive **Test SharePoint connection** action in **Admin → Integrations → SharePoint & SAML**. It validates saved Graph authentication plus read access to the configured site, drive, and selected root without writing to SharePoint.
+- Added a read-only **Select existing root folder** browser with folder navigation and **Use current folder as root**. A separate Save action remains required to activate a selection.
+- Retained credentials as encrypted, write-only settings; no secret is returned to browser controls or audit output.
+- Hardened binary upload handling to send verified local files as `application/octet-stream`, keeping the WebM bytes intact and returning a specific policy-oriented diagnostic if SharePoint responds `400`.
+- Updated administrator guidance with the configuration workflow and WebM tenant/library policy troubleshooting.
+
+**Validation:** TypeScript passed with zero errors; automated suite passed 155/155; production health returned `{"status":"ok"}`. The current runtime confirms documents have previously synchronized; the retained failed WebM retry demonstrates the outstanding SharePoint file-policy action.

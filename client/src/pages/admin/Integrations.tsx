@@ -416,6 +416,8 @@ function SharePointTab() {
     rootFolderPath: "ReadyPackets/Orders",
   });
   const [discoveredDrives, setDiscoveredDrives] = useState<Array<{ id: string; name: string; webUrl: string | null; isDefault: boolean }>>([]);
+  const [browsePath, setBrowsePath] = useState("");
+  const folders = trpc.integrations.browseGraphFolders.useQuery({ path: browsePath }, { enabled: Boolean(data?.enabled) });
 
   useEffect(() => {
     if (!data) return;
@@ -439,6 +441,11 @@ function SharePointTab() {
     onError(error) {
       toast.error("Could not discover SharePoint", error.message);
     },
+  });
+
+  const testConnection = trpc.integrations.testGraphConnection.useMutation({
+    onSuccess(result) { toast.success("SharePoint connection succeeded", `${result.siteName} · ${result.driveName} · ${result.rootFolderPath || "/"} (${result.folderCount} immediate folder${result.folderCount === 1 ? "" : "s"}).`); },
+    onError(error) { toast.error("SharePoint connection failed", error.message); },
   });
 
   const save = trpc.integrations.saveGraphConfig.useMutation({
@@ -482,7 +489,8 @@ function SharePointTab() {
             </div>
           ) : null}
           <div className="md:col-span-2">
-            <Input label="Root folder path" value={form.rootFolderPath} onChange={(e) => setForm({ ...form, rootFolderPath: e.target.value })} placeholder="ReadyPackets/Orders" help="Orders are created beneath customers/{customerId}/orders/{orderId}." />
+            <Input label="Root folder path" value={form.rootFolderPath} onChange={(e) => setForm({ ...form, rootFolderPath: e.target.value })} placeholder="ReadyPackets/Orders" help="Orders are created beneath customers/{customerId}/orders/{orderId}. Save settings, then browse to select an existing folder without creating one." />
+            {data?.enabled ? <div className="mt-3 rounded-lg border border-teal/20 bg-teal/5 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-semibold text-brand-navy">Select existing root folder</p><p className="text-xs text-gray-600">Browsing is read-only. Choose an existing SharePoint folder as the root; no folders or files are created.</p></div><div className="flex gap-2">{folders.data?.parentPath !== null && folders.data ? <Button size="sm" variant="outline" onClick={() => setBrowsePath(folders.data.parentPath ?? "")}>Up</Button> : null}<Button size="sm" variant="outline" busy={folders.isFetching} onClick={() => void folders.refetch()}>Refresh</Button></div></div><p className="mt-2 font-mono text-xs text-gray-600">/{(folders.data?.currentPath ?? browsePath) || ""}</p>{folders.isError ? <p className="mt-2 text-xs text-danger">{folders.error.message}</p> : null}<div className="mt-3 flex flex-wrap gap-2">{(folders.data?.folders ?? []).length ? folders.data!.folders.map((folder) => <Button key={folder.id} size="sm" variant="outline" onClick={() => setBrowsePath(folder.path)}>{folder.name}</Button>) : <span className="text-xs text-gray-500">No child folders found at this location.</span>}</div><div className="mt-3"><Button size="sm" variant="primary" disabled={!folders.data?.currentPath} onClick={() => setForm((current) => ({ ...current, rootFolderPath: folders.data?.currentPath ?? current.rootFolderPath }))}>Use current folder as root</Button></div></div> : <p className="mt-2 text-xs text-gray-500">Save valid site and document-library settings first, then the read-only folder browser will be available.</p>}
           </div>
         </div>
         <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-gray-100 pt-4">
@@ -499,6 +507,7 @@ function SharePointTab() {
           >
             Discover site & library
           </Button>
+          <Button variant="outline" busy={testConnection.isPending} disabled={!data?.enabled} onClick={() => testConnection.mutate()}>Test SharePoint connection</Button>
           <Button
             busy={save.isPending}
             disabled={!form.tenantId.trim() || !form.clientId.trim() || !form.siteId.trim() || !form.driveId.trim() || !form.rootFolderPath.trim() || (!form.clientSecret.trim() && !data?.hasSecret)}
@@ -516,7 +525,7 @@ function SharePointTab() {
             Save SharePoint settings
           </Button>
           {data?.siteUrl ? <a className="text-sm font-medium text-teal-700 hover:underline" href={data.siteUrl} target="_blank" rel="noreferrer">Open SharePoint site</a> : null}
-          <p className="basis-full text-xs text-gray-500">Step 1: enter the tenant, client, secret, and SharePoint URL. Step 2: use discovery to populate the site and document-library IDs. Step 3: review the selected library and save. Discovery uses the credentials only on the server and never displays the client secret.</p>
+          <p className="basis-full text-xs text-gray-500">Step 1: enter the tenant, client, secret, and SharePoint URL. Step 2: use discovery to populate the site and document-library IDs. Step 3: save, then use the read-only folder browser to select an existing root folder. Step 4: run Test SharePoint connection. Discovery and testing use credentials only on the server and never display the client secret.</p>
         </div>
       </Card>
 

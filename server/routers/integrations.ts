@@ -16,7 +16,7 @@ import { adminProcedure, staffProcedure, router } from "../trpc/trpc.js";
 import { TRPCError } from "@trpc/server";
 import { encryptField, decryptField } from "../security/crypto.js";
 import { env } from "../config/env.js";
-import { discoverSharePointConfig, runPhaseKickoff, resetGraphTokenCache } from "../services/sharepoint.js";
+import { browseSharePointFolders, discoverSharePointConfig, runPhaseKickoff, resetGraphTokenCache, testSharePointConnection } from "../services/sharepoint.js";
 import { getSetting, setSetting } from "../services/settings.js";
 import { recordActivity } from "../observability/audit.js";
 import { orders } from "../db/schema.js";
@@ -410,6 +410,31 @@ export const integrationsRouter = router({
         throw new TRPCError({ code: "PRECONDITION_FAILED", message });
       }
     }),
+
+  browseGraphFolders: adminProcedure
+    .input(z.object({ path: z.string().trim().max(240).optional() }))
+    .query(async ({ ctx, input }) => {
+      try {
+        const result = await browseSharePointFolders(input.path ?? "");
+        void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "sharepoint.root_folder_browsed", entityType: "sharepoint", entityId: 0, summary: `Browsed SharePoint folder ${result.currentPath || "/"}`, ipAddress: ctx.clientIp });
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message.slice(0, 500) : "Could not browse SharePoint folders.";
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message });
+      }
+    }),
+
+  testGraphConnection: adminProcedure.mutation(async ({ ctx }) => {
+    try {
+      const result = await testSharePointConnection();
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "sharepoint.connection_test_succeeded", entityType: "sharepoint", entityId: 0, summary: `SharePoint connection test succeeded for ${result.siteName} / ${result.driveName}`, ipAddress: ctx.clientIp });
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message.slice(0, 500) : "SharePoint connection test failed.";
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "sharepoint.connection_test_failed", entityType: "sharepoint", entityId: 0, severity: "warning", summary: "SharePoint connection test failed", ipAddress: ctx.clientIp });
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message });
+    }
+  }),
 
   saveGraphConfig: adminProcedure
     .input(z.object({

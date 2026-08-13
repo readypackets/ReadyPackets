@@ -129,3 +129,12 @@ Customers see the selected file name, size, and publication date, then request a
 ### Customer order status and progress visibility
 
 Customer-facing order surfaces show the live order status and numeric completion percentage. The portal dashboard’s Recent orders list, the My orders table, the individual order workspace, and every guided workflow stage display the current status and completion percentage with a labeled progress bar. Administrators control the underlying status and completion percentage through order transitions, workflow stage actions, and configured order automations. Customer views receive the active administrator-configured status label rather than only a raw internal status key.
+
+
+### SharePoint connection test, root-folder selection, and audio synchronization
+
+Open **Admin → Integrations → SharePoint & SAML** to configure the Microsoft Graph tenant, application client ID, write-only client secret, SharePoint site URL, and document library. Select **Discover site & library** before saving to populate the Graph site and drive identifiers. After saving valid settings, use **Select existing root folder** to browse existing folders in the selected document library. Browsing is read-only: choosing **Use current folder as root** updates only the form, and selecting **Save SharePoint settings** activates the new root.
+
+Select **Test SharePoint connection** after saving. The test authenticates to Microsoft Graph and verifies read access to the configured site, document library, and selected root folder without creating, changing, or uploading SharePoint content. The portal keeps the client secret encrypted at rest and never returns it to the browser.
+
+If document synchronization succeeds but a WebM recording records a SharePoint `invalidRequest`, the Graph credentials, selected site, drive, and folder route are working. The Microsoft 365 tenant or library is then rejecting the `.webm` extension or the media content through a blocked-file-type, Purview/DLP, retention, or similar library policy. Have a Microsoft 365/SharePoint administrator permit `.webm` for the intended document library if appropriate, then retry the failed file or record a new pitch. Do not weaken the portal's WebM validation or replace the encrypted Graph credentials as a workaround for a tenant-side policy.

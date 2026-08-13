@@ -87,6 +87,42 @@ export function resetGraphTokenCache(): void {
   _tokenCache = null;
 }
 
+function encodeDrivePath(path: string): string {
+  return path.split("/").filter(Boolean).map((segment) => encodeURIComponent(segment)).join("/");
+}
+
+export interface SharePointFolderChoice { id: string; name: string; path: string }
+
+/** List existing folders beneath a configured drive path without creating or altering anything. */
+export async function browseSharePointFolders(path = ""): Promise<{ currentPath: string; parentPath: string | null; folders: SharePointFolderChoice[] }> {
+  const config = await getGraphRuntimeConfig();
+  if (!config.enabled || !config.driveId) throw new Error("Save valid Microsoft Graph and SharePoint settings before browsing folders.");
+  const normalized = path.trim() ? normalizeSharePointRelativePath(path) : "";
+  const currentId = normalized
+    ? ((await graphRequest("GET", `/drives/${config.driveId}/root:/${encodeDrivePath(normalized)}`)) as { id?: string }).id
+    : "root";
+  if (!currentId) throw new Error("The selected SharePoint folder could not be found.");
+  const childrenPath = normalized
+    ? `/drives/${config.driveId}/items/${currentId}/children?$select=id,name,folder&$top=200`
+    : `/drives/${config.driveId}/root/children?$select=id,name,folder&$top=200`;
+  const children = (await graphRequest("GET", childrenPath)) as { value?: Array<{ id?: string; name?: string; folder?: unknown }> };
+  const folders = (children.value ?? []).flatMap((item) => item.id && item.name && item.folder !== undefined ? [{ id: item.id, name: item.name, path: normalized ? `${normalized}/${item.name}` : item.name }] : []);
+  const parts = normalized.split("/").filter(Boolean);
+  return { currentPath: normalized, parentPath: parts.length > 1 ? parts.slice(0, -1).join("/") : parts.length === 1 ? "" : null, folders };
+}
+
+/** Verify credentials, selected site, drive, and existing root path without writing any SharePoint content. */
+export async function testSharePointConnection(): Promise<{ siteName: string; driveName: string; rootFolderPath: string; folderCount: number }> {
+  const config = await getGraphRuntimeConfig();
+  if (!config.enabled || !config.siteId || !config.driveId) throw new Error("Complete and save tenant, client, secret, site, and document-library settings before testing the connection.");
+  const [site, drive, root] = await Promise.all([
+    graphRequest("GET", `/sites/${encodeURIComponent(config.siteId)}?$select=id,displayName,name`) as Promise<{ displayName?: string; name?: string }>,
+    graphRequest("GET", `/drives/${encodeURIComponent(config.driveId)}?$select=id,name`) as Promise<{ name?: string }>,
+    browseSharePointFolders(config.rootFolderPath),
+  ]);
+  return { siteName: site.displayName ?? site.name ?? "SharePoint site", driveName: drive.name ?? "Document library", rootFolderPath: root.currentPath, folderCount: root.folders.length };
+}
+
 interface GraphCredentials {
   tenantId: string;
   clientId: string;
@@ -344,18 +380,27 @@ async function uploadPlaceholder(folderId: string, fileName: string, content: st
   return uploadTextFile(folderId, fileName, content);
 }
 
-async function uploadBinaryFile(folderId: string, fileName: string, content: Buffer, contentType: string): Promise<string> {
+async function uploadBinaryFile(folderId: string, fileName: string, content: Buffer, _contentType: string): Promise<string> {
   const { driveId } = await getGraphRuntimeConfig();
   if (!driveId) throw new Error("GRAPH_SHAREPOINT_DRIVE_ID must be set.");
+  if (content.byteLength > 250 * 1024 * 1024) throw new Error("This file exceeds the 250 MB Microsoft Graph direct-upload limit.");
   const token = await getGraphToken();
   const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}:/content`;
-  const body = content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength) as ArrayBuffer;
-  const response = await fetch(url, { method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Type": contentType }, body });
+  // Send the verified local bytes as an opaque stream. This avoids browser media
+  // MIME negotiation, while any remaining 400 response can be diagnosed as a
+  // SharePoint library or tenant file-policy decision rather than a portal MIME error.
+  const response = await fetch(url, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/octet-stream", "Content-Length": String(content.byteLength) },
+    body: content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength) as ArrayBuffer,
+  });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`SharePoint binary upload failed (${response.status}): ${text.slice(0, 300)}`);
+    const policyHint = response.status === 400 ? ` The selected SharePoint library may block the ${fileName.split(".").pop()?.toLowerCase() || "file"} extension or media type; review its file-type and Purview/DLP policies.` : "";
+    throw new Error(`SharePoint binary upload failed (${response.status}): ${text.slice(0, 300)}${policyHint}`);
   }
-  const data = (await response.json()) as { id: string };
+  const data = (await response.json()) as { id?: string };
+  if (!data.id) throw new Error("Microsoft Graph did not return a SharePoint item ID after upload.");
   return data.id;
 }
 
