@@ -510,6 +510,7 @@ function LogsPanel({ initialIp = "" }: { initialIp?: string }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [selected, setSelected] = useState<Record<string, unknown> | null>(null);
+  const [sourceIp, setSourceIp] = useState<string | null>(null);
   const [blocking, setBlocking] = useState<{ ipAddress: string } | null>(null);
   const [banning, setBanning] = useState<{ userId: number } | null>(null);
   useEffect(() => { if (initialIp) { setStream("security"); setIpAddress(initialIp); } }, [initialIp]);
@@ -532,7 +533,8 @@ function LogsPanel({ initialIp = "" }: { initialIp?: string }) {
   const activityLogs = trpc.adminSecurity.activityLogs.useQuery({ limit: 200, offset: 0 }, { enabled: stream === "activity" });
   const emailLog = trpc.adminSecurity.emailLog.useQuery({ limit: 200 }, { enabled: stream === "email" });
   const review = trpc.adminSecurity.reviewSecurityLog.useMutation({ onSuccess: (entry) => setSelected(entry as unknown as Record<string, unknown>), onError: (error) => toast.error("Could not open event", errorMessage(error)) });
-  const block = trpc.adminSecurity.blockLogIp.useMutation({ onSuccess: () => { setBlocking(null); toast.success("Address blocked", "The source address has been added to the network blocklist."); }, onError: (error) => toast.error("Could not block address", errorMessage(error)) });
+  const sourceActivity = trpc.adminSecurity.sourceActivity.useQuery({ ipAddress: sourceIp ?? "0.0.0.0", limit: 200 }, { enabled: Boolean(sourceIp) });
+  const block = trpc.adminSecurity.blockLogIp.useMutation({ onSuccess: () => { setBlocking(null); void securityLogs.refetch(); void sourceActivity.refetch(); toast.success("Address blocked", "The source address has been added to the network blocklist."); }, onError: (error) => toast.error("Could not block address", errorMessage(error)) });
   const ban = trpc.adminSecurity.banLogUser.useMutation({ onSuccess: () => { setBanning(null); void securityLogs.refetch(); toast.success("Account banned", "The account has been deactivated and all active sessions were revoked."); }, onError: (error) => toast.error("Could not ban account", errorMessage(error)) });
 
   const resetFilters = () => { setSeverity(""); setEventType(""); setOutcome(""); setIpAddress(""); setUserId(""); setQuery(""); setFrom(""); setTo(""); };
@@ -558,7 +560,7 @@ function LogsPanel({ initialIp = "" }: { initialIp?: string }) {
 
       {stream === "security" ? (securityLogs.isLoading ? <Skeleton className="h-64 w-full" /> : (securityLogs.data?.rows ?? []).length === 0 ? <EmptyState icon={ShieldCheck} title="No matching security events" description="Either nothing has happened, or your filters are too narrow." /> : (
         <Card padded={false}><ul className="divide-y divide-line">{(securityLogs.data?.rows ?? []).map((entry) => (
-          <li key={entry.id} className="px-4 py-3"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Badge tone={SEVERITY_TONES[entry.severity] ?? "neutral"}>{entry.severity}</Badge><code className="text-xs text-muted">{entry.eventType}</code>{entry.outcome ? <Badge tone="neutral">{entry.outcome}</Badge> : null}</div><p className="mt-1.5 text-sm text-ink">{entry.message}</p><p className="mt-0.5 font-mono text-xs text-muted">{entry.ipAddress ?? "no address"}{entry.userPublicId ? ` · account ${entry.userPublicId}` : entry.userId ? " · linked account" : ""}</p></div><div className="flex shrink-0 flex-wrap items-center gap-2"><span className="text-xs text-muted">{formatDateTime(entry.createdAt)}</span><Button size="sm" variant="outline" busy={review.isPending} onClick={() => review.mutate({ id: entry.id })} leadingIcon={<Eye className="size-3.5" aria-hidden="true" />}>View</Button>{entry.ipAddress ? <Button size="sm" variant="danger" onClick={() => setBlocking({ ipAddress: entry.ipAddress! })}>Block IP</Button> : null}{entry.userId ? <Button size="sm" variant="danger" onClick={() => setBanning({ userId: entry.userId! })}>Ban account</Button> : null}</div></div></li>
+          <li key={entry.id} className="px-4 py-3"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Badge tone={SEVERITY_TONES[entry.severity] ?? "neutral"}>{entry.severity}</Badge><code className="text-xs text-muted">{entry.eventType}</code>{entry.outcome ? <Badge tone="neutral">{entry.outcome}</Badge> : null}</div><p className="mt-1.5 text-sm text-ink">{entry.message}</p><p className="mt-0.5 font-mono text-xs text-muted">{entry.ipAddress ?? "no address"}{entry.userPublicId ? ` · account ${entry.userPublicId}` : entry.userId ? " · linked account" : ""}</p></div><div className="flex shrink-0 flex-wrap items-center gap-2"><span className="text-xs text-muted">{formatDateTime(entry.createdAt)}</span><Button size="sm" variant="outline" busy={review.isPending} onClick={() => review.mutate({ id: entry.id })} leadingIcon={<Eye className="size-3.5" aria-hidden="true" />}>View</Button>{entry.ipAddress ? <Button size="sm" variant="outline" onClick={() => setSourceIp(entry.ipAddress!)}>Investigate</Button> : null}{entry.ipAddress ? <Button size="sm" variant={entry.isBlocked ? "outline" : "danger"} disabled={entry.isBlocked} onClick={() => setBlocking({ ipAddress: entry.ipAddress! })}>{entry.isBlocked ? "Already blocked" : "Block IP"}</Button> : null}{entry.userId ? <Button size="sm" variant="danger" onClick={() => setBanning({ userId: entry.userId! })}>Ban account</Button> : null}</div></div></li>
         ))}</ul></Card>
       )) : null}
 
@@ -566,6 +568,9 @@ function LogsPanel({ initialIp = "" }: { initialIp?: string }) {
 
       {stream === "email" ? (emailLog.isLoading ? <Skeleton className="h-64 w-full" /> : <Card padded={false}><ul className="divide-y divide-line">{(emailLog.data ?? []).map((entry) => <li key={entry.id} className="flex flex-wrap items-start justify-between gap-3 px-4 py-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Badge tone={entry.status === "sent" ? "success" : entry.status === "failed" ? "danger" : "warning"}>{entry.status}</Badge><code className="text-xs text-muted">{entry.templateKey ?? "ad-hoc"}</code></div><p className="mt-1.5 truncate text-sm text-ink">{entry.subject}</p>{entry.detail ? <p className="mt-0.5 text-xs text-danger">{entry.detail}</p> : null}</div><span className="shrink-0 text-xs text-muted">{formatDateTime(entry.createdAt)}</span></li>)}</ul></Card>) : null}
 
+      <Modal open={Boolean(sourceIp)} onClose={() => setSourceIp(null)} title="Source activity investigation" description="This view shows application events and requested paths captured for this network source. It does not execute or expose operating-system commands." footer={<Button variant="outline" onClick={() => setSourceIp(null)}>Close</Button>}>
+        {sourceActivity.isLoading ? <Skeleton className="h-40 w-full" /> : sourceActivity.data ? <div className="space-y-4"><Alert tone={sourceActivity.data.blocked ? "success" : "warning"} title={sourceActivity.data.blocked ? "Address is currently blocked" : "Address is not currently blocked"}>{sourceActivity.data.ipAddress}</Alert><div className="max-h-80 overflow-auto rounded-lg border border-line"><table className="w-full min-w-[620px] text-left text-sm"><thead className="border-b border-line text-xs uppercase tracking-wide text-muted"><tr><th className="px-3 py-2">Time</th><th className="px-3 py-2">Event</th><th className="px-3 py-2">Request action</th><th className="px-3 py-2">Outcome</th></tr></thead><tbody>{sourceActivity.data.events.map((event) => <tr key={event.id} className="border-b border-line/70"><td className="px-3 py-2 text-xs text-muted">{formatDateTime(event.createdAt)}</td><td className="px-3 py-2"><code className="text-xs">{event.eventType}</code><p className="mt-1 text-xs text-body">{event.message}</p></td><td className="px-3 py-2 font-mono text-xs">{event.method && event.path ? `${event.method} ${event.path}` : "No request path captured"}</td><td className="px-3 py-2">{event.outcome ?? "—"}</td></tr>)}</tbody></table></div></div> : null}
+      </Modal>
       <Modal open={Boolean(selected)} onClose={() => setSelected(null)} title="Security event review" footer={<Button variant="outline" onClick={() => setSelected(null)}>Close</Button>}>
         {selected ? <div className="space-y-4"><div className="grid gap-3 sm:grid-cols-2"><p><span className="text-xs text-muted">Event</span><br /><code>{String(selected.eventType ?? "—")}</code></p><p><span className="text-xs text-muted">Recorded</span><br />{selected.createdAt ? formatDateTime(selected.createdAt as Date) : "—"}</p><p><span className="text-xs text-muted">Source</span><br /><code>{String(selected.ipAddress ?? "no address")}</code></p><p><span className="text-xs text-muted">Account</span><br />{selected.userPublicId ? String(selected.userPublicId) : selected.userId ? "Linked account" : "No linked account"}</p></div><div><p className="text-xs text-muted">Message</p><p className="mt-1 text-sm text-ink">{String(selected.message ?? "—")}</p></div><div><p className="text-xs text-muted">Metadata</p><pre className="mt-1 max-h-48 overflow-auto rounded-lg bg-surface-sunken p-3 text-xs text-ink">{JSON.stringify(selected.metadata ?? {}, null, 2)}</pre></div></div> : null}
       </Modal>
@@ -577,7 +582,8 @@ function LogsPanel({ initialIp = "" }: { initialIp?: string }) {
 
 function SessionsPanel() {
   const toast = useToast();
-  const sessions = trpc.adminSecurity.activeSessions.useQuery();
+  const [query, setQuery] = useState("");
+  const sessions = trpc.adminSecurity.activeSessions.useQuery({ query: query.trim() || undefined });
   const [confirmId, setConfirmId] = useState<string | null>(null);
 
   const revoke = trpc.adminSecurity.revokeUserSession.useMutation({
@@ -595,51 +601,11 @@ function SessionsPanel() {
 
   return (
     <>
+      <Card className="mb-5"><Input label="Search active sessions" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Name, RP-U ID, source address, or device" leadingIcon={<Filter className="size-4" aria-hidden="true" />} help="Source address is preserved for new MFA/password session rotations. Older sessions may show Not captured." /></Card>
       <Card padded={false}>
-        <ul className="divide-y divide-line">
-          {(sessions.data ?? []).map((entry) => (
-            <li key={entry.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5">
-              <div className="min-w-0">
-                <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-ink">
-                  {entry.user}
-                  {entry.mfaPending ? <Badge tone="warning">MFA pending</Badge> : null}
-                </p>
-                <p className="mt-0.5 font-mono text-xs text-muted">
-                  {entry.ipAddress ?? "no address"}
-                </p>
-                <p className="mt-0.5 truncate text-xs text-muted" title={entry.userAgent ?? ""}>
-                  {entry.userAgent ?? "Unknown device"}
-                </p>
-                <p className="mt-0.5 text-xs text-muted">
-                  Last active {formatRelative(entry.lastSeenAt)} · expires{" "}
-                  {formatDateTime(entry.expiresAt)}
-                </p>
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setConfirmId(entry.id)}
-                leadingIcon={<UserX className="size-4" aria-hidden="true" />}
-              >
-                Revoke
-              </Button>
-            </li>
-          ))}
-        </ul>
+        {(sessions.data ?? []).length ? <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-sm"><thead className="border-b border-line text-xs uppercase tracking-wide text-muted"><tr><th className="px-4 py-3">Account</th><th className="px-4 py-3">Public ID</th><th className="px-4 py-3">Source address</th><th className="px-4 py-3">Device</th><th className="px-4 py-3">Last activity</th><th className="px-4 py-3">Expires</th><th className="px-4 py-3" /></tr></thead><tbody>{(sessions.data ?? []).map((entry) => <tr key={entry.id} className="border-b border-line/70 align-top"><td className="px-4 py-3 font-medium text-ink">{entry.user}{entry.mfaPending ? <Badge className="ml-2" tone="warning">MFA pending</Badge> : null}</td><td className="px-4 py-3 font-mono text-xs">{entry.userPublicId ?? "—"}</td><td className="px-4 py-3 font-mono text-xs text-muted">{entry.ipAddress ?? "Not captured"}</td><td className="max-w-56 truncate px-4 py-3 text-xs text-muted" title={entry.userAgent ?? ""}>{entry.userAgent ?? "Not captured"}</td><td className="px-4 py-3 text-xs text-muted" title={formatDateTime(entry.lastSeenAt)}>{formatRelative(entry.lastSeenAt)}</td><td className="px-4 py-3 text-xs text-muted">{formatDateTime(entry.expiresAt)}</td><td className="px-4 py-3 text-right"><Button size="sm" variant="outline" onClick={() => setConfirmId(entry.id)} leadingIcon={<UserX className="size-4" aria-hidden="true" />}>Revoke</Button></td></tr>)}</tbody></table></div> : <EmptyState icon={ShieldCheck} title="No active sessions match" description="Clear or broaden the search to review active signed-in devices." />}
       </Card>
-
-      <ConfirmDialog
-        open={confirmId !== null}
-        onClose={() => setConfirmId(null)}
-        onConfirm={() => {
-          if (confirmId) revoke.mutate({ sessionId: confirmId });
-        }}
-        title="Revoke this session?"
-        message="The user will be signed out on that device immediately and must authenticate again."
-        confirmLabel="Revoke session"
-        variant="danger"
-        busy={revoke.isPending}
-      />
+      <ConfirmDialog open={confirmId !== null} onClose={() => setConfirmId(null)} onConfirm={() => { if (confirmId) revoke.mutate({ sessionId: confirmId }); }} title="Revoke this session?" message="The user will be signed out on that device immediately and must authenticate again." confirmLabel="Revoke session" variant="danger" busy={revoke.isPending} />
     </>
   );
 }

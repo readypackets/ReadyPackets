@@ -541,7 +541,7 @@ const announcementsRouter = router({
 const BACKUP_CONTROL_SOCKET = "/run/readypackets/backup-control.sock";
 const BACKUP_DIR = "/var/backups/readypackets";
 const BACKUP_EXPORT_DIR = "/var/lib/readypackets/storage/admin-exports";
-const BACKUP_FILENAME = /^readypackets-[0-9TZ-]+\\.tar\\.gz(?:\\.(?:age|gpg))?$/;
+const BACKUP_FILENAME = /^readypackets-[0-9TZ-]+\.tar\.gz(?:\.(?:age|gpg))?$/;
 
 function parseBackupControl(output: string) {
   return Object.fromEntries(output.split("\n").map((line) => line.split("=", 2)).filter(([key, value]) => Boolean(key) && value !== undefined));
@@ -593,9 +593,22 @@ const systemBackupsRouter = router({
     ),
   files: adminProcedure.query(async () => availableBackupFiles()),
   status: adminProcedure.query(async () => {
-    const output = await runBackupControl(["status"]).catch((error) => { throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: `Backup control is unavailable: ${String(error.message ?? error)}` }); });
-    const [scheduleLine, ...targetLines] = output.split("\\n");
-    return { nextRun: scheduleLine?.replace(/^next_run=/, "") || null, targets: targetLines.filter((line) => line.includes("|")).map((line) => { const [provider, destination] = line.split("|", 2); return { provider, destination }; }) };
+    const [output, archives] = await Promise.all([
+      runBackupControl(["status"]).catch((error) => { throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: `Backup control is unavailable: ${String(error.message ?? error)}` }); }),
+      availableBackupFiles(),
+    ]);
+    const values = parseBackupControl(output);
+    const targets = output.split("\n").filter((line) => line.includes("|")).map((line) => { const [provider, destination] = line.split("|", 2); return { provider, destination }; });
+    return {
+      nextRun: values.next_run || null,
+      targets,
+      backupState: values.backup_state || "unknown",
+      backupResult: values.backup_result || null,
+      backupStarted: values.backup_started || null,
+      backupFinished: values.backup_finished || null,
+      archiveCount: archives.length,
+      lastArchive: archives[0] ?? null,
+    };
   }),
   start: adminProcedure.mutation(async ({ ctx }) => {
     await runBackupControl(["start"]);

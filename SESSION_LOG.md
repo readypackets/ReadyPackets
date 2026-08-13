@@ -2192,3 +2192,14 @@ The new administrator-only **Platform setup** wizard centralizes first-run confi
 
 
 **Publication record:** The backup repair and provider-specific cloud configuration source was published to the private repository as commit `b23465d36c79037f673f70f6b38e9ce32d6906cb`. Production was marked with that release commit after the portal, timer, and root backup-control daemon were verified active. The final session-log publication record follows this release entry.
+
+
+## 2026-08-13 — Backup-status reconciliation and Security Centre operations
+
+**Prompt:** Explain and resolve the backup-page status discrepancy and legacy backup alerts; improve Security Centre session visibility, make block actions reflect already-blocked sources, explain how to test blocking, and expose the actions recorded for a hostile source.
+
+**Findings:** The backup page reported zero archives because its server filename regular expression accidentally used double-escaped dots, so valid `readypackets-…tar.gz` files did not match. The actual protected archive directory contained 20 valid local archives and was readable by the portal service. The separate activity-record table was empty because historic root backup jobs were never inserted into `system_backups`; local archive discovery is now treated as the authoritative operational status. The two open `trpc:tier3.systemBackups.start` and `setSchedule` alerts were retained as historical records, acknowledged, and resolved only after a socket-routed backup completed and passed verification.
+
+**Delivered:** The backup status API now returns live systemd job state/result, timing, archive count, and latest archive. The dashboard automatically polls while viewing the page and displays a persistent job-status card. Archive recognition was corrected. Security Centre now presents active sessions in a searchable grid with account, public ID, source address, device, activity, expiry, MFA state, and revoke action. New session rotations preserve previously captured source/device metadata; older sessions correctly display `Not captured` rather than misleadingly implying a platform failure. Security log rows now identify source addresses already covered by active exact/CIDR/range blocks and disable the redundant block action. The new **Investigate** view shows application-level security events and captured HTTP method/path metadata for a source address, explicitly without exposing or running operating-system commands.
+
+**Operational verification:** The portal, root backup-control daemon, and timer were active after deployment; health returned `{"status":"ok"}`; the protected status path reported `backup_state=inactive` and `backup_result=success`; and the portal service saw 20 local archive files. TypeScript passed without errors, the full test suite passed 155/155, and backup helper shell syntax passed. Timestamped rollback material was retained at `/opt/readypackets/rollback-20260813063005`.

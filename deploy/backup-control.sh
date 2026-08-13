@@ -182,7 +182,11 @@ case "${1:-}" in
     ;;
   status)
     time="$(systemctl show "$TIMER_UNIT" --property=NextElapseUSecRealtime --value 2>/dev/null || true)"
-    printf 'next_run=%s\n' "${time:-}"
+    backup_state="$(systemctl show "$SERVICE_UNIT" --property=ActiveState --value 2>/dev/null || true)"
+    backup_result="$(systemctl show "$SERVICE_UNIT" --property=Result --value 2>/dev/null || true)"
+    backup_started="$(systemctl show "$SERVICE_UNIT" --property=ActiveEnterTimestamp --value 2>/dev/null || true)"
+    backup_finished="$(systemctl show "$SERVICE_UNIT" --property=InactiveEnterTimestamp --value 2>/dev/null || true)"
+    printf 'next_run=%s\nbackup_state=%s\nbackup_result=%s\nbackup_started=%s\nbackup_finished=%s\n' "${time:-}" "${backup_state:-unknown}" "${backup_result:-unknown}" "${backup_started:-}" "${backup_finished:-}"
     [[ -r "$TARGETS_FILE" ]] && cat "$TARGETS_FILE" || true
     ;;
   schedule)

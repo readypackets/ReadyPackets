@@ -117,9 +117,18 @@ export async function rotateSession(
   current: ActiveSession,
   changes: { mfaPending?: boolean; restricted?: boolean } = {},
 ): Promise<{ sessionId: string; csrfToken: string }> {
+  // Preserve the source metadata captured at initial sign-in. MFA and password
+  // rotations must not make an otherwise attributable session appear anonymous.
+  const metadata = await db
+    .select({ ipAddress: userSessions.ipAddress, userAgent: userSessions.userAgent })
+    .from(userSessions)
+    .where(eq(userSessions.id, current.sessionId))
+    .limit(1);
   await revokeSession(current.sessionId, "rotated");
   return createSession(res, {
     userId: current.user.id,
+    ipAddress: metadata[0]?.ipAddress ?? null,
+    userAgent: metadata[0]?.userAgent ?? null,
     mfaPending: changes.mfaPending ?? false,
     restricted: changes.restricted ?? false,
   });

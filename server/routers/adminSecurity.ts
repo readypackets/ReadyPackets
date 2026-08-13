@@ -11,7 +11,7 @@
  */
 import { TRPCError } from "@trpc/server";
 import { notifyMaintenanceStart, notifyMaintenanceEnd } from "../services/maintenanceNotify.js";
-import { and, count, desc, eq, gte, like, lte, or, isNull, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, gte, like, lte, or, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { env } from "../config/env.js";
 import { db } from "../db/client.js";
@@ -45,7 +45,7 @@ import {
   setSetting,
 } from "../services/settings.js";
 import { blacklistIp, invalidateIpCaches } from "../security/ipBlacklist.js";
-import { detectPatternType } from "../security/ipAddress.js";
+import { detectPatternType, ipMatchesPattern } from "../security/ipAddress.js";
 import { countQueuedEmails, sendTestEmail } from "../services/email.js";
 import { revokeAllUserSessions, revokeSession } from "../auth/session.js";
 import { pingDatabase } from "../db/client.js";
@@ -300,11 +300,29 @@ export const adminSecurityRouter = router({
       if (input.from) conditions.push(gte(securityLogs.createdAt, new Date(`${input.from}T00:00:00.000Z`)));
       if (input.to) conditions.push(lte(securityLogs.createdAt, new Date(`${input.to}T23:59:59.999Z`)));
       const where = conditions.length > 0 ? and(...conditions) : undefined;
-      const [rows, totals] = await Promise.all([
+      const [rows, totals, activeBlocks] = await Promise.all([
         db.select({ entry: securityLogs, userPublicId: users.publicId }).from(securityLogs).leftJoin(users, eq(users.id, securityLogs.userId)).where(where).orderBy(desc(securityLogs.createdAt)).limit(input.limit).offset(input.offset),
         db.select({ total: count() }).from(securityLogs).where(where),
+        db.select({ pattern: ipBlacklist.pattern }).from(ipBlacklist).where(or(isNull(ipBlacklist.expiresAt), gt(ipBlacklist.expiresAt, new Date()))),
       ]);
-      return { rows: rows.map((row) => ({ ...row.entry, userPublicId: row.userPublicId ?? null })), total: Number(totals[0]?.total ?? 0) };
+      return { rows: rows.map((row) => ({ ...row.entry, userPublicId: row.userPublicId ?? null, isBlocked: row.entry.ipAddress ? activeBlocks.some((block) => ipMatchesPattern(row.entry.ipAddress!, block.pattern)) : false })), total: Number(totals[0]?.total ?? 0) };
+    }),
+
+  sourceActivity: adminProcedure
+    .input(z.object({ ipAddress: ipPatternSchema, limit: z.number().int().min(1).max(200).default(100) }))
+    .query(async ({ input }) => {
+      const [entries, activeBlocks] = await Promise.all([
+        db.select({ id: securityLogs.id, eventType: securityLogs.eventType, severity: securityLogs.severity, outcome: securityLogs.outcome, message: securityLogs.message, metadata: securityLogs.metadata, createdAt: securityLogs.createdAt }).from(securityLogs).where(eq(securityLogs.ipAddress, input.ipAddress)).orderBy(desc(securityLogs.createdAt)).limit(input.limit),
+        db.select({ pattern: ipBlacklist.pattern }).from(ipBlacklist).where(or(isNull(ipBlacklist.expiresAt), gt(ipBlacklist.expiresAt, new Date()))),
+      ]);
+      return {
+        ipAddress: input.ipAddress,
+        blocked: activeBlocks.some((block) => ipMatchesPattern(input.ipAddress, block.pattern)),
+        events: entries.map((entry) => {
+          const metadata = entry.metadata && typeof entry.metadata === "object" ? entry.metadata as Record<string, unknown> : {};
+          return { ...entry, method: typeof metadata.method === "string" ? metadata.method : null, path: typeof metadata.path === "string" ? metadata.path : null };
+        }),
+      };
     }),
 
   reviewSecurityLog: adminProcedure
@@ -461,7 +479,7 @@ export const adminSecurityRouter = router({
   /* Sessions                                                          */
   /* ---------------------------------------------------------------- */
 
-  activeSessions: adminProcedure.query(async () => {
+  activeSessions: adminProcedure.input(z.object({ query: z.string().trim().max(160).optional() }).optional()).query(async ({ input }) => {
     const rows = await db
       .select({
         id: userSessions.id,
@@ -485,7 +503,12 @@ export const adminSecurityRouter = router({
       names.set(userId, user ? `${displayNameOf(user)} (${user.role})` : "Deleted user");
     }
 
-    return rows.map((row) => ({ ...row, user: names.get(row.userId) ?? "Unknown" }));
+    const enriched = await Promise.all(rows.map(async (row) => {
+      const user = await getUserById(row.userId);
+      return { ...row, user: names.get(row.userId) ?? "Unknown", userPublicId: user?.publicId ?? null };
+    }));
+    const query = input?.query?.toLowerCase();
+    return query ? enriched.filter((row) => [row.user, row.userPublicId, row.ipAddress, row.userAgent].some((value) => value?.toLowerCase().includes(query))) : enriched;
   }),
 
   revokeUserSession: adminProcedure
