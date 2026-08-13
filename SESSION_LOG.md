@@ -2290,3 +2290,8 @@ Production was checked without changing application code. `/opt/readypackets/REL
 Workflow stages now expose independent SharePoint destination fields for documents and audio. The pre-existing stage destination is retained as the document destination for compatibility. A new audio destination accepts the same server-validated safe relative folder path. When no custom folder is entered, non-audio files resolve to a `Docs` subfolder and browser-recorded or uploaded audio resolves to a separate `Audio` subfolder; phase templates are selected by file category rather than by the first matching template.
 
 The asynchronous SharePoint queue now classifies every accepted order file from its validated MIME type and extension before recording or executing the sync. Audio includes browser-recorded WebM, audio MIME types, and approved audio container extensions. The queued and worker paths both re-resolve the category-specific destination before Graph upload, so a forged browser filename cannot select the document folder for an accepted audio file. TypeScript validation, 155/155 automated tests, production client/server builds, and health verification completed successfully. The release retained `/opt/readypackets/rollback-20260813181606-sharepoint-category-routing` plus its prior client directory.
+
+
+### Publication record
+
+The category-separated SharePoint destination implementation was published in commit `6e71f15c8e7f336945780be7fe5e33e1a8a06430` (`feat: separate SharePoint document and audio destinations`). The production release marker was updated after a successful `{"status":"ok"}` health response, and the VPS operations record now includes the corresponding rollback locations.
