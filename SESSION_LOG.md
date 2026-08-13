@@ -2276,3 +2276,10 @@ Validation completed with TypeScript zero errors and 155/155 automated tests pas
 ### Publication record
 
 The deployed implementation was published in Git commit `b8d2a214809f3eca90d2058e04e3f1c652b0c05f` (`feat: extend workflow management and acknowledgement controls`). The production release marker was updated to that commit after the portal health endpoint returned `{"status":"ok"}`. The VPS operations record was updated with the rollback locations and operational safeguards.
+
+
+## 2026-08-13 — GitHub synchronization and rollback-readiness verification
+
+The repository was fetched from `origin/main` and verified synchronized at `0921ccf510615516e6001f5c9a7758aa546478e4`; local `HEAD` and `origin/main` matched exactly. The latest implementation release remains `b8d2a214809f3eca90d2058e04e3f1c652b0c05f`, with the following commit carrying its publication record.
+
+Production was checked without changing application code. `/opt/readypackets/RELEASE_COMMIT` matches the deployed implementation commit `b8d2a214809f3eca90d2058e04e3f1c652b0c05f`, the portal service is active, and the health endpoint returned `{"status":"ok"}`. The host retains the latest workflow-management rollback archive at `/opt/readypackets/rollback-20260813175014-workflow-management`, along with prior rollback directories for guided workflow, status integrity, certificate management, backups, and other releases. The repository retains normal Git commit rollback points and the immutable pre-microphone-policy checkpoint tag.
