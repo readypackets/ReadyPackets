@@ -2240,3 +2240,6 @@ All order workflows are now persisted as `wizard` presentation through migration
 
 
 **Follow-up wizard routing:** Legacy customer URLs `/portal/orders/:id/intake` and `/portal/orders/:id/phase-2` now redirect to the corresponding guided workflow stages (`phase_1_intake` and `phase_2_synthesis`). This removes the remaining standalone customer phase paths so every supported customer order phase enters the same sequential, server-enforced wizard. The rebuilt client was deployed with rollback copy `/opt/readypackets/rollback-20260813150443-legacy-wizard-client`; health remained `{"status":"ok"}`. Publication pending for this follow-up client route change.
+
+
+**Follow-up publication completed:** The guided-workflow legacy-route fix was published as `5c1be6c0bc2660cf225db28f23884b55d0b35178`; production `RELEASE_COMMIT` now matches and the portal health check remained `{"status":"ok"}`.
