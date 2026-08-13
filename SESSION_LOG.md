@@ -2037,3 +2037,24 @@ No secret or customer data is included. Specifically excluded are environment-va
 ### Planned corrective experiment
 
 After the checkpoint publication, the sole code change will replace `microphone=()` with the least-privilege `microphone=(self)` directive in the central security-header policy. The corrected server bundle will be deployed to production for user testing but deliberately left uncommitted and unpushed until the user confirms that browser recording works.
+
+
+## 2026-08-13 — Approved microphone-policy release and WebM verification
+
+### User confirmation
+
+> it prompted me to record so you can now committ that change to github but i also need to know what audio format is being used because there is a restriction on the audio file type to only upload WEBM audio format
+
+### Approved correction
+
+The user confirmed that the production test deployment reached the browser recording prompt. The previously uncommitted policy correction is therefore approved for publication: the global security header now uses `microphone=(self)` rather than `microphone=()`. This permits browser microphone capture only for ReadyPackets same-origin pages and retains `camera=()` and `display-capture=()` restrictions. The accompanying regression test asserts this deliberate least-privilege exception.
+
+### Audio-format verification
+
+Phase 1 Business Pitch recording is **WebM audio**. Before starting, the client preflight requires either `audio/webm;codecs=opus` or `audio/webm`. On supported Chromium browsers, the recorder is explicitly created with `audio/webm;codecs=opus`; the recorded Blob/File is named `.webm` and submitted as `audio/webm` with the recorded-pitch flag.
+
+The server independently enforces this restriction. A recorded Business Pitch accepts only one `.webm` file per request, validates upload magic bytes and extension, and rejects any recorded-pitch MIME that is not exactly `audio/webm` with the message “Business Pitch recordings must be recorded in WebM format.” Files stored as a successful Business Pitch have detected MIME `audio/webm`. Pre-recorded-audio workflow capabilities are a separate controlled feature and may accept configured additional formats; they do not relax the browser-recorded Business Pitch restriction.
+
+### Validation
+
+The approved fix passed 151/151 tests, TypeScript checking, server build, production health validation, and the full 46/46 live security verification. It is now being committed and pushed to the private ReadyPackets repository.

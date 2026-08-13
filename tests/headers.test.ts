@@ -73,6 +73,13 @@ describe("security headers", () => {
     expect(csp).toContain("base-uri 'none'");
   });
 
+  it("allows microphone only for this origin while retaining capture restrictions", () => {
+    const policy = runMiddleware().set["Permissions-Policy"] ?? "";
+    expect(policy).toContain("microphone=(self)");
+    expect(policy).toContain("camera=()");
+    expect(policy).toContain("display-capture=()");
+  });
+
   it("never advertises the server technology", () => {
     const { set, removed } = runMiddleware();
     expect(removed).toContain("X-Powered-By");

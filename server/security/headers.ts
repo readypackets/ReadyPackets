@@ -24,7 +24,8 @@ const PERMISSIONS_POLICY = [
   "hid=()",
   "idle-detection=()",
   "magnetometer=()",
-  "microphone=()",
+  // Business Pitch recording requires microphone access for same-origin portal pages only.
+  "microphone=(self)",
   "midi=()",
   "payment=()",
   "picture-in-picture=()",
