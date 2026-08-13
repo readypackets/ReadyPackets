@@ -7,15 +7,25 @@ MODE=""
 DOMAIN=""
 EMAIL=""
 PROJECT_DIR=""
-TLS="true"
+TLS_PROVIDER=""
+CLOUDFLARE_ORIGIN_CERT=""
+CLOUDFLARE_ORIGIN_KEY=""
+CLOUDFLARE_ORIGIN_ROOT=""
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
   cat <<'USAGE'
 Usage:
-  sudo bash deploy/unified-install.sh --mode native --domain portal.example.com --email ops@example.com
-  sudo bash deploy/unified-install.sh --mode docker --domain portal.example.com --email ops@example.com [--project-dir /srv/readypackets]
-  sudo bash deploy/unified-install.sh --mode docker-bootstrap --domain portal.example.com --email ops@example.com [--project-dir /srv/readypackets]
+  sudo bash deploy/unified-install.sh --mode native --domain portal.example.com --email ops@example.com --tls-provider letsencrypt
+  sudo bash deploy/unified-install.sh --mode native --domain portal.example.com --tls-provider cloudflare-origin --cloudflare-origin-cert /secure/origin.pem --cloudflare-origin-key /secure/origin-key.pem
+  sudo bash deploy/unified-install.sh --mode docker --domain portal.example.com --email ops@example.com --tls-provider letsencrypt [--project-dir /srv/readypackets]
+
+TLS options:
+  --tls-provider letsencrypt|cloudflare-origin
+  --cloudflare-origin-cert <PEM path>
+  --cloudflare-origin-key <PEM path>
+  --cloudflare-origin-root <PEM path>  Optional Cloudflare Origin CA root/chain
+  --no-tls  Configure HTTP only / preserve certificate configuration.
 
 Modes:
   native             Installs directly on the VPS using systemd, nginx, and MySQL.
@@ -36,7 +46,11 @@ while [[ $# -gt 0 ]]; do
     --domain) DOMAIN="${2:-}"; shift 2 ;;
     --email) EMAIL="${2:-}"; shift 2 ;;
     --project-dir) PROJECT_DIR="${2:-}"; shift 2 ;;
-    --no-tls) TLS="false"; shift ;;
+    --tls-provider) TLS_PROVIDER="${2:-}"; shift 2 ;;
+    --cloudflare-origin-cert) CLOUDFLARE_ORIGIN_CERT="${2:-}"; shift 2 ;;
+    --cloudflare-origin-key) CLOUDFLARE_ORIGIN_KEY="${2:-}"; shift 2 ;;
+    --cloudflare-origin-root) CLOUDFLARE_ORIGIN_ROOT="${2:-}"; shift 2 ;;
+    --no-tls) TLS_PROVIDER="none"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) fail "Unknown argument: $1" ;;
   esac
@@ -45,11 +59,26 @@ done
 [[ $EUID -eq 0 ]] || fail "Run this installer as root."
 [[ "$MODE" == "native" || "$MODE" == "docker" || "$MODE" == "docker-bootstrap" ]] || fail "Choose --mode native, docker, or docker-bootstrap."
 [[ "$DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]] || fail "A valid --domain is required."
-[[ "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || fail "A valid --email is required."
+if [[ -z "$TLS_PROVIDER" && -t 0 ]]; then
+  printf '\nTLS certificate provider:\n  1) Let\x27s Encrypt\n  2) Cloudflare Origin CA\n  3) HTTP only / configure later\n'
+  read -r -p "Choose [1-3] (default 1): " tls_choice
+  case "${tls_choice:-1}" in 1) TLS_PROVIDER="letsencrypt" ;; 2) TLS_PROVIDER="cloudflare-origin" ;; 3) TLS_PROVIDER="none" ;; *) fail "Choose 1, 2, or 3." ;; esac
+fi
+TLS_PROVIDER="${TLS_PROVIDER:-letsencrypt}"
+[[ "$TLS_PROVIDER" == "letsencrypt" || "$TLS_PROVIDER" == "cloudflare-origin" || "$TLS_PROVIDER" == "none" ]] || fail "--tls-provider must be letsencrypt or cloudflare-origin."
+if [[ "$TLS_PROVIDER" == "letsencrypt" ]]; then [[ "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || fail "A valid --email is required for Let's Encrypt."; fi
+if [[ "$TLS_PROVIDER" == "cloudflare-origin" ]]; then
+  [[ -f "$CLOUDFLARE_ORIGIN_CERT" && -f "$CLOUDFLARE_ORIGIN_KEY" ]] || fail "Cloudflare Origin CA requires --cloudflare-origin-cert and --cloudflare-origin-key files."
+  [[ -z "$CLOUDFLARE_ORIGIN_ROOT" || -f "$CLOUDFLARE_ORIGIN_ROOT" ]] || fail "Cloudflare Origin CA root file was not found."
+fi
 
 if [[ "$MODE" == "native" ]]; then
-  args=(--domain "$DOMAIN" --email "$EMAIL")
-  [[ "$TLS" == "true" ]] && args+=(--tls)
+  args=(--domain "$DOMAIN")
+  [[ -n "$EMAIL" ]] && args+=(--email "$EMAIL")
+  [[ "$TLS_PROVIDER" != "none" ]] && args+=(--tls-provider "$TLS_PROVIDER")
+  [[ -n "$CLOUDFLARE_ORIGIN_CERT" ]] && args+=(--cloudflare-origin-cert "$CLOUDFLARE_ORIGIN_CERT")
+  [[ -n "$CLOUDFLARE_ORIGIN_KEY" ]] && args+=(--cloudflare-origin-key "$CLOUDFLARE_ORIGIN_KEY")
+  [[ -n "$CLOUDFLARE_ORIGIN_ROOT" ]] && args+=(--cloudflare-origin-root "$CLOUDFLARE_ORIGIN_ROOT")
   exec bash "$REPO_ROOT/deploy/install.sh" "${args[@]}"
 fi
 
@@ -110,10 +139,35 @@ rm -f "$acme_config"
 ln -sf /etc/nginx/sites-available/readypackets /etc/nginx/sites-enabled/readypackets
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
-if [[ "$TLS" == "true" ]]; then
+TLS_DIR="/etc/readypackets/tls"
+TLS_INCLUDE="${TLS_DIR}/nginx-tls.conf"
+CLOUDFLARE_TLS_DIR="${TLS_DIR}/cloudflare-origin"
+write_tls_include() {
+  local provider="$1" certificate="$2" private_key="$3"
+  install -d -m 0700 -o root -g root "$TLS_DIR"
+  cat > "$TLS_INCLUDE" <<TLSCONF
+# Managed by the ReadyPackets unified installer. Provider: ${provider}
+ssl_certificate ${certificate};
+ssl_certificate_key ${private_key};
+TLSCONF
+  chown root:root "$TLS_INCLUDE"; chmod 0640 "$TLS_INCLUDE"
+}
+if [[ "$TLS_PROVIDER" == "letsencrypt" ]]; then
   certbot certonly --webroot --webroot-path /var/www/html --non-interactive --agree-tos --email "$EMAIL" -d "$DOMAIN"
+  write_tls_include "letsencrypt" "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" "/etc/letsencrypt/live/${DOMAIN}/privkey.pem"
+elif [[ "$TLS_PROVIDER" == "cloudflare-origin" ]]; then
+  install -d -m 0700 -o root -g root "$CLOUDFLARE_TLS_DIR"
+  install -m 0644 -o root -g root "$CLOUDFLARE_ORIGIN_CERT" "${CLOUDFLARE_TLS_DIR}/certificate.pem"
+  install -m 0600 -o root -g root "$CLOUDFLARE_ORIGIN_KEY" "${CLOUDFLARE_TLS_DIR}/private-key.pem"
+  if [[ -n "$CLOUDFLARE_ORIGIN_ROOT" ]]; then install -m 0644 -o root -g root "$CLOUDFLARE_ORIGIN_ROOT" "${CLOUDFLARE_TLS_DIR}/cloudflare-origin-ca-root.pem"; fi
+  openssl x509 -in "${CLOUDFLARE_TLS_DIR}/certificate.pem" -noout -checkhost "$DOMAIN" | grep -q "does match certificate" || fail "Cloudflare Origin certificate does not match ${DOMAIN}."
+  write_tls_include "cloudflare-origin" "${CLOUDFLARE_TLS_DIR}/certificate.pem" "${CLOUDFLARE_TLS_DIR}/private-key.pem"
 fi
-sed -e "s/portal\.readypackets\.com/${DOMAIN}/g" -e "s/__RP_HOST_REGEX__/${host_regex}/g" "$PROJECT_DIR/deploy/nginx.conf" > /etc/nginx/sites-available/readypackets
-nginx -t && systemctl reload nginx
-curl -fsS -H "Host: $DOMAIN" -H 'X-Forwarded-Proto: https' http://127.0.0.1:3000/api/health >/dev/null
-log "Docker ReadyPackets installation is healthy at https://${DOMAIN}."
+if [[ "$TLS_PROVIDER" != "none" ]]; then
+  sed -e "s/portal\.readypackets\.com/${DOMAIN}/g" -e "s/__RP_HOST_REGEX__/${host_regex}/g" "$PROJECT_DIR/deploy/nginx.conf" > /etc/nginx/sites-available/readypackets
+  nginx -t && systemctl reload nginx
+  curl -fsS -H "Host: $DOMAIN" -H 'X-Forwarded-Proto: https' http://127.0.0.1:3000/api/health >/dev/null
+  log "Docker ReadyPackets installation is healthy at https://${DOMAIN}."
+else
+  log "Docker ReadyPackets installation is serving HTTP only; configure a certificate before production use."
+fi

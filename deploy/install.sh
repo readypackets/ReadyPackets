@@ -11,8 +11,12 @@
 #
 # Options:
 #   --domain <host>     Public hostname (required)
-#   --email <address>   Contact address for the TLS certificate (required for --tls)
-#   --tls               Obtain a Let's Encrypt certificate with certbot
+#   --email <address>   Contact address for Let's Encrypt (required for --tls-provider letsencrypt)
+#   --tls               Compatibility alias for --tls-provider letsencrypt
+#   --tls-provider <p>  letsencrypt or cloudflare-origin
+#   --cloudflare-origin-cert <path>  PEM Origin certificate (Cloudflare Origin CA)
+#   --cloudflare-origin-key <path>   PEM private key (Cloudflare Origin CA)
+#   --cloudflare-origin-root <path>  Optional PEM Cloudflare Origin CA root/chain
 #   --no-seed           Skip catalogue seeding (use when restoring a backup)
 #   --skip-packages     Assume Node, MySQL and nginx are already installed
 
@@ -28,7 +32,10 @@ readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 DOMAIN=""
 CONTACT_EMAIL=""
-WANT_TLS="false"
+TLS_PROVIDER="" # letsencrypt, cloudflare-origin, or empty to preserve/expose HTTP only
+CLOUDFLARE_ORIGIN_CERT=""
+CLOUDFLARE_ORIGIN_KEY=""
+CLOUDFLARE_ORIGIN_ROOT=""
 WANT_SEED="true"
 SKIP_PACKAGES="false"
 
@@ -45,7 +52,11 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --domain)        DOMAIN="${2:-}"; shift 2 ;;
     --email)         CONTACT_EMAIL="${2:-}"; shift 2 ;;
-    --tls)           WANT_TLS="true"; shift ;;
+    --tls)           TLS_PROVIDER="letsencrypt"; shift ;;
+    --tls-provider)  TLS_PROVIDER="${2:-}"; shift 2 ;;
+    --cloudflare-origin-cert) CLOUDFLARE_ORIGIN_CERT="${2:-}"; shift 2 ;;
+    --cloudflare-origin-key)  CLOUDFLARE_ORIGIN_KEY="${2:-}"; shift 2 ;;
+    --cloudflare-origin-root) CLOUDFLARE_ORIGIN_ROOT="${2:-}"; shift 2 ;;
     --no-seed)       WANT_SEED="false"; shift ;;
     --skip-packages) SKIP_PACKAGES="true"; shift ;;
     -h|--help)       sed -n '2,25p' "${BASH_SOURCE[0]}"; exit 0 ;;
@@ -55,8 +66,29 @@ done
 
 [[ $EUID -eq 0 ]] || die "This installer must run as root (use sudo)."
 [[ -n "$DOMAIN" ]] || die "--domain is required."
-if [[ "$WANT_TLS" == "true" && -z "$CONTACT_EMAIL" ]]; then
-  die "--email is required when --tls is used."
+
+# Interactive operators choose the certificate model explicitly. Noninteractive
+# automation must pass --tls-provider to avoid an unattended prompt.
+if [[ -z "$TLS_PROVIDER" && -t 0 ]]; then
+  printf '\nTLS certificate provider:\n  1) Let\x27s Encrypt (public certificate, automatic renewal)\n  2) Cloudflare Origin CA (Cloudflare-proxied origin, Full strict)\n  3) Preserve current certificate / configure later\n'
+  read -r -p "Choose [1-3] (default 1): " tls_choice
+  case "${tls_choice:-1}" in
+    1) TLS_PROVIDER="letsencrypt" ;;
+    2) TLS_PROVIDER="cloudflare-origin" ;;
+    3) TLS_PROVIDER="" ;;
+    *) die "Choose 1, 2, or 3 for TLS certificate provider." ;;
+  esac
+fi
+if [[ -n "$TLS_PROVIDER" && "$TLS_PROVIDER" != "letsencrypt" && "$TLS_PROVIDER" != "cloudflare-origin" ]]; then
+  die "--tls-provider must be letsencrypt or cloudflare-origin."
+fi
+if [[ "$TLS_PROVIDER" == "letsencrypt" && -z "$CONTACT_EMAIL" ]]; then
+  die "--email is required for Let's Encrypt."
+fi
+if [[ "$TLS_PROVIDER" == "cloudflare-origin" ]]; then
+  [[ -f "$CLOUDFLARE_ORIGIN_CERT" ]] || die "Provide --cloudflare-origin-cert <PEM certificate path>."
+  [[ -f "$CLOUDFLARE_ORIGIN_KEY" ]] || die "Provide --cloudflare-origin-key <PEM private key path>."
+  [[ -z "$CLOUDFLARE_ORIGIN_ROOT" || -f "$CLOUDFLARE_ORIGIN_ROOT" ]] || die "Cloudflare Origin CA root path does not exist."
 fi
 
 # Reject an obviously invalid hostname early: it ends up in security-critical
@@ -384,8 +416,49 @@ write_hardened_site() {
   fi
 }
 
+TLS_DIR="/etc/readypackets/tls"
+TLS_INCLUDE="${TLS_DIR}/nginx-tls.conf"
+CLOUDFLARE_TLS_DIR="${TLS_DIR}/cloudflare-origin"
+
+write_tls_include() {
+  local provider="$1" certificate="$2" private_key="$3"
+  install -d -m 0700 -o root -g root "$TLS_DIR"
+  umask 027
+  cat > "$TLS_INCLUDE" <<TLSCONF
+# Managed by the ReadyPackets installer. Provider: ${provider}
+ssl_certificate ${certificate};
+ssl_certificate_key ${private_key};
+TLSCONF
+  chown root:root "$TLS_INCLUDE"
+  chmod 0640 "$TLS_INCLUDE"
+}
+
+install_cloudflare_origin_material() {
+  install -d -m 0700 -o root -g root "$CLOUDFLARE_TLS_DIR"
+  install -m 0644 -o root -g root "$CLOUDFLARE_ORIGIN_CERT" "${CLOUDFLARE_TLS_DIR}/certificate.pem"
+  install -m 0600 -o root -g root "$CLOUDFLARE_ORIGIN_KEY" "${CLOUDFLARE_TLS_DIR}/private-key.pem"
+  if [[ -n "$CLOUDFLARE_ORIGIN_ROOT" ]]; then
+    install -m 0644 -o root -g root "$CLOUDFLARE_ORIGIN_ROOT" "${CLOUDFLARE_TLS_DIR}/cloudflare-origin-ca-root.pem"
+  fi
+  openssl x509 -in "${CLOUDFLARE_TLS_DIR}/certificate.pem" -noout -checkhost "$DOMAIN" | grep -q "does match certificate" || die "Cloudflare Origin certificate does not match ${DOMAIN}."
+  openssl x509 -in "${CLOUDFLARE_TLS_DIR}/certificate.pem" -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256 > /tmp/rp-cert-pub.$$
+  openssl pkey -in "${CLOUDFLARE_TLS_DIR}/private-key.pem" -pubout -outform DER | openssl dgst -sha256 > /tmp/rp-key-pub.$$
+  cmp -s /tmp/rp-cert-pub.$$ /tmp/rp-key-pub.$$ || die "Cloudflare Origin certificate and private key do not match."
+  rm -f /tmp/rp-cert-pub.$$ /tmp/rp-key-pub.$$
+  write_tls_include "cloudflare-origin" "${CLOUDFLARE_TLS_DIR}/certificate.pem" "${CLOUDFLARE_TLS_DIR}/private-key.pem"
+}
+
 HAVE_CERT="false"
-[[ -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]] && HAVE_CERT="true"
+if [[ "$TLS_PROVIDER" == "cloudflare-origin" ]]; then
+  log "Installing the supplied Cloudflare Origin CA material"
+  install_cloudflare_origin_material
+  HAVE_CERT="true"
+elif [[ -f "$TLS_INCLUDE" ]]; then
+  HAVE_CERT="true"
+elif [[ -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" && -f "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" ]]; then
+  write_tls_include "letsencrypt" "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" "/etc/letsencrypt/live/${DOMAIN}/privkey.pem"
+  HAVE_CERT="true"
+fi
 
 if [[ "$HAVE_CERT" == "true" ]]; then
   write_hardened_site
@@ -415,7 +488,7 @@ ufw allow 80/tcp  >/dev/null
 ufw allow 443/tcp >/dev/null
 # Port 3000 is never opened: the application is reachable only through nginx.
 
-if [[ "$WANT_TLS" == "true" && "$HAVE_CERT" == "false" ]]; then
+if [[ "$TLS_PROVIDER" == "letsencrypt" && "$HAVE_CERT" == "false" ]]; then
   log "Requesting a TLS certificate for ${DOMAIN}"
   apt-get install -y --no-install-recommends certbot >/dev/null
 
@@ -427,6 +500,7 @@ if [[ "$WANT_TLS" == "true" && "$HAVE_CERT" == "false" ]]; then
   if certbot certonly --webroot --webroot-path /var/www/html \
        --non-interactive --agree-tos --email "$CONTACT_EMAIL" \
        -d "$DOMAIN"; then
+    write_tls_include "letsencrypt" "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" "/etc/letsencrypt/live/${DOMAIN}/privkey.pem"
     HAVE_CERT="true"
   else
     warn "Certificate issuance failed. The site remains available over HTTP."
@@ -485,13 +559,16 @@ systemctl restart fail2ban || true
 install -m 0644 "${APP_DIR}/deploy/logrotate.conf" /etc/logrotate.d/readypackets
 
 log "Installing the nightly backup timer"
+install -d -m 0755 -o root -g root /usr/local/lib/readypackets
 install -m 0750 "${APP_DIR}/deploy/backup.sh" /usr/local/sbin/readypackets-backup
 install -m 0750 "${APP_DIR}/deploy/backup-control.sh" /usr/local/sbin/readypackets-backup-control
 chmod 0750 "${APP_DIR}/deploy/backup-control-daemon.mjs"
+install -m 0750 "${APP_DIR}/deploy/certificate-control-daemon.mjs" /usr/local/lib/readypackets/certificate-control-daemon.mjs
 install -m 0750 "${APP_DIR}/deploy/platform-upgrade-control.sh" /usr/local/sbin/readypackets-platform-update
 install -m 0750 "${APP_DIR}/deploy/auto-deploy-approved.sh" /usr/local/sbin/readypackets-auto-deploy-approved
 install -m 0644 "${APP_DIR}/deploy/readypackets-backup.service" /etc/systemd/system/
 install -m 0644 "${APP_DIR}/deploy/readypackets-backup-control.service" /etc/systemd/system/
+install -m 0644 "${APP_DIR}/deploy/readypackets-certificate-control.service" /etc/systemd/system/
 install -m 0644 "${APP_DIR}/deploy/readypackets-backup.timer" /etc/systemd/system/
 # Backups use a root-owned Unix-socket daemon with a fixed action allowlist.
 # The web service has no sudo rule for backup operations; it can reach only the
@@ -511,6 +588,7 @@ install -d -m 0750 -o root -g readypackets /var/backups/readypackets
 install -d -m 0750 -o root -g readypackets /var/lib/readypackets/storage/admin-exports
 systemctl daemon-reload
 systemctl enable --now readypackets-backup-control.service
+systemctl enable --now readypackets-certificate-control.service
 systemctl enable --now readypackets-backup.timer
 
 # Run one backup now. An untested backup is not a backup, and discovering that

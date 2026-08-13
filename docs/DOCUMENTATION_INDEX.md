@@ -15,5 +15,7 @@
 | [OWASP Top 10 2025 Coverage Assessment](OWASP_TOP_10_2025_COVERAGE_ASSESSMENT.md) | Security, infrastructure, and product owners | Evidence-based mapping of deployed controls, residual risk, and assurance work against the current OWASP Top 10. |
 | [Configuration Migration Guide](CONFIG_MIGRATION.md) | Migration operators | Encrypted configuration export/import principles and break-glass handling. |
 | [Platform Setup Wizard](ADMINISTRATOR_GUIDE.md#platform-setup-wizard) | Administrators | First-run setup for email, Entra ID, Stripe, phase webhooks, and access allowlists. |
+| [Security & SDLC Assessment](assessments/ReadyPackets_Security_SDLC_Assessment_2026-08-13.pdf) | Security, infrastructure, and product owners | Branded evidence-based security, API, webhook, OWASP, and remediation assessment. |
+| [Go-Live Readiness Assessment](assessments/ReadyPackets_Go_Live_Readiness_Assessment_2026-08-13.pdf) | Product owners and release operators | Branded launch feasibility decision, blocking gates, controlled-pilot plan, and launch checklist. |
 
 > The production session log is maintained in [`SESSION_LOG.md`](../SESSION_LOG.md). It records user requests, implementation changes, verification, deployment, and GitHub publication history.

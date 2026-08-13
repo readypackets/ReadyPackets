@@ -1,0 +1,39 @@
+[Unit]
+Description=ReadyPackets certificate control daemon
+Documentation=https://myportal.readypackets.com
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=readypackets
+ExecStart=/usr/bin/node /usr/local/lib/readypackets/certificate-control-daemon.mjs
+Restart=on-failure
+RestartSec=3
+UMask=007
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# Node/V8 requires executable JIT memory. The fixed root action allowlist, socket
+# filesystem permissions, private temporary files, and systemd write-path limits
+# provide the relevant containment controls for this daemon.
+MemoryDenyWriteExecute=false
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETUID CAP_SETGID
+AmbientCapabilities=
+ReadWritePaths=/run/readypackets /etc/readypackets/tls /var/backups/readypackets /etc/nginx /var/lib/nginx /run/nginx.pid
+
+[Install]
+WantedBy=multi-user.target

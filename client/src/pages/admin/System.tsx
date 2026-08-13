@@ -12,6 +12,7 @@ import {
   Database,
   Flag,
   KeyRound,
+  LockKeyhole,
   Plus,
   RefreshCw,
   Save,
@@ -53,6 +54,7 @@ export function AdminSystemPage() {
           { id: "flags", label: "Feature flags" },
           { id: "keys", label: "API keys" },
           { id: "saml", label: "SAML" },
+          { id: "certificates", label: "Certificates" },
           { id: "maintenance", label: "Housekeeping" },
           { id: "launch", label: "Launch countdown" },
           { id: "intake", label: "Intake controls" },
@@ -66,6 +68,7 @@ export function AdminSystemPage() {
         {tab === "flags" ? <FlagsPanel /> : null}
         {tab === "keys" ? <ApiKeysPanel /> : null}
         {tab === "saml" ? <SamlPanel /> : null}
+        {tab === "certificates" ? <CertificatePanel /> : null}
         {tab === "maintenance" ? <><MaintenanceAccessPanel /><MaintenancePanel /></> : null}
         {tab === "launch" ? <LaunchCountdownPanel /> : null}
         {tab === "intake" ? <IntakeControlsPanel /> : null}
@@ -207,6 +210,72 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
     <div className="flex items-center justify-between gap-3">
       <dt className="text-body">{label}</dt>
       <dd className="text-right font-medium text-ink">{value}</dd>
+    </div>
+  );
+}
+
+function CertificatePanel() {
+  const toast = useToast();
+  const status = trpc.adminSecurity.tlsCertificateStatus.useQuery();
+  const install = trpc.adminSecurity.installCloudflareOriginCertificate.useMutation({
+    async onSuccess() {
+      await status.refetch();
+      setInstallOpen(false);
+      setCertificate(""); setPrivateKey(""); setCaRoot(""); setConfirmation("");
+      toast.success("Cloudflare Origin CA installed", "nginx was validated and reloaded. The private key was not retained in the browser.");
+    },
+    onError(error) { toast.error("Could not install certificate", errorMessage(error)); },
+  });
+  const activateLetsEncrypt = trpc.adminSecurity.activateLetsEncryptCertificate.useMutation({
+    async onSuccess() { await status.refetch(); setLetsEncryptOpen(false); toast.success("Let's Encrypt certificate activated"); },
+    onError(error) { toast.error("Could not activate Let's Encrypt", errorMessage(error)); },
+  });
+  const [installOpen, setInstallOpen] = useState(false);
+  const [letsEncryptOpen, setLetsEncryptOpen] = useState(false);
+  const [certificate, setCertificate] = useState("");
+  const [privateKey, setPrivateKey] = useState("");
+  const [caRoot, setCaRoot] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const hostname = window.location.hostname;
+  const current = status.data;
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+      <Card>
+        <CardHeader title={<span className="flex items-center gap-2"><LockKeyhole className="size-4 text-teal" aria-hidden="true" />Active origin certificate</span>} description="Certificate metadata is visible; private keys and certificate bodies are never returned to the portal." actions={<Button size="sm" variant="outline" busy={status.isFetching} onClick={() => void status.refetch()} leadingIcon={<RefreshCw className="size-4" />}>Refresh</Button>} />
+        {status.isLoading ? <Skeleton className="mt-5 h-48 w-full" /> : !current?.configured ? <Alert tone="warning" className="mt-5" title="Certificate control unavailable">The protected certificate-control service could not read an active certificate. Use the deployment guide or restore the local control daemon before changing TLS.</Alert> : <dl className="mt-5 space-y-3 text-sm">
+          <Row label="Provider" value={<Badge tone={current.provider === "cloudflare_origin" ? "teal" : "success"}>{current.provider === "cloudflare_origin" ? "Cloudflare Origin CA" : "Let's Encrypt"}</Badge>} />
+          <Row label="Subject" value={current.subject ?? "—"} />
+          <Row label="Issuer" value={current.issuer ?? "—"} />
+          <Row label="Valid from" value={current.notBefore ?? "—"} />
+          <Row label="Expires" value={current.notAfter ?? "—"} />
+          <Row label="SHA-256 fingerprint" value={<code className="text-xs">{current.fingerprint ?? "—"}</code>} />
+          <Row label="Cloudflare CA root stored" value={<Badge tone={current.rootPresent ? "success" : "neutral"}>{current.rootPresent ? "yes" : "no"}</Badge>} />
+        </dl>}
+      </Card>
+
+      <Card>
+        <CardHeader title="Origin certificate actions" description="Use a Cloudflare Origin CA certificate only when this hostname remains proxied through Cloudflare in Full (strict) mode." />
+        <Alert tone="info" className="mt-5" title="Secure handling">The certificate, private key, and optional CA root travel once over the authenticated local control channel. They are written only to root-owned server files, are never stored in portal settings, and are never returned by this page.</Alert>
+        <div className="mt-5 flex flex-wrap gap-3">
+          <Button onClick={() => setInstallOpen(true)} leadingIcon={<LockKeyhole className="size-4" />}>Install Cloudflare Origin CA</Button>
+          <Button variant="outline" onClick={() => setLetsEncryptOpen(true)}>Use existing Let's Encrypt certificate</Button>
+        </div>
+        <p className="mt-4 text-xs leading-relaxed text-muted">Cloudflare Origin CA certificates are trusted between Cloudflare and this server, not directly by visitor browsers. Do not pause proxying or change the record to DNS-only while this certificate is active.</p>
+      </Card>
+
+      <Modal open={installOpen} onClose={() => setInstallOpen(false)} title="Install Cloudflare Origin CA certificate" description="Paste the PEM values created in Cloudflare. This validates the hostname and key pair, creates a protected TLS rollback copy, tests nginx, and reloads only after validation." footer={<><Button variant="outline" onClick={() => setInstallOpen(false)}>Cancel</Button><Button busy={install.isPending} disabled={!certificate.trim() || !privateKey.trim() || confirmation !== "INSTALL CLOUDFLARE ORIGIN CA"} onClick={() => install.mutate({ hostname, certificate, privateKey, caRoot: caRoot || undefined, confirmation: "INSTALL CLOUDFLARE ORIGIN CA" })} leadingIcon={<Save className="size-4" />}>Install and reload nginx</Button></>}>
+        <div className="mt-4 space-y-4">
+          <Alert tone="warning" title="Before continuing">In Cloudflare, create an Origin Server certificate covering <code>{hostname}</code>, retain the private key immediately, and keep SSL/TLS mode set to Full (strict). The optional root is stored as a reference chain; nginx serves the leaf certificate and key.</Alert>
+          <Input label="Hostname" value={hostname} disabled help="The installed certificate must match this portal hostname." />
+          <Textarea label="Origin certificate PEM" rows={7} value={certificate} onChange={(event) => setCertificate(event.target.value)} placeholder="-----BEGIN CERTIFICATE-----" required />
+          <Textarea label="Private key PEM" rows={7} value={privateKey} onChange={(event) => setPrivateKey(event.target.value)} placeholder="-----BEGIN PRIVATE KEY-----" required />
+          <Textarea label="Cloudflare Origin CA root PEM (optional)" rows={5} value={caRoot} onChange={(event) => setCaRoot(event.target.value)} placeholder="-----BEGIN CERTIFICATE-----" help="This is retained in root-owned server storage; it is not placed in the general operating-system trust store." />
+          <Input label="Type to confirm" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="INSTALL CLOUDFLARE ORIGIN CA" required />
+        </div>
+      </Modal>
+
+      <ConfirmDialog open={letsEncryptOpen} onClose={() => setLetsEncryptOpen(false)} onConfirm={() => activateLetsEncrypt.mutate({ hostname, confirmation: "USE LETS ENCRYPT" })} title="Activate existing Let's Encrypt certificate?" message="This switches nginx back to the existing local Let's Encrypt certificate for the current hostname after validating its hostname and configuration. A protected TLS rollback copy is retained." confirmLabel="Use Let's Encrypt" cancelLabel="Cancel" variant="danger" busy={activateLetsEncrypt.isPending} />
     </div>
   );
 }

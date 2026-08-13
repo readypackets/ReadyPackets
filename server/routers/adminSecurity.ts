@@ -10,6 +10,7 @@
  * read credentials out of the database.
  */
 import { TRPCError } from "@trpc/server";
+import net from "node:net";
 import { notifyMaintenanceStart, notifyMaintenanceEnd } from "../services/maintenanceNotify.js";
 import { and, count, desc, eq, gt, gte, like, lte, or, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -62,6 +63,41 @@ const ipPatternSchema = z
     /^[0-9a-fA-F.:/-]+$/,
     "Enter a single address, a CIDR block such as 203.0.113.0/24, or a range such as 203.0.113.1-203.0.113.50.",
   );
+
+const CERTIFICATE_CONTROL_SOCKET = "/run/readypackets/certificate-control.sock";
+
+type CertificateControlStatus = {
+  provider: "letsencrypt" | "cloudflare_origin" | "unknown";
+  configured: boolean;
+  rootPresent: boolean;
+  certificatePath: string | null;
+  subject: string | null;
+  issuer: string | null;
+  notBefore: string | null;
+  notAfter: string | null;
+  fingerprint: string | null;
+  san: string | null;
+  backup?: string;
+};
+
+function runCertificateControl(payload: Record<string, unknown>): Promise<CertificateControlStatus> {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ path: CERTIFICATE_CONTROL_SOCKET });
+    let response = "";
+    const timer = setTimeout(() => { socket.destroy(); reject(new Error("Certificate control request timed out.")); }, 35_000);
+    socket.setEncoding("utf8");
+    socket.once("connect", () => socket.write(`${JSON.stringify(payload)}\n`));
+    socket.on("data", (chunk) => { response += chunk; if (response.includes("\n")) socket.end(); });
+    socket.once("error", (error) => { clearTimeout(timer); reject(error); });
+    socket.once("close", () => {
+      clearTimeout(timer);
+      try {
+        const result = JSON.parse(response.trim()) as { ok?: boolean; output?: CertificateControlStatus; error?: string };
+        result.ok && result.output ? resolve(result.output) : reject(new Error(result.error ?? "Certificate control rejected the request."));
+      } catch { reject(new Error("Certificate control returned an invalid response.")); }
+    });
+  });
+}
 
 export const adminSecurityRouter = router({
   /* ---------------------------------------------------------------- */
@@ -760,6 +796,68 @@ export const adminSecurityRouter = router({
         ipAddress: ctx.clientIp,
       });
       return { ok: true as const };
+    }),
+
+  /* ---------------------------------------------------------------- */
+  /* TLS certificates                                                  */
+  /* ---------------------------------------------------------------- */
+
+  tlsCertificateStatus: adminProcedure.query(async () => {
+    try {
+      return await runCertificateControl({ action: "status" });
+    } catch (error) {
+      return {
+        provider: "unknown" as const,
+        configured: false,
+        rootPresent: false,
+        certificatePath: null,
+        subject: null,
+        issuer: null,
+        notBefore: null,
+        notAfter: null,
+        fingerprint: null,
+        san: null,
+        controlError: error instanceof Error ? error.message : "Certificate control is unavailable.",
+      };
+    }
+  }),
+
+  installCloudflareOriginCertificate: adminProcedure
+    .input(z.object({
+      hostname: z.string().trim().toLowerCase().min(4).max(253).regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i, "Enter a valid fully-qualified hostname."),
+      certificate: z.string().min(80).max(30_000),
+      privateKey: z.string().min(80).max(30_000),
+      caRoot: z.string().max(30_000).optional(),
+      confirmation: z.literal("INSTALL CLOUDFLARE ORIGIN CA"),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const status = await runCertificateControl({
+        action: "install-cloudflare-origin",
+        hostname: input.hostname,
+        certificate: input.certificate.endsWith("\n") ? input.certificate : `${input.certificate}\n`,
+        privateKey: input.privateKey.endsWith("\n") ? input.privateKey : `${input.privateKey}\n`,
+        caRoot: input.caRoot ? (input.caRoot.endsWith("\n") ? input.caRoot : `${input.caRoot}\n`) : "",
+      });
+      void recordSecurityEvent({
+        eventType: "settings.changed",
+        severity: "warning",
+        outcome: "success",
+        message: `Administrator installed a Cloudflare Origin CA certificate for ${input.hostname}`,
+        userId: ctx.session.user.id,
+        ipAddress: ctx.clientIp,
+        metadata: { provider: status.provider, fingerprint: status.fingerprint, notAfter: status.notAfter, rootPresent: status.rootPresent },
+      });
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "tls.cloudflare_origin_installed", entityType: "tls_certificate", entityId: input.hostname, severity: "warning", summary: `Installed Cloudflare Origin CA certificate for ${input.hostname}`, changes: { fingerprint: status.fingerprint, notAfter: status.notAfter, rootPresent: status.rootPresent }, ipAddress: ctx.clientIp });
+      return status;
+    }),
+
+  activateLetsEncryptCertificate: adminProcedure
+    .input(z.object({ hostname: z.string().trim().toLowerCase().min(4).max(253), confirmation: z.literal("USE LETS ENCRYPT") }))
+    .mutation(async ({ ctx, input }) => {
+      const status = await runCertificateControl({ action: "activate-letsencrypt", hostname: input.hostname, confirmation: input.confirmation });
+      void recordSecurityEvent({ eventType: "settings.changed", severity: "warning", outcome: "success", message: `Administrator activated the Let's Encrypt certificate for ${input.hostname}`, userId: ctx.session.user.id, ipAddress: ctx.clientIp, metadata: { fingerprint: status.fingerprint, notAfter: status.notAfter } });
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "tls.letsencrypt_activated", entityType: "tls_certificate", entityId: input.hostname, severity: "warning", summary: `Activated Let's Encrypt certificate for ${input.hostname}`, changes: { fingerprint: status.fingerprint, notAfter: status.notAfter }, ipAddress: ctx.clientIp });
+      return status;
     }),
 
   /* ---------------------------------------------------------------- */
