@@ -1,0 +1,119 @@
+# /etc/systemd/system/readypackets.service
+# ReadyPackets Portal — systemd unit for a bare VPS install
+#
+# Install:
+#   sudo cp deploy/readypackets.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now readypackets
+#
+# The sandboxing directives below are the point of this file. Even if an
+# attacker achieves code execution inside the Node process, the process cannot
+# write outside its storage directory, cannot see other users' processes, cannot
+# load a kernel module, cannot gain privileges through setuid, and cannot reach
+# any address family other than IPv4/IPv6/Unix.
+
+[Unit]
+Description=ReadyPackets Portal
+Documentation=file:/opt/readypackets/docs/DEPLOYMENT.md
+After=network-online.target mysql.service
+Wants=network-online.target
+# The application exits with a clear message if the database is unreachable, so
+# a hard dependency is not required, but ordering avoids a noisy first start.
+
+[Service]
+Type=simple
+User=readypackets
+Group=readypackets
+WorkingDirectory=/opt/readypackets
+
+# Secrets live in a root-owned file readable only by the service account.
+EnvironmentFile=/etc/readypackets/portal.env
+
+ExecStartPre=/usr/bin/node /opt/readypackets/dist/migrate.js
+ExecStart=/usr/bin/node /opt/readypackets/dist/server.js
+ExecReload=/bin/kill -HUP $MAINPID
+
+# The server closes the listener, drains in-flight requests, then exits.
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=30
+
+Restart=always
+RestartSec=5s
+# Give up if the service crashes repeatedly, so a broken deploy is visible in
+# monitoring rather than silently flapping.
+StartLimitBurst=5
+StartLimitIntervalSec=120
+
+# ---------------------------------------------------------------------------
+# Filesystem isolation
+# ---------------------------------------------------------------------------
+# The entire filesystem is read-only except the paths listed below.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=/var/lib/readypackets
+StateDirectory=readypackets
+StateDirectoryMode=0750
+
+# ---------------------------------------------------------------------------
+# Privilege and kernel isolation
+# ---------------------------------------------------------------------------
+# The application invokes only root-owned, absolute-path, argument-validating
+# maintenance helpers through narrowly scoped sudoers rules (for backups and
+# approved platform updates). `NoNewPrivileges=true` prevents sudo from
+# elevating even for those allowlisted helpers, so it must remain false. The
+# empty capability set, system-call restrictions, immutable filesystem, and
+# restrictive sudoers policies remain mandatory compensating controls.
+NoNewPrivileges=false
+# The service binds a high port, so it needs no capabilities at all.
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=true
+MemoryDenyWriteExecute=false
+# Note: MemoryDenyWriteExecute must remain false because V8 requires
+# writable-executable pages for its JIT. Every other memory protection applies.
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RemoveIPC=true
+PrivateUsers=false
+
+# Only the address families the application actually uses.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Deny every syscall group except the ones a network service needs.
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete @mount @swap @reboot @module @raw-io @debug @clock @cpu-emulation
+SystemCallArchitectures=native
+SystemCallErrorNumber=EPERM
+
+# ---------------------------------------------------------------------------
+# Resource limits
+# ---------------------------------------------------------------------------
+LimitNOFILE=16384
+LimitNPROC=512
+LimitCORE=0
+TasksMax=256
+MemoryMax=1G
+MemoryHigh=768M
+CPUQuota=200%
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=readypackets
+
+[Install]
+WantedBy=multi-user.target

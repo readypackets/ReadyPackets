@@ -2020,3 +2020,20 @@ TypeScript validation passed with zero errors. The complete suite passed all 150
 ### Publication
 
 The deployed code release was committed and pushed to the private repository as [`bb6057178acfffeedb5b4255ca4fd8a428b64d84`](https://github.com/readypackets/ReadyPackets/commit/bb6057178acfffeedb5b4255ca4fd8a428b64d84) with message `feat: order purge safeguards, alerts, investigation, reports`. Production `/opt/readypackets/RELEASE_COMMIT` was set to that exact code commit after a successful health check. The VPS operations record was also updated with the deployment details. This final session-log publication update is committed and pushed immediately afterward so the repository contains both the implementation and the full release record.
+
+
+## 2026-08-13 — Pre-microphone-policy checkpoint
+
+### User request
+
+> backup the current configuration and files to github as it is then apply the fix so i can confirm that it works before pushing that code to github
+
+### Checkpoint boundary
+
+Before changing the microphone policy, a checkpoint is being published from source baseline `42817d66e0ba2f34687f1dc40edcf871ec9bb54c`. The checkpoint includes the current version-controlled source and a sanitized production configuration manifest: active nginx virtual-host configuration, systemd unit/drop-ins, production service/artifact state, deployed artifact hashes, and environment-variable **names only**.
+
+No secret or customer data is included. Specifically excluded are environment-variable values, database contents, uploaded files, sessions, encryption keys, passwords, API credentials, and third-party tokens. These remain only in root-owned production backup storage. The checkpoint is committed and pushed before the policy correction is applied.
+
+### Planned corrective experiment
+
+After the checkpoint publication, the sole code change will replace `microphone=()` with the least-privilege `microphone=(self)` directive in the central security-header policy. The corrected server bundle will be deployed to production for user testing but deliberately left uncommitted and unpushed until the user confirms that browser recording works.
