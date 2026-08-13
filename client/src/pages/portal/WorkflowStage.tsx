@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useLocation, useParams } from "wouter";
-import { CheckCircle2, FileAudio, FileQuestion, FileText, Mic, Upload } from "lucide-react";
+import { CheckCircle2, Download, FileAudio, FileQuestion, FileText, Mic, Upload } from "lucide-react";
 import { trpc, errorMessage, refreshCsrfToken, csrfToken } from "@/lib/trpc";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { Button, LinkButton } from "@/components/ui/Button";
@@ -10,7 +10,7 @@ import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { PageHeader } from "@/components/layout/PortalLayout";
 
-type Capability = "documents" | "questions" | "recording" | "audio_upload";
+type Capability = "documents" | "questions" | "recording" | "audio_upload" | "review_space";
 type UploadLimits = { documentMaxFiles?: number; documentMaxSizeMb?: number; audioMaxFiles?: number; audioMaxSizeMb?: number; recordingMaxDurationSeconds?: number; audioTotalDurationSeconds?: number };
 type WorkflowStage = { key: string; label: string; order: number; capabilities?: Capability[]; customerAcknowledgement?: "required" | "optional" | "none"; submissionNotice?: string; uploadLimits?: UploadLimits };
 const AUDIO_EXTENSIONS = new Set(["webm", "wav", "mp3", "m4a", "ogg"]);
@@ -25,7 +25,7 @@ function stagesFromUnknown(value: unknown): WorkflowStage[] {
       label: item.label as string,
       order: typeof item.order === "number" ? item.order : index + 1,
       capabilities: Array.isArray(item.capabilities)
-        ? item.capabilities.filter((capability): capability is Capability => capability === "documents" || capability === "questions" || capability === "recording" || capability === "audio_upload")
+        ? item.capabilities.filter((capability): capability is Capability => capability === "documents" || capability === "questions" || capability === "recording" || capability === "audio_upload" || capability === "review_space")
         : ["documents", "questions", "recording"] as Capability[],
       customerAcknowledgement: (item.customerAcknowledgement === "required" || item.customerAcknowledgement === "optional" || item.customerAcknowledgement === "none" ? item.customerAcknowledgement : "required") as "required" | "optional" | "none",
       submissionNotice: typeof item.submissionNotice === "string" ? item.submissionNotice : undefined,
@@ -66,6 +66,10 @@ export function WorkflowStagePage() {
   const answerQuestion = trpc.orders.answerQuestion.useMutation({
     async onSuccess() { await questions.refetch(); toast.success("Answer saved"); },
     onError(error) { toast.error("Could not save answer", errorMessage(error)); },
+  });
+  const requestDownload = trpc.files.requestDownload.useMutation({
+    onSuccess(data) { window.open(data.url, "_blank", "noopener,noreferrer"); },
+    onError(error) { toast.error("Could not prepare file download", errorMessage(error)); },
   });
   const submitPhase = trpc.orders.submitWorkflowPhase.useMutation({
     async onSuccess() {
@@ -180,6 +184,7 @@ export function WorkflowStagePage() {
   const totalAudioRemainingSeconds = stage.uploadLimits?.audioTotalDurationSeconds === undefined ? undefined : Math.max(0, stage.uploadLimits.audioTotalDurationSeconds - audioUsedSeconds);
   const effectiveRecordingLimitSeconds = [stage.uploadLimits?.recordingMaxDurationSeconds, totalAudioRemainingSeconds].filter((value): value is number => typeof value === "number" && value > 0).reduce<number | undefined>((current, value) => current === undefined ? value : Math.min(current, value), undefined);
   const phaseQuestions = (questions.data ?? []).filter((question) => question.phase === stage.key);
+  const reviewFiles = phaseFiles.filter((file) => file.uploadedByStaff && file.visibleToCustomer && !file.isPlaceholder);
   const { order } = detail.data;
   const completedKeys = new Set((detail.data.phaseLocks ?? []).map((lock) => lock.phaseKey));
   const currentStageKey = stageAccess.data?.currentStageKey ?? null;
@@ -200,6 +205,7 @@ export function WorkflowStagePage() {
         <div className="mt-4 flex flex-wrap gap-2">{capabilities.has("recording") && !phaseLocked ? <Button disabled={!recording && totalAudioRemainingSeconds === 0} leadingIcon={recording ? <span className="relative flex size-4 items-center justify-center"><span className="absolute size-3 animate-ping rounded-full bg-white/80" /><span className="relative size-2 rounded-full bg-white" /></span> : <Mic className="size-4" />} className={recording ? "animate-pulse ring-2 ring-danger/40 shadow-lg shadow-danger/20" : ""} variant={recording ? "danger" : "primary"} busy={uploading} onClick={() => recording ? stopRecording() : setMicrophoneOpen(true)}>{recording ? `Recording — stop (${recordingSeconds}s${effectiveRecordingLimitSeconds ? ` / ${formatDuration(effectiveRecordingLimitSeconds)}` : ""})` : totalAudioRemainingSeconds === 0 ? "Audio time limit reached" : `Record ${stage.label} audio`}</Button> : null}{capabilities.has("audio_upload") && !phaseLocked ? <><input id={`audio-upload-${stage.key}`} className="hidden" type="file" accept="audio/*,.webm,.ogg" onChange={(event) => void upload(event.target.files, false, true)} /><Button variant="outline" leadingIcon={<Upload className="size-4" />} busy={uploading} onClick={() => document.getElementById(`audio-upload-${stage.key}`)?.click()}>Upload audio file</Button></> : null}</div>
         {stage.uploadLimits?.audioTotalDurationSeconds !== undefined ? <p className="mt-3 text-xs text-muted">Audio time used: {formatDuration(audioUsedSeconds)} of {formatDuration(stage.uploadLimits.audioTotalDurationSeconds)}{totalAudioRemainingSeconds !== undefined ? ` · ${formatDuration(totalAudioRemainingSeconds)} remaining` : ""}.</p> : null}<ul className="mt-4 space-y-2">{audioFiles.length ? audioFiles.map((file) => <li key={file.id} className="flex items-center justify-between gap-3 rounded border border-line px-3 py-2 text-sm"><span className="truncate"><FileAudio className="mr-1 inline size-4" />{file.originalName}{file.durationSeconds ? <span className="text-xs text-muted"> · {formatDuration(file.durationSeconds)}</span> : null}</span>{!file.uploadedByStaff && !phaseLocked ? <Button size="sm" variant="ghost" onClick={() => deleteFile.mutate({ fileId: file.id })}>Remove</Button> : file.uploadedByStaff ? <Badge tone="teal">Team recording</Badge> : <Badge tone="neutral">Locked</Badge>}</li>) : <li className="text-sm text-muted">No recordings for this phase yet.</li>}</ul>
       </Card>
+      {capabilities.has("review_space") ? <Card className="lg:col-span-2"><CardHeader title={`${stage.label} file review`} description="Your project team selects and publishes the files available in this review step. You can review the file list and securely download each selected file." /><div className="mt-4 space-y-2">{reviewFiles.length ? reviewFiles.map((file) => <div key={file.id} className="flex flex-wrap items-center justify-between gap-3 rounded border border-line px-3 py-3 text-sm"><span className="min-w-0"><FileText className="mr-1 inline size-4 text-teal" />{file.originalName}<span className="ml-2 text-xs text-muted">· {formatBytes(file.sizeBytes)} · published {formatDate(file.createdAt)}</span></span><Button size="sm" variant="outline" leadingIcon={<Download className="size-4" />} busy={requestDownload.isPending} onClick={() => requestDownload.mutate({ fileId: file.id })}>Download</Button></div>) : <EmptyState icon={FileText} title="No review files have been published yet" description="Your project team will add files to this step when they are ready for review." />}</div></Card> : null}
       {capabilities.has("questions") ? <Card className="lg:col-span-2"><CardHeader title={`${stage.label} questions`} description="Questions assigned by your project team for this specific workflow phase." /><div className="mt-4 space-y-4">{phaseQuestions.length ? phaseQuestions.map((question) => <div key={question.id} className="rounded border border-line p-4"><p className="text-sm font-medium text-ink">{question.question}</p>{question.status === "answered" || question.status === "resolved" ? <p className="mt-2 flex items-center gap-1.5 text-sm text-success"><CheckCircle2 className="size-4" /> Answer received</p> : phaseLocked ? <p className="mt-2 text-sm text-muted">This phase is locked and answers can no longer be changed.</p> : <><Textarea className="mt-3" label="Your answer" value={answers[question.id] ?? ""} onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))} rows={3} /><Button className="mt-3" size="sm" busy={answerQuestion.isPending} disabled={(answers[question.id] ?? "").trim().length === 0} onClick={() => answerQuestion.mutate({ questionId: question.id, body: (answers[question.id] ?? "").trim() })}>Save answer</Button></>}</div>) : <p className="text-sm text-muted">No questions have been assigned to this phase yet.</p>}</div></Card> : null}
       {!phaseLocked ? <Card className="lg:col-span-2"><CardHeader title={`Submit ${stage.label}`} description="Review your files, recordings, and answers before submitting. Submission locks this phase." /><Button className="mt-4" variant="primary" onClick={() => { if (acknowledgementPolicy === "none") submitCurrentPhase(false); else { setAcknowledged(false); setSubmissionOpen(true); } }}>Submit and lock this phase</Button></Card> : null}
     </div>

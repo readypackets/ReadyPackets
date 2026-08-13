@@ -117,3 +117,10 @@ Use **Manage order statuses** from the Order Workflows page to open the order-st
 Each workflow stage’s **SharePoint document and audio destinations** control keeps documents and audio in separate folders. Set **Document relative folder** for supporting documents, questions exported as documents, and other non-audio files. Set **Audio relative folder** for browser-recorded WebM audio and approved pre-recorded audio uploads. The values are relative to the configured SharePoint root, customer folder, and order number.
 
 If a destination is blank, ReadyPackets uses separate safe defaults: a `Docs` subfolder for non-audio material and an `Audio` subfolder for recorded or uploaded audio. A valid audio file cannot be routed to the document folder, and a document cannot be routed to the audio folder. Destination paths are server-validated and cannot contain `..` segments or escape the assigned order root.
+
+
+### Customer file-review workflow stages
+
+Enable **Customer file review** in a workflow stage when the stage should be a read-only review area rather than a customer upload task. For each assigned order, staff upload or assign files to the same stage in the Order Files workspace and select **Publish**. Only non-placeholder files uploaded by staff, assigned to that review stage, and published to the customer appear in the customer review workspace.
+
+Customers see the selected file name, size, and publication date, then request a short-lived, single-use authorized download. Files are not previewed inline from the ReadyPackets origin. A staff member can remove a file from the review space at any time by selecting the corresponding Files tab visibility control.
