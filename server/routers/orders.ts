@@ -31,7 +31,9 @@ import {
   assertOrderAccess,
   createOrder,
   getOrderDetail,
+  getOrderWorkflowProgress,
   listOrdersForUser,
+  syncOrderWorkflowProgress,
 } from "../services/orders.js";
 import { priceSelection } from "../services/catalog.js";
 import { protectedProcedure, publicProcedure, router } from "../trpc/trpc.js";
@@ -97,7 +99,7 @@ export const ordersRouter = router({
 
         const workflowRows = detail.order.workflowId
           ? await db
-              .select({ id: orderWorkflows.id, name: orderWorkflows.name, description: orderWorkflows.description, stages: orderWorkflows.stages })
+              .select({ id: orderWorkflows.id, name: orderWorkflows.name, description: orderWorkflows.description, customerPresentation: orderWorkflows.customerPresentation, stages: orderWorkflows.stages })
               .from(orderWorkflows)
               .where(eq(orderWorkflows.id, detail.order.workflowId))
               .limit(1)
@@ -125,6 +127,7 @@ export const ordersRouter = router({
           )
           .orderBy(desc(files.createdAt));
 
+        const workflowProgress = await getOrderWorkflowProgress(input.orderId);
         const phaseLocks = await db
           .select({
             phaseKey: orderPhaseLocks.phaseKey,
@@ -165,6 +168,7 @@ export const ordersRouter = router({
             deliveredAt: detail.order.deliveredAt,
           },
           workflow: workflowRows[0] ?? null,
+          workflowProgress,
           phaseLocks,
           items: detail.items.map((item) => ({
             id: item.id,
@@ -229,8 +233,9 @@ export const ordersRouter = router({
       } else {
         await db.insert(orderPhaseLocks).values({ orderId: input.orderId, phaseKey: input.phaseKey, acknowledgementText: input.acknowledgementText, lockedByUserId: ctx.session.user.id, lockedAt });
       }
-      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: ctx.session.user.role, action: "order.phase_submitted", entityType: "order", entityId: input.orderId, summary: `Customer submitted and locked workflow phase ${input.phaseKey}`, changes: { phaseKey: input.phaseKey }, ipAddress: ctx.clientIp });
-      return { ok: true as const, lockedAt };
+      const workflowProgress = await syncOrderWorkflowProgress(input.orderId);
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: ctx.session.user.role, action: "order.phase_submitted", entityType: "order", entityId: input.orderId, summary: `Customer submitted and locked workflow phase ${input.phaseKey}`, changes: { phaseKey: input.phaseKey, workflowProgress }, ipAddress: ctx.clientIp });
+      return { ok: true as const, lockedAt, workflowProgress };
     }),
 
   shares: protectedProcedure

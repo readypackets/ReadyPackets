@@ -110,7 +110,7 @@ export function IntakePage() {
 
   const submit = trpc.intake.submit.useMutation({
     async onSuccess() {
-      await existing.refetch();
+      await Promise.all([existing.refetch(), utils.orders.detail.invalidate({ orderId }), utils.orders.list.invalidate(), utils.orders.summary.invalidate()]);
       toast.success(
         "Intake submitted",
         "Your Phase II Logic Synthesis call will be scheduled shortly.",

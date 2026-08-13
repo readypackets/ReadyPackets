@@ -1220,7 +1220,8 @@ export const adminRouter = router({
       id: z.number().int().positive().optional(),
       name: z.string().trim().min(2).max(120),
       description: z.string().trim().max(4_000).optional(),
-      stages: z.array(z.object({ key: z.string().trim().regex(/^[a-z0-9_]+$/).max(48), label: z.string().trim().min(2).max(120), order: z.number().int().min(1).max(50), capabilities: z.array(z.enum(["documents", "questions", "recording", "audio_upload"])).max(4).default([]), submissionNotice: z.string().trim().min(10).max(2_000).optional(), actions: workflowStageActionsSchema })).min(1).max(20),
+      customerPresentation: z.enum(["cards", "wizard"]).default("cards"),
+      stages: z.array(z.object({ key: z.string().trim().regex(/^[a-z0-9_]+$/).max(48), label: z.string().trim().min(2).max(120), order: z.number().int().min(1).max(50), capabilities: z.array(z.enum(["documents", "questions", "recording", "audio_upload"])).max(4).default([]), submissionNotice: z.string().trim().min(10).max(2_000).optional(), uploadLimits: z.object({ documentMaxFiles: z.number().int().min(1).max(50).optional(), documentMaxSizeMb: z.number().int().min(1).max(100).optional(), audioMaxFiles: z.number().int().min(1).max(50).optional(), audioMaxSizeMb: z.number().int().min(1).max(100).optional() }).optional(), actions: workflowStageActionsSchema })).min(1).max(20),
       isDefault: z.boolean().default(false),
       active: z.boolean().default(true),
     }))
@@ -1251,11 +1252,11 @@ export const adminRouter = router({
           const references = Number(fileReferences[0]?.total ?? 0) + Number(questionReferences[0]?.total ?? 0);
           if (references > 0) throw new TRPCError({ code: "BAD_REQUEST", message: "This phase contains existing order files or questions. Keep its stable key and rename or disable its customer actions instead of removing it." });
         }
-        await db.update(orderWorkflows).set({ name: input.name, description: input.description ?? null, stages, isDefault: input.isDefault, active: input.active }).where(eq(orderWorkflows.id, input.id));
+        await db.update(orderWorkflows).set({ name: input.name, description: input.description ?? null, customerPresentation: input.customerPresentation, stages, isDefault: input.isDefault, active: input.active }).where(eq(orderWorkflows.id, input.id));
         void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "workflow.updated", entityType: "order_workflow", entityId: input.id, summary: `Administrator updated workflow ${input.name}`, ipAddress: ctx.clientIp });
         return { ok: true as const, id: input.id };
       }
-      const result = await db.insert(orderWorkflows).values({ name: input.name, description: input.description ?? null, stages, isDefault: input.isDefault, active: input.active, createdByUserId: ctx.session.user.id });
+      const result = await db.insert(orderWorkflows).values({ name: input.name, description: input.description ?? null, customerPresentation: input.customerPresentation, stages, isDefault: input.isDefault, active: input.active, createdByUserId: ctx.session.user.id });
       const id = insertedId(result);
       void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "workflow.created", entityType: "order_workflow", entityId: id, summary: `Administrator created workflow ${input.name}`, ipAddress: ctx.clientIp });
       return { ok: true as const, id };

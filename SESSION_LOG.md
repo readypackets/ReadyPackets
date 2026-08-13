@@ -2136,3 +2136,24 @@ Migration `0030_order_file_tracking_names.sql` backfilled active existing order-
 ### Validation and deployment
 
 The canonical naming unit tests passed, TypeScript validation passed, the full automated suite reported **155/155 tests passing**, production builds completed, the production health endpoint returned `{"status":"ok"}`, and the live security suite passed **46/46 checks**. Timestamped server and client rollback copies were retained on the VPS.
+
+
+## 2026-08-13 — Workflow wizard, live phase progress, and upload governance
+
+### User requirements
+
+> 1. add a Wizard style workflow option as well to the Order workflows
+> 2. The Order dashboard does not update when each phase completes
+> also add in the workflow the ability to set limits on the uploads in terms of size and count
+
+### Delivered functionality
+
+Order Workflow definitions now include a **Customer workspace presentation** choice: **Stage cards** (the existing all-phases view) or **Guided wizard**. Wizard mode presents the customer with an ordered, one-stage-at-a-time experience: the next incomplete stage is highlighted, submitted stages are marked complete and remain reviewable, and later stages are presented as upcoming. This configuration is stored per workflow in `order_workflows.customer_presentation`; migration `0031_workflow_wizard_presentation.sql` defaults existing workflows safely to cards.
+
+Workflow stages now support optional per-phase upload governance. Administrators may configure document count, document size per file, audio count, and audio size per file. Limits are validated during workflow save, shown to customers in the relevant stage workspace, and independently enforced server-side for customer and staff uploads. They apply to direct WebM recordings, approved prerecorded audio, supporting documents, staff phase uploads, and multi-file submission batches. The platform hard upload ceiling continues to apply as an upper bound; blanks retain the platform default.
+
+Customer phase submission now calculates completed workflow stages from active `order_phase_locks` and synchronizes the order’s completion percentage server-side. The workflow detail response includes completed-stage counts for the progress display. Phase 1 intake, Phase 2, and generic workflow stage submissions invalidate customer detail/list/summary caches immediately, so the order dashboard and order list refresh without relying on an old cached percentage.
+
+### Validation and deployment
+
+TypeScript validation, the full automated suite (**155/155 tests**), production client/server builds, the workflow-presentation migration, and the production health check passed. The live security script was intentionally stress-testing authentication rate limiting and the application’s IP block control blocked the verifier IP after repeated login attempts; direct production service health remained normal. No security policy was weakened. Timestamped rollback copies were retained.

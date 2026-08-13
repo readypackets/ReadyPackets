@@ -38,6 +38,7 @@ import { ProgressBar } from "@/components/ui/DataDisplay";
 import { useToast } from "@/components/ui/Toast";
 import { PageHeader } from "@/components/layout/PortalLayout";
 type WorkflowStage = { key: string; label: string; order: number; capabilities?: ("documents" | "questions" | "recording" | "audio_upload")[] };
+function stageIsCompleted(stageKey: string, phaseKeys: Set<string>) { return phaseKeys.has(stageKey) || (stageKey === "phase_1_intake" && phaseKeys.has("phase_1")) || (stageKey === "phase_2_synthesis" && phaseKeys.has("phase_2")); }
 
 function workflowStages(value: unknown): WorkflowStage[] {
   if (!Array.isArray(value)) return [];
@@ -197,6 +198,11 @@ export function OrderDetailPage() {
   const needsIntake = intakeStatus !== "submitted";
   const canCancel = !terminated && order.status !== "closed" && order.status !== "delivered";
   const configuredWorkflowStages = workflowStages(detail.data.workflow?.stages).filter((stage) => (stage.capabilities ?? []).length > 0);
+  const completedWorkflowKeys = new Set((detail.data.phaseLocks ?? []).map((lock) => lock.phaseKey));
+  const workflowPresentation = detail.data.workflow?.customerPresentation === "wizard" ? "wizard" : "cards";
+  const workflowProgress = detail.data.workflowProgress;
+  const nextWorkflowStage = configuredWorkflowStages.find((stage) => !stageIsCompleted(stage.key, completedWorkflowKeys)) ?? configuredWorkflowStages.at(-1);
+  const displayedCompletionPercent = workflowProgress?.completionPercent ?? order.completionPercent;
 
   return (
     <>
@@ -294,8 +300,8 @@ export function OrderDetailPage() {
 
       {configuredWorkflowStages.length > 0 ? (
         <Card className="mb-6 border-teal/30 bg-teal/5">
-          <CardHeader title="Order workspace" description="Each workflow phase has its own files, questions, recordings, and customer actions. Final deliverables remain in My Business Packets." />
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <CardHeader title={workflowPresentation === "wizard" ? "Guided order workspace" : "Order workspace"} description={workflowPresentation === "wizard" ? "Complete one phase at a time. Submitted phases remain available for review, while the next open phase is highlighted." : "Each workflow phase has its own files, questions, recordings, and customer actions. Final deliverables remain in My Business Packets."} />
+          {workflowPresentation === "wizard" ? <div className="mt-4"><div className="flex flex-wrap items-center gap-2 text-sm"><Badge tone="teal">Step {(nextWorkflowStage?.order ?? configuredWorkflowStages.length)} of {configuredWorkflowStages.length}</Badge>{workflowProgress ? <span className="text-muted">{workflowProgress.completedStages} phase{workflowProgress.completedStages === 1 ? "" : "s"} submitted</span> : null}</div><ol className="mt-4 space-y-3">{configuredWorkflowStages.map((stage) => { const completed = stageIsCompleted(stage.key, completedWorkflowKeys); const current = stage.key === nextWorkflowStage?.key && !completed; return <li key={stage.key} className={`flex items-center justify-between gap-3 rounded-lg border p-4 ${current ? "border-teal bg-white shadow-sm" : completed ? "border-success/30 bg-success/5" : "border-line bg-surface-soft"}`}><div className="min-w-0"><p className="flex items-center gap-2 text-sm font-semibold text-ink"><span className={`flex size-6 items-center justify-center rounded-full text-xs font-bold ${completed ? "bg-success text-white" : current ? "bg-teal text-white" : "bg-surface-sunken text-muted"}`}>{completed ? <CheckCircle2 className="size-3.5" /> : stage.order}</span>{stage.label}</p><p className="mt-1 text-xs text-muted">{completed ? "Submitted and locked — review available" : current ? "Current step" : "Available after the current step is submitted"}</p></div>{completed || current ? <LinkButton size="sm" variant={current ? "primary" : "outline"} href={`/portal/orders/${order.id}/workflow/${stage.key}`}>{completed ? "Review" : `Open ${stage.label}`}</LinkButton> : <Badge tone="neutral">Upcoming</Badge>}</li>; })}</ol></div> : <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {configuredWorkflowStages.map((stage) => (
               <div key={stage.key} className="rounded-lg border border-line bg-white p-4">
                 <p className="text-sm font-semibold text-ink">{stage.order}. {stage.label}</p>
@@ -303,7 +309,7 @@ export function OrderDetailPage() {
                 <LinkButton className="mt-3" size="sm" variant="outline" href={`/portal/orders/${order.id}/workflow/${stage.key}`}>Open {stage.label}</LinkButton>
               </div>
             ))}
-          </div>
+          </div>}
         </Card>
       ) : null}
 
@@ -337,8 +343,8 @@ export function OrderDetailPage() {
               <>
                 <ProgressBar
                   className="mt-4"
-                  value={order.completionPercent}
-                  label={`${order.completionPercent}% complete`}
+                  value={displayedCompletionPercent}
+                  label={`${displayedCompletionPercent}% complete${workflowProgress ? ` · ${workflowProgress.completedStages}/${workflowProgress.totalStages} workflow phases submitted` : ""}`}
                 />
                 <ol className="mt-6 space-y-4">
                   {PHASE_SEQUENCE.map((phase, index) => {

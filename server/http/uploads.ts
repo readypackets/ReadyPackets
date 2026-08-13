@@ -149,22 +149,35 @@ export function createUploadRouter(): Router {
           return;
         }
       }
+      type StageUploadLimits = { documentMaxFiles?: unknown; documentMaxSizeMb?: unknown; audioMaxFiles?: unknown; audioMaxSizeMb?: unknown };
       let stageCapabilities: string[] | null = null;
-      if (orderId !== null && requestedPhase && !["phase_1", "phase_2", "unassigned"].includes(phase)) {
+      let stageUploadLimits: { documentMaxFiles?: number; documentMaxSizeMb?: number; audioMaxFiles?: number; audioMaxSizeMb?: number } | null = null;
+      if (requestedPhase && phase !== "unassigned") {
         const orderRows = await db.select({ workflowId: orders.workflowId }).from(orders).where(and(eq(orders.id, orderId), isNull(orders.deletedAt))).limit(1);
         const workflowId = orderRows[0]?.workflowId;
         const workflowRows = workflowId
           ? await db.select({ stages: orderWorkflows.stages }).from(orderWorkflows).where(eq(orderWorkflows.id, workflowId)).limit(1)
           : [];
-        const stages = Array.isArray(workflowRows[0]?.stages) ? workflowRows[0]?.stages as { key?: unknown; capabilities?: unknown }[] : [];
-        const stage = stages.find((item) => item.key === phase);
-        if (!stage) {
+        const stages = Array.isArray(workflowRows[0]?.stages) ? workflowRows[0]?.stages as { key?: unknown; capabilities?: unknown; uploadLimits?: unknown }[] : [];
+        const workflowStageKey = phase === "phase_1" ? "phase_1_intake" : phase === "phase_2" ? "phase_2_synthesis" : phase;
+        const stage = stages.find((item) => item.key === workflowStageKey);
+        if (!stage && !["phase_1", "phase_2"].includes(phase)) {
           res.status(400).json({ error: "The selected workflow phase is not available for this order." });
           return;
         }
-        stageCapabilities = Array.isArray(stage.capabilities)
-          ? stage.capabilities.filter((capability): capability is string => typeof capability === "string")
-          : ["documents", "questions", "recording"];
+        if (stage) {
+          stageCapabilities = Array.isArray(stage.capabilities)
+            ? stage.capabilities.filter((capability): capability is string => typeof capability === "string")
+            : ["documents", "questions", "recording"];
+          const rawLimits = stage.uploadLimits && typeof stage.uploadLimits === "object" ? stage.uploadLimits as StageUploadLimits : {};
+          const limit = (value: unknown, maximum: number) => typeof value === "number" && Number.isInteger(value) && value > 0 ? Math.min(maximum, value) : undefined;
+          stageUploadLimits = {
+            documentMaxFiles: limit(rawLimits.documentMaxFiles, 50),
+            documentMaxSizeMb: limit(rawLimits.documentMaxSizeMb, 100),
+            audioMaxFiles: limit(rawLimits.audioMaxFiles, 50),
+            audioMaxSizeMb: limit(rawLimits.audioMaxSizeMb, 100),
+          };
+        }
       }
       if (!isStaff && (category === "deliverable" || category === "internal")) {
         res.status(403).json({ error: "You cannot upload files of that type." });
@@ -194,6 +207,17 @@ export function createUploadRouter(): Router {
         detectedMime: string;
       }[] = [];
       const rejected: { name: string; reason: string }[] = [];
+
+      let existingDocumentCount = 0;
+      let existingAudioCount = 0;
+      if (stageUploadLimits && (stageUploadLimits.documentMaxFiles || stageUploadLimits.audioMaxFiles)) {
+        const existingRows = await db.select({ detectedMime: files.detectedMime }).from(files).where(and(eq(files.orderId, orderId), eq(files.phase, phase), isNull(files.deletedAt), eq(files.isPlaceholder, false)));
+        for (const row of existingRows) {
+          const audio = row.detectedMime.startsWith("audio/") || row.detectedMime === "video/webm" || row.detectedMime === "video/ogg";
+          if (audio) existingAudioCount += 1;
+          else existingDocumentCount += 1;
+        }
+      }
 
       let allowedExtensions: string[] | undefined;
       if (category === "intake_attachment") {
@@ -248,6 +272,18 @@ export function createUploadRouter(): Router {
           continue;
         }
         const detectedMime = recordedPitch ? "audio/webm" : (validation.mime ?? "application/octet-stream");
+        const countsAsAudio = recordedPitch || isAudio || prerecordedAudio;
+        const maxFiles = countsAsAudio ? stageUploadLimits?.audioMaxFiles : stageUploadLimits?.documentMaxFiles;
+        const maxSizeMb = countsAsAudio ? stageUploadLimits?.audioMaxSizeMb : stageUploadLimits?.documentMaxSizeMb;
+        const existingCount = countsAsAudio ? existingAudioCount : existingDocumentCount;
+        if (maxFiles && !replaceFileId && existingCount >= maxFiles) {
+          rejected.push({ name: file.originalname, reason: `This workflow phase allows up to ${maxFiles} ${countsAsAudio ? "audio recording(s)/file(s)" : "document(s)"}. Remove an existing item before adding another.` });
+          continue;
+        }
+        if (maxSizeMb && file.size > maxSizeMb * 1_048_576) {
+          rejected.push({ name: file.originalname, reason: `This workflow phase limits each ${countsAsAudio ? "audio file" : "document"} to ${maxSizeMb} MB.` });
+          continue;
+        }
         if (isAudio && !recordedPitch && !prerecordedAudio) {
           rejected.push({ name: file.originalname, reason: "Choose the pre-recorded audio upload option for an audio file and enable it for this workflow phase." });
           continue;
@@ -358,6 +394,8 @@ export function createUploadRouter(): Router {
             sizeBytes: stored.sizeBytes,
             detectedMime,
           });
+          if (countsAsAudio) existingAudioCount += 1;
+          else existingDocumentCount += 1;
 
           void recordActivity({
             actorUserId: session.user.id,

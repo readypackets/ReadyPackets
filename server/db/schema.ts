@@ -430,6 +430,7 @@ export const orderWorkflows = mysqlTable(
     name: varchar("name", { length: 120 }).notNull(),
     description: text("description"),
     stages: json("stages").notNull(),
+    customerPresentation: mysqlEnum("customer_presentation", ["cards", "wizard"]).notNull().default("cards"),
     isDefault: boolean("is_default").notNull().default(false),
     active: boolean("active").notNull().default(true),
     createdByUserId: int("created_by_user_id"),

@@ -37,7 +37,7 @@ export function Phase2ArtifactsPage() {
 
   const submitPhase = trpc.orders.submitWorkflowPhase.useMutation({
     async onSuccess() {
-      await Promise.all([detail.refetch(), filesQuery.refetch()]);
+      await Promise.all([detail.refetch(), filesQuery.refetch(), utils.orders.detail.invalidate({ orderId }), utils.orders.list.invalidate(), utils.orders.summary.invalidate()]);
       setSubmissionOpen(false);
       setAcknowledged(false);
       toast.success("Phase 2 submitted and locked", "An administrator must confirm an unlock before you can change this phase.");

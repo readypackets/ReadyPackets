@@ -11,13 +11,14 @@ import { useToast } from "@/components/ui/Toast";
 import { PageHeader } from "@/components/layout/PortalLayout";
 
 type Capability = "documents" | "questions" | "recording" | "audio_upload";
-type WorkflowStage = { key: string; label: string; order: number; capabilities?: Capability[]; submissionNotice?: string };
+type UploadLimits = { documentMaxFiles?: number; documentMaxSizeMb?: number; audioMaxFiles?: number; audioMaxSizeMb?: number };
+type WorkflowStage = { key: string; label: string; order: number; capabilities?: Capability[]; submissionNotice?: string; uploadLimits?: UploadLimits };
 const AUDIO_EXTENSIONS = new Set(["webm", "wav", "mp3", "m4a", "ogg"]);
 
 function stagesFromUnknown(value: unknown): WorkflowStage[] {
   if (!Array.isArray(value)) return [];
   return value
-    .filter((item): item is { key?: unknown; label?: unknown; order?: unknown; capabilities?: unknown; submissionNotice?: unknown } => Boolean(item) && typeof item === "object")
+    .filter((item): item is { key?: unknown; label?: unknown; order?: unknown; capabilities?: unknown; submissionNotice?: unknown; uploadLimits?: unknown } => Boolean(item) && typeof item === "object")
     .filter((item) => typeof item.key === "string" && typeof item.label === "string")
     .map((item, index) => ({
       key: item.key as string,
@@ -27,6 +28,7 @@ function stagesFromUnknown(value: unknown): WorkflowStage[] {
         ? item.capabilities.filter((capability): capability is Capability => capability === "documents" || capability === "questions" || capability === "recording" || capability === "audio_upload")
         : ["documents", "questions", "recording"] as Capability[],
       submissionNotice: typeof item.submissionNotice === "string" ? item.submissionNotice : undefined,
+      uploadLimits: item.uploadLimits && typeof item.uploadLimits === "object" ? item.uploadLimits as UploadLimits : undefined,
     }))
     .sort((left, right) => left.order - right.order);
 }
@@ -37,6 +39,7 @@ export function WorkflowStagePage() {
   const phaseKey = params.phaseKey ?? "";
   const [, navigate] = useLocation();
   const toast = useToast();
+  const utils = trpc.useUtils();
   const detail = trpc.orders.detail.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
   const filesQuery = trpc.files.listForOrder.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
   const questions = trpc.orders.questions.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
@@ -62,7 +65,7 @@ export function WorkflowStagePage() {
   });
   const submitPhase = trpc.orders.submitWorkflowPhase.useMutation({
     async onSuccess() {
-      await Promise.all([detail.refetch(), filesQuery.refetch(), questions.refetch()]);
+      await Promise.all([detail.refetch(), filesQuery.refetch(), questions.refetch(), utils.orders.detail.invalidate({ orderId }), utils.orders.list.invalidate(), utils.orders.summary.invalidate()]);
       setSubmissionOpen(false);
       setAcknowledged(false);
       toast.success("Phase submitted and locked", "Your project team must confirm an unlock before this phase can be changed.");
@@ -146,6 +149,7 @@ export function WorkflowStagePage() {
   const phaseLock = detail.data.phaseLocks?.find((lock) => lock.phaseKey === stage.key);
   const phaseLocked = Boolean(phaseLock);
   const submissionNotice = stage.submissionNotice?.trim() || `You are about to submit ${stage.label}. This locks all customer files, recordings, and answers in this phase. It cannot be undone by a customer; an administrator must confirm an unlock.`;
+  const uploadLimitText = [stage.uploadLimits?.documentMaxFiles ? `${stage.uploadLimits.documentMaxFiles} document${stage.uploadLimits.documentMaxFiles === 1 ? "" : "s"}` : null, stage.uploadLimits?.documentMaxSizeMb ? `${stage.uploadLimits.documentMaxSizeMb} MB per document` : null, stage.uploadLimits?.audioMaxFiles ? `${stage.uploadLimits.audioMaxFiles} audio file${stage.uploadLimits.audioMaxFiles === 1 ? "" : "s"}` : null, stage.uploadLimits?.audioMaxSizeMb ? `${stage.uploadLimits.audioMaxSizeMb} MB per audio file` : null].filter(Boolean).join(" · ");
   const phaseFiles = (filesQuery.data ?? []).filter((file) => file.phase === stage.key && file.category !== "deliverable");
   const audioFiles = phaseFiles.filter((file) => AUDIO_EXTENSIONS.has((file.extension ?? "").toLowerCase()));
   const documentFiles = phaseFiles.filter((file) => !audioFiles.includes(file));
@@ -154,6 +158,7 @@ export function WorkflowStagePage() {
 
   return <>
     <PageHeader title={stage.label} description={`Order ${order.orderNumber} · workflow phase ${stage.order}`} breadcrumb={{ href: `/portal/orders/${orderId}`, label: "Back to order" }} />
+    {uploadLimitText ? <Alert tone="info" className="mb-4">This phase allows: {uploadLimitText}.</Alert> : null}
     <Alert tone={phaseLocked ? "warning" : "info"} className="mb-6">{phaseLocked ? <>This phase was submitted on {formatDate(phaseLock?.lockedAt ?? new Date())} and is locked. Contact your project team if it must be reopened.</> : <>Files, questions, and recordings in this area belong only to <strong>{stage.label}</strong>. You may remove your own materials until you submit and lock this phase. Final deliverables are published separately in My Business Packets.</>}</Alert>
     <div className="grid gap-6 lg:grid-cols-2">
       <Card>

@@ -23,7 +23,7 @@ import {
 import { decryptField, encryptField } from "../security/crypto.js";
 import { recordActivity } from "../observability/audit.js";
 import { getSetting, getSettingNumber } from "../services/settings.js";
-import { OrderStateError, applyOrderAutomationRules, assertOrderAccess, transitionOrder } from "../services/orders.js";
+import { OrderStateError, applyOrderAutomationRules, assertOrderAccess, syncOrderWorkflowProgress, transitionOrder } from "../services/orders.js";
 import { exportIntakeMarkdownToPhaseTwo } from "../services/sharepoint.js";
 import { protectedProcedure, router } from "../trpc/trpc.js";
 import { INTAKE_OUTCOMES, INTEGRITY_CHOICES } from "../../shared/domain.js";
@@ -486,6 +486,7 @@ export const intakeRouter = router({
         }),
       );
 
+      const workflowProgress = await syncOrderWorkflowProgress(input.orderId);
       await applyOrderAutomationRules(input.orderId, "intake_submitted");
 
       void recordActivity({
@@ -495,6 +496,7 @@ export const intakeRouter = router({
         entityType: "order",
         entityId: input.orderId,
         summary: "Phase I intake form submitted",
+        changes: { workflowProgress },
         ipAddress: ctx.clientIp,
       });
 

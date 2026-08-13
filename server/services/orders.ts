@@ -13,6 +13,7 @@ import {
   intakeSubmissions,
   mndaAcceptances,
   orderItems,
+  orderPhaseLocks,
   orderWorkflows,
   workflowStageRuns,
   orderAutomationRules,
@@ -278,6 +279,49 @@ export async function applyOrderAutomationRules(
       });
     }
   }
+}
+
+type WorkflowProgressStage = { key?: unknown; capabilities?: unknown };
+type CustomerWorkflowProgressStage = { key: string; capabilities: unknown[] };
+
+export type WorkflowProgress = {
+  totalStages: number;
+  completedStages: number;
+  completionPercent: number;
+};
+
+function isStageComplete(stageKey: string, completedKeys: Set<string>): boolean {
+  if (completedKeys.has(stageKey)) return true;
+  if (stageKey === "phase_1_intake") return completedKeys.has("phase_1");
+  if (stageKey === "phase_2_synthesis") return completedKeys.has("phase_2");
+  return false;
+}
+
+/** Calculates customer-completed workflow stages without relying on UI state. */
+export async function getOrderWorkflowProgress(orderId: number): Promise<WorkflowProgress | null> {
+  const orderRows = await db.select({ workflowId: orders.workflowId }).from(orders).where(and(eq(orders.id, orderId), isNull(orders.deletedAt))).limit(1);
+  const workflowId = orderRows[0]?.workflowId;
+  if (!workflowId) return null;
+  const workflowRows = await db.select({ stages: orderWorkflows.stages }).from(orderWorkflows).where(eq(orderWorkflows.id, workflowId)).limit(1);
+  const rawStages = Array.isArray(workflowRows[0]?.stages) ? workflowRows[0]!.stages as WorkflowProgressStage[] : [];
+  const stages = rawStages.filter((stage): stage is CustomerWorkflowProgressStage => typeof stage.key === "string" && Array.isArray(stage.capabilities) && stage.capabilities.length > 0);
+  if (stages.length === 0) return null;
+  const locks = await db.select({ phaseKey: orderPhaseLocks.phaseKey }).from(orderPhaseLocks).where(and(eq(orderPhaseLocks.orderId, orderId), isNull(orderPhaseLocks.unlockedAt)));
+  const completedKeys = new Set(locks.map((lock) => lock.phaseKey));
+  const completedStages = stages.filter((stage) => isStageComplete(stage.key, completedKeys)).length;
+  return { totalStages: stages.length, completedStages, completionPercent: Math.round((completedStages / stages.length) * 100) };
+}
+
+/** Updates the dashboard/list progress when a customer submits a workflow phase. */
+export async function syncOrderWorkflowProgress(orderId: number): Promise<WorkflowProgress | null> {
+  const progress = await getOrderWorkflowProgress(orderId);
+  if (!progress) return null;
+  const rows = await db.select({ completionPercent: orders.completionPercent }).from(orders).where(and(eq(orders.id, orderId), isNull(orders.deletedAt))).limit(1);
+  const current = rows[0]?.completionPercent;
+  if (current === undefined) return progress;
+  const next = Math.max(current, progress.completionPercent);
+  if (next !== current) await db.update(orders).set({ completionPercent: next }).where(eq(orders.id, orderId));
+  return { ...progress, completionPercent: next };
 }
 
 export type WorkflowStageActionConfig = {
