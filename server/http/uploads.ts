@@ -21,7 +21,7 @@ import { putObject, validateUpload } from "../services/storage.js";
 import { buildOrderFileName } from "../services/fileNaming.js";
 import { logger } from "../observability/logger.js";
 import { recordActivity, recordSecurityEvent } from "../observability/audit.js";
-import { assertOrderAccess } from "../services/orders.js";
+import { assertCustomerWorkflowStageAccess, assertOrderAccess, OrderStateError } from "../services/orders.js";
 import { insertedId } from "../db/result.js";
 
 const UPLOAD_CATEGORIES = new Set([
@@ -164,6 +164,15 @@ export function createUploadRouter(): Router {
         if (!stage && !["phase_1", "phase_2"].includes(phase)) {
           res.status(400).json({ error: "The selected workflow phase is not available for this order." });
           return;
+        }
+        if (!isStaff && stage) {
+          try {
+            await assertCustomerWorkflowStageAccess(orderId, workflowStageKey);
+          } catch (error) {
+            const message = error instanceof OrderStateError ? error.message : "This workflow phase is not available yet.";
+            res.status(403).json({ error: message });
+            return;
+          }
         }
         if (stage) {
           stageCapabilities = Array.isArray(stage.capabilities)

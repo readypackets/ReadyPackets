@@ -28,6 +28,7 @@ import { decryptField, encryptField, emailIndex } from "../security/crypto.js";
 import { recordActivity } from "../observability/audit.js";
 import {
   OrderStateError,
+  assertCustomerWorkflowStageAccess,
   assertOrderAccess,
   createOrder,
   getOrderDetail,
@@ -213,15 +214,13 @@ export const ordersRouter = router({
       } catch (error) {
         toTrpcError(error);
       }
-      const orderRows = await db.select({ workflowId: orders.workflowId }).from(orders).where(and(eq(orders.id, input.orderId), isNull(orders.deletedAt))).limit(1);
-      const workflowId = orderRows[0]?.workflowId;
-      const workflowRows = workflowId
-        ? await db.select({ stages: orderWorkflows.stages }).from(orderWorkflows).where(eq(orderWorkflows.id, workflowId)).limit(1)
-        : [];
-      const stages = Array.isArray(workflowRows[0]?.stages) ? workflowRows[0]!.stages as Array<{ key?: unknown }> : [];
       const legacyPhase = input.phaseKey === "phase_1" || input.phaseKey === "phase_2";
-      if (!legacyPhase && !stages.some((stage) => stage.key === input.phaseKey)) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "This workflow phase is not available for the order." });
+      if (!legacyPhase) {
+        try {
+          await assertCustomerWorkflowStageAccess(input.orderId, input.phaseKey);
+        } catch (error) {
+          toTrpcError(error);
+        }
       }
       const existing = await db.select({ id: orderPhaseLocks.id, unlockedAt: orderPhaseLocks.unlockedAt }).from(orderPhaseLocks).where(and(eq(orderPhaseLocks.orderId, input.orderId), eq(orderPhaseLocks.phaseKey, input.phaseKey))).limit(1);
       if (existing[0] && !existing[0].unlockedAt) {
@@ -236,6 +235,17 @@ export const ordersRouter = router({
       const workflowProgress = await syncOrderWorkflowProgress(input.orderId);
       void recordActivity({ actorUserId: ctx.session.user.id, actorRole: ctx.session.user.role, action: "order.phase_submitted", entityType: "order", entityId: input.orderId, summary: `Customer submitted and locked workflow phase ${input.phaseKey}`, changes: { phaseKey: input.phaseKey, workflowProgress }, ipAddress: ctx.clientIp });
       return { ok: true as const, lockedAt, workflowProgress };
+    }),
+
+  workflowStageAccess: protectedProcedure
+    .input(z.object({ orderId: z.number().int().positive(), phaseKey: z.string().trim().regex(/^[a-z0-9_]+$/).max(64) }))
+    .query(async ({ ctx, input }) => {
+      try {
+        await assertOrderAccess(input.orderId, ctx.session.user.id, ctx.session.user.role);
+        return await assertCustomerWorkflowStageAccess(input.orderId, input.phaseKey);
+      } catch (error) {
+        toTrpcError(error);
+      }
     }),
 
   shares: protectedProcedure
@@ -395,6 +405,11 @@ export const ordersRouter = router({
       }
 
       if (ctx.session.user.role === "customer" && question.phase) {
+        try {
+          await assertCustomerWorkflowStageAccess(question.orderId, question.phase === "phase_1" ? "phase_1_intake" : question.phase === "phase_2" ? "phase_2_synthesis" : question.phase);
+        } catch (error) {
+          toTrpcError(error);
+        }
         const activeLocks = await db
           .select({ id: orderPhaseLocks.id })
           .from(orderPhaseLocks)

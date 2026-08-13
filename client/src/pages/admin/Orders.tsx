@@ -421,10 +421,11 @@ export function AdminOrdersPage() {
   const [bulkTrashOpen, setBulkTrashOpen] = useState(false);
 
   const orders = trpc.admin.orders.useQuery({
-    status: (status || undefined) as never,
+    status: status || undefined,
     limit: 200,
     offset: 0,
   });
+  const configuredStatuses = trpc.admin.orderStatusOptions.useQuery();
 
   const rows = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -585,7 +586,7 @@ export function AdminOrdersPage() {
               onChange={(event) => setStatus(event.target.value)}
               options={[
                 { value: "", label: "All statuses" },
-                ...Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+                ...(configuredStatuses.data ?? []).filter((option) => option.active).map((option) => ({ value: option.key, label: option.label })),
               ]}
             />
           </div>
@@ -732,6 +733,7 @@ export function AdminOrderDetailPage() {
   const detail = trpc.admin.orderDetail.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
   const files = trpc.adminFiles.list.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
   const workflows = trpc.admin.orderWorkflows.useQuery();
+  const configuredStatuses = trpc.admin.orderStatusOptions.useQuery();
   const phaseLocks = trpc.admin.phaseLocks.useQuery({ orderId, includeUnlocked: true }, { enabled: Number.isFinite(orderId) });
 
   const [tab, setTab] = useState("overview");
@@ -944,7 +946,9 @@ export function AdminOrderDetailPage() {
 
   const { order, customer, notes, questions, attachments, intakeSubmission } = detail.data;
   const businessPitchSubmitted = attachments.some((file) => file.category === "intake_attachment" && (file.detectedMime?.startsWith("audio/") || ["webm", "wav", "mp3", "m4a", "ogg"].includes((file.extension ?? "").toLowerCase())));
-  const allowedNext = ORDER_TRANSITIONS[order.status as keyof typeof ORDER_TRANSITIONS] ?? [];
+  const configuredStatusLabel = (value: string) => (configuredStatuses.data ?? []).find((option) => option.key === value)?.label ?? STATUS_LABELS[value] ?? value;
+  const systemTransitions = ORDER_TRANSITIONS[order.status as keyof typeof ORDER_TRANSITIONS];
+  const allowedNext = systemTransitions ?? (configuredStatuses.data ?? []).filter((option) => option.active && option.key !== order.status).map((option) => option.key);
 
   return (
     <>
@@ -1022,7 +1026,7 @@ export function AdminOrderDetailPage() {
                         { value: "", label: "Choose a status…" },
                         ...allowedNext.map((value) => ({
                           value,
-                          label: STATUS_LABELS[value] ?? value,
+                          label: configuredStatusLabel(value),
                         })),
                       ]}
                     />
@@ -1039,7 +1043,7 @@ export function AdminOrderDetailPage() {
                       onClick={() =>
                         transition.mutate({
                           orderId,
-                          to: transitionTo as never,
+                          to: transitionTo,
                           reason: transitionReason.trim() || undefined,
                         })
                       }

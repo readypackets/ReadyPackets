@@ -41,6 +41,7 @@ export function WorkflowStagePage() {
   const toast = useToast();
   const utils = trpc.useUtils();
   const detail = trpc.orders.detail.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
+  const stageAccess = trpc.orders.workflowStageAccess.useQuery({ orderId, phaseKey }, { enabled: Number.isFinite(orderId) && phaseKey.length > 0 });
   const filesQuery = trpc.files.listForOrder.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
   const questions = trpc.orders.questions.useQuery({ orderId }, { enabled: Number.isFinite(orderId) });
   const fileInput = useRef<HTMLInputElement>(null);
@@ -68,7 +69,11 @@ export function WorkflowStagePage() {
       await Promise.all([detail.refetch(), filesQuery.refetch(), questions.refetch(), utils.orders.detail.invalidate({ orderId }), utils.orders.list.invalidate(), utils.orders.summary.invalidate()]);
       setSubmissionOpen(false);
       setAcknowledged(false);
-      toast.success("Phase submitted and locked", "Your project team must confirm an unlock before this phase can be changed.");
+      const ordered = stagesFromUnknown(detail.data?.workflow?.stages ?? []);
+      const currentIndex = ordered.findIndex((candidate) => candidate.key === phaseKey);
+      const next = currentIndex >= 0 ? ordered[currentIndex + 1] : undefined;
+      toast.success("Phase submitted and locked", next ? `Continue to ${next.label} when you are ready.` : "Your project team must confirm an unlock before this phase can be changed.");
+      if (next) navigate(`/portal/orders/${orderId}/workflow/${next.key}`);
     },
     onError(error) { toast.error("Could not submit phase", errorMessage(error)); },
   });
@@ -138,8 +143,9 @@ export function WorkflowStagePage() {
     }
   }
 
-  if (detail.isLoading || filesQuery.isLoading || questions.isLoading) return <div className="space-y-4"><Skeleton className="h-10 w-64" /><Skeleton className="h-72 w-full" /></div>;
+  if (detail.isLoading || stageAccess.isLoading || filesQuery.isLoading || questions.isLoading) return <div className="space-y-4"><Skeleton className="h-10 w-64" /><Skeleton className="h-72 w-full" /></div>;
   if (!detail.data) return <EmptyState icon={FileText} title="Order not found" description="This order is unavailable or is not associated with your account." action={<LinkButton href="/portal/orders" variant="outline">Back to my orders</LinkButton>} />;
+  if (stageAccess.isError) return <><PageHeader title="Complete the current workflow step first" breadcrumb={{ href: `/portal/orders/${orderId}`, label: "Back to order" }} /><Card className="max-w-2xl"><CardHeader title="This step is not available yet" description={errorMessage(stageAccess.error)} /><LinkButton className="mt-5" href={`/portal/orders/${orderId}`} variant="primary">Return to guided order workspace</LinkButton></Card></>;
 
   const stages = stagesFromUnknown(detail.data.workflow?.stages);
   const stage = stages.find((item) => item.key === phaseKey);
@@ -155,9 +161,12 @@ export function WorkflowStagePage() {
   const documentFiles = phaseFiles.filter((file) => !audioFiles.includes(file));
   const phaseQuestions = (questions.data ?? []).filter((question) => question.phase === stage.key);
   const { order } = detail.data;
+  const completedKeys = new Set((detail.data.phaseLocks ?? []).map((lock) => lock.phaseKey));
+  const currentStageKey = stageAccess.data?.currentStageKey ?? null;
 
   return <>
-    <PageHeader title={stage.label} description={`Order ${order.orderNumber} · workflow phase ${stage.order}`} breadcrumb={{ href: `/portal/orders/${orderId}`, label: "Back to order" }} />
+    <PageHeader title={stage.label} description={`Order ${order.orderNumber} · guided step ${stage.order} of ${stages.length}`} breadcrumb={{ href: `/portal/orders/${orderId}`, label: "Back to order" }} />
+    <Card className="mb-5"><CardHeader title="Order workflow" description="Complete the current step before the next step becomes available. Submitted steps stay available for review." /><ol className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{stages.map((candidate) => { const completed = completedKeys.has(candidate.key); const current = candidate.key === currentStageKey && !completed; const available = completed || current; return <li key={candidate.key} className={`flex items-center justify-between gap-3 rounded-lg border p-3 ${candidate.key === stage.key ? "border-teal bg-teal/5" : completed ? "border-success/30 bg-success/5" : "border-line bg-surface-soft"}`}><span className="min-w-0 text-sm"><span className={`mr-2 inline-flex size-6 items-center justify-center rounded-full text-xs font-bold ${completed ? "bg-success text-white" : current ? "bg-teal text-white" : "bg-surface-sunken text-muted"}`}>{completed ? <CheckCircle2 className="size-3.5" /> : candidate.order}</span>{candidate.label}</span>{available ? <LinkButton size="sm" variant={current ? "primary" : "outline"} href={`/portal/orders/${orderId}/workflow/${candidate.key}`}>{completed ? "Review" : "Open"}</LinkButton> : <Badge tone="neutral">Upcoming</Badge>}</li>; })}</ol></Card>
     {uploadLimitText ? <Alert tone="info" className="mb-4">This phase allows: {uploadLimitText}.</Alert> : null}
     <Alert tone={phaseLocked ? "warning" : "info"} className="mb-6">{phaseLocked ? <>This phase was submitted on {formatDate(phaseLock?.lockedAt ?? new Date())} and is locked. Contact your project team if it must be reopened.</> : <>Files, questions, and recordings in this area belong only to <strong>{stage.label}</strong>. You may remove your own materials until you submit and lock this phase. Final deliverables are published separately in My Business Packets.</>}</Alert>
     <div className="grid gap-6 lg:grid-cols-2">

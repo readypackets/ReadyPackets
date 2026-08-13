@@ -35,6 +35,7 @@ import { queueFullOrderFolderProvisioning } from "./sharepoint.js";
 import { queueTemplatedEmail } from "./email.js";
 import { displayNameOf, getUserById } from "../db/users.js";
 import { ORDER_TRANSITIONS, type OrderStatus } from "../../shared/domain.js";
+import { assertActiveOrderStatus, isSystemOrderStatus, isTerminalOrderStatus } from "./orderStatusConfig.js";
 import { insertedId } from "../db/result.js";
 
 export class OrderStateError extends Error {}
@@ -324,10 +325,41 @@ export async function syncOrderWorkflowProgress(orderId: number): Promise<Workfl
   return { ...progress, completionPercent: next };
 }
 
+export interface CustomerWorkflowStage {
+  key: string;
+  label: string;
+  order: number;
+  capabilities: unknown[];
+}
+
+/** Resolves the current stage and prevents customers from working ahead in a guided workflow. */
+export async function assertCustomerWorkflowStageAccess(orderId: number, stageKey: string): Promise<{ stage: CustomerWorkflowStage; currentStageKey: string | null; completed: boolean }> {
+  const [order] = await db.select({ workflowId: orders.workflowId }).from(orders).where(and(eq(orders.id, orderId), isNull(orders.deletedAt))).limit(1);
+  if (!order?.workflowId) throw new OrderStateError("This order does not have an assigned workflow.");
+  const [workflow] = await db.select({ stages: orderWorkflows.stages, customerPresentation: orderWorkflows.customerPresentation }).from(orderWorkflows).where(eq(orderWorkflows.id, order.workflowId)).limit(1);
+  const raw = Array.isArray(workflow?.stages) ? workflow.stages as Array<{ key?: unknown; label?: unknown; order?: unknown; capabilities?: unknown }> : [];
+  const stages = raw
+    .filter((stage): stage is { key: string; label?: unknown; order?: number; capabilities: unknown[] } => typeof stage.key === "string" && Array.isArray(stage.capabilities) && stage.capabilities.length > 0)
+    .map((stage, index) => ({ key: stage.key, label: typeof stage.label === "string" ? stage.label : stage.key, order: typeof stage.order === "number" ? stage.order : index + 1, capabilities: stage.capabilities }))
+    .sort((a, b) => a.order - b.order || a.key.localeCompare(b.key));
+  const stage = stages.find((candidate) => candidate.key === stageKey);
+  if (!stage) throw new OrderStateError("This phase is not part of the assigned workflow.");
+  const locks = await db.select({ phaseKey: orderPhaseLocks.phaseKey }).from(orderPhaseLocks).where(and(eq(orderPhaseLocks.orderId, orderId), isNull(orderPhaseLocks.unlockedAt)));
+  const completedKeys = new Set(locks.map((lock) => lock.phaseKey));
+  const completed = isStageComplete(stage.key, completedKeys);
+  const current = stages.find((candidate) => !isStageComplete(candidate.key, completedKeys));
+  // Card presentation deliberately preserves non-linear customer access. Wizard
+  // presentation is enforced server side rather than trusting route visibility.
+  if (workflow?.customerPresentation === "wizard" && !completed && current && current.key !== stage.key) {
+    throw new OrderStateError(`Complete ${current.label} before opening ${stage.label}.`);
+  }
+  return { stage, currentStageKey: current?.key ?? null, completed };
+}
+
 export type WorkflowStageActionConfig = {
   emailTemplateKey?: string;
   adminAlert?: { enabled?: boolean; message?: string; severity?: "warning" | "error" | "critical" };
-  orderStatus?: OrderStatus;
+  orderStatus?: string;
   completionPercent?: number;
   webhookEndpointId?: number;
 };
@@ -422,7 +454,7 @@ export async function runWorkflowStageActions(input: {
 
 export interface TransitionInput {
   orderId: number;
-  to: OrderStatus;
+  to: string;
   actorUserId: number;
   actorRole: string;
   reason?: string;
@@ -480,14 +512,22 @@ export async function transitionOrder(input: TransitionInput) {
   const order = rows[0];
   if (!order) throw new OrderStateError("Order not found.");
 
-  const from = order.status as OrderStatus;
+  const from = order.status;
   if (from === input.to) return { changed: false as const };
+  try {
+    await assertActiveOrderStatus(input.to);
+  } catch {
+    throw new OrderStateError("The selected order status is not active or is not configured.");
+  }
 
-  const allowed = ORDER_TRANSITIONS[from] ?? [];
-  if (!allowed.includes(input.to)) {
-    throw new OrderStateError(
-      `An order in state "${from}" cannot move to "${input.to}".`,
-    );
+  // Core lifecycle states retain their guarded transition graph. A custom status
+  // is an administrator-defined operating label; it may be entered or exited by
+  // staff only while the order remains non-terminal and the target is active.
+  if (isSystemOrderStatus(from) && isSystemOrderStatus(input.to)) {
+    const allowed = ORDER_TRANSITIONS[from] ?? [];
+    if (!allowed.includes(input.to)) throw new OrderStateError(`An order in state "${from}" cannot move to "${input.to}".`);
+  } else if (isTerminalOrderStatus(from)) {
+    throw new OrderStateError(`A terminal order in state "${from}" cannot move to a custom status.`);
   }
 
   if (from === "phase_1_intake" && input.to === "phase_2_synthesis") {
@@ -525,7 +565,7 @@ export async function transitionOrder(input: TransitionInput) {
     ipAddress: input.ipAddress ?? null,
   });
 
-  await enqueuePhaseJobs(input.orderId, input.to);
+  if (isSystemOrderStatus(input.to)) await enqueuePhaseJobs(input.orderId, input.to);
   await applyOrderAutomationRules(input.orderId, "order_status", input.to);
 
   // Fire email automation triggers based on the new order state.

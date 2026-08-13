@@ -2222,3 +2222,15 @@ The new administrator-only **Platform setup** wizard centralizes first-run confi
 **Assessment caveat:** The reports are a source/configuration and non-invasive production-control review, not a penetration test, forensic review, payment-provider assessment, or Cloudflare-account audit. The highest-priority remediation remains SSRF-safe outbound webhook handling and controlled offsite recovery proof.
 
 **Publication:** The implementation, installer, documentation, and branded reports were published in commit `1eda6c1317d6fdd838ee0ccb240e08b4cab719dd`. The production release marker now references that code commit. The VPS operations record was updated with the certificate-control daemon, managed TLS include, service status, and rollback location. A final session-log publication commit follows this record.
+
+## 2026-08-13 — Configurable order statuses and enforced guided workflow release
+
+**Request:** Provide administrator-managed order status options and make every customer order workflow a real sequential wizard across phases and steps.
+
+**Delivered:** Added **Admin → Order status options** with protected core lifecycle statuses, editable labels and badge tones, ordering, custom status creation, and custom-status activation/deactivation. Core lifecycle keys remain active and preserve their server-side payment, intake, deliverable, history, and automation safeguards. The server refuses to remove a configured custom status while any active order still uses it. Workflow actions and administrator order transition controls now use live active status options.
+
+All order workflows are now persisted as `wizard` presentation through migration `0032_enforce_workflow_wizard.sql`; new workflow saves are wizard-only. The customer workspace shows an ordered stepper, admits only the current step or completed review steps, takes the customer to the next step after submission, and receives server-side sequencing checks for phase submission, questions, and uploads. This prevents a customer from bypassing the wizard through a direct future-stage URL or upload request while preserving read-only review of completed stages.
+
+**Validation and deployment:** TypeScript passed with zero errors; `pnpm test` passed 155/155 tests; client/server bundles built successfully. Migration 0032 was applied to production and verified `0` non-wizard workflows. The final health check returned `{"status":"ok"}`. Production retained rollback directories including `/opt/readypackets/rollback-20260813145925-status-integrity`.
+
+**Publication:** Pending commit and GitHub push at time of this entry.

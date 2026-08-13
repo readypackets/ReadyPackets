@@ -11,7 +11,7 @@ import { PageHeader } from "@/components/layout/PortalLayout";
 
 type Workflow = { id: number; name: string; description: string | null; stages: unknown[]; customerPresentation: "cards" | "wizard"; isDefault: boolean; active: boolean; createdAt: Date | string };
 type StageCapability = "documents" | "questions" | "recording" | "audio_upload";
-type OrderStatus = "new" | "phase_1_intake" | "phase_2_synthesis" | "phase_3_review" | "phase_4_delivery" | "delivered" | "closed" | "cancelled";
+type OrderStatus = string;
 type StageActions = {
   emailTemplateKey?: string;
   adminAlert?: { enabled?: boolean; message?: string; severity?: "warning" | "error" | "critical" };
@@ -28,7 +28,6 @@ const CAPABILITIES: { key: StageCapability; label: string; description: string; 
   { key: "recording", label: "Record audio", description: "Customer may record WebM audio in the browser.", icon: Mic },
   { key: "audio_upload", label: "Upload audio file", description: "Customer and staff may attach approved prerecorded audio.", icon: FileAudio },
 ];
-const STATUS_OPTIONS: OrderStatus[] = ["new", "phase_1_intake", "phase_2_synthesis", "phase_3_review", "phase_4_delivery", "delivered", "closed", "cancelled"];
 const STANDARD_STAGES: Stage[] = [
   { key: "new", label: "Payment confirmed", order: 1, capabilities: ["questions"], actions: {} },
   { key: "phase_1_intake", label: "Phase 1 intake", order: 2, capabilities: ["documents", "questions", "recording"], actions: {} },
@@ -43,7 +42,7 @@ function normalizeActions(value: unknown): StageActions {
   if (!value || typeof value !== "object") return {};
   const raw = value as Record<string, unknown>;
   const adminRaw = raw.adminAlert && typeof raw.adminAlert === "object" ? raw.adminAlert as Record<string, unknown> : null;
-  const orderStatus = STATUS_OPTIONS.includes(raw.orderStatus as OrderStatus) ? raw.orderStatus as OrderStatus : undefined;
+  const orderStatus = typeof raw.orderStatus === "string" && /^[a-z][a-z0-9_]{1,31}$/.test(raw.orderStatus) ? raw.orderStatus : undefined;
   return {
     emailTemplateKey: typeof raw.emailTemplateKey === "string" ? raw.emailTemplateKey : undefined,
     adminAlert: adminRaw ? {
@@ -95,6 +94,9 @@ export function AdminOrderWorkflowsPage() {
   const workflows = trpc.admin.orderWorkflows.useQuery();
   const templates = trpc.admin.emailTemplates.useQuery();
   const endpoints = trpc.integrations.webhookEndpoints.useQuery();
+  const configuredStatuses = trpc.admin.orderStatusOptions.useQuery();
+  const activeStatuses = (configuredStatuses.data ?? []).filter((status) => status.active);
+  const configuredStatusLabel = (value: string) => activeStatuses.find((status) => status.key === value)?.label ?? (configuredStatuses.data ?? []).find((status) => status.key === value)?.label ?? statusLabel(value);
   const [editing, setEditing] = useState<Workflow | null>(null);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -102,7 +104,7 @@ export function AdminOrderWorkflowsPage() {
   const [stages, setStages] = useState<Stage[]>([]);
   const [isDefault, setIsDefault] = useState(false);
   const [active, setActive] = useState(true);
-  const [customerPresentation, setCustomerPresentation] = useState<"cards" | "wizard">("cards");
+  const customerPresentation: "wizard" = "wizard";
   const [draggedStage, setDraggedStage] = useState<number | null>(null);
 
   const save = trpc.admin.upsertOrderWorkflow.useMutation({
@@ -116,7 +118,6 @@ export function AdminOrderWorkflowsPage() {
     setStages(workflow ? cloneStages(normalizeStages(workflow.stages)) : cloneStages(STANDARD_STAGES));
     setIsDefault(clone ? false : workflow?.isDefault ?? false);
     setActive(clone ? true : workflow?.active ?? true);
-    setCustomerPresentation(clone ? (workflow?.customerPresentation ?? "cards") : workflow?.customerPresentation ?? "cards");
     setDraggedStage(null); setOpen(true);
   }
   function updateStage(index: number, patch: Partial<Stage>) { setStages((current) => current.map((stage, stageIndex) => stageIndex === index ? { ...stage, ...patch } : stage)); }
@@ -137,13 +138,13 @@ export function AdminOrderWorkflowsPage() {
   ];
 
   return <>
-    <PageHeader title="Order workflows" description="Build connected order stages, customer requirements, and auditable actions that administrators can run for individual orders." actions={<Button leadingIcon={<Plus className="size-4" />} onClick={() => reset(null)}>New workflow</Button>} />
+    <PageHeader title="Order workflows" description="Build connected wizard steps, customer requirements, and auditable actions that administrators can run for individual orders." actions={<Button leadingIcon={<Plus className="size-4" />} onClick={() => reset(null)}>New workflow</Button>} />
     <Alert tone="info" className="mb-5">Workflow changes are live definitions: every assigned order refreshes its customer and administrator phase workspaces from the saved stage labels, capabilities, and available actions. Existing files and questions remain associated with their stable stage key.</Alert>
     {workflows.isLoading ? <div className="space-y-3">{Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-16 w-full" />)}</div> : (workflows.data ?? []).length ? <DataTable caption="Order workflows" columns={columns} rows={(workflows.data ?? []) as Workflow[]} rowKey={(row) => row.id} /> : <EmptyState icon={ClipboardList} title="No workflows" description="Create a workflow before assigning one to an order." action={<Button onClick={() => reset(null)}>New workflow</Button>} />}
     <Modal size="2xl" open={open} onClose={() => setOpen(false)} title={editing ? "Edit order workflow" : "New order workflow"} description="Use the visual stage builder to define customer workspaces and optional administrator-run actions." footer={<><Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button busy={save.isPending} disabled={name.trim().length < 2 || normalizedStages.length === 0 || invalidStages || duplicateKeys} leadingIcon={<Save className="size-4" />} onClick={() => save.mutate({ id: editing?.id, name: name.trim(), description: description.trim() || undefined, customerPresentation, stages: normalizedStages, isDefault, active })}>Save workflow</Button></>}>
       <div className="space-y-5">
         <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]"><Input label="Workflow name" value={name} onChange={(event) => setName(event.target.value)} required /><Input label="Workflow description" value={description} onChange={(event) => setDescription(event.target.value)} /></div>
-        <div className="rounded-lg border border-teal/20 bg-teal/5 p-4"><div className="flex items-center gap-2"><LayoutTemplate className="size-4 text-teal" /><p className="text-sm font-semibold text-ink">Customer workspace presentation</p></div><Select className="mt-3" label="Presentation style" value={customerPresentation} onChange={(event) => setCustomerPresentation(event.target.value as "cards" | "wizard")} options={[{ value: "cards", label: "Stage cards — show all workflow phases" }, { value: "wizard", label: "Guided wizard — one phase at a time" }]} /><p className="mt-2 text-xs text-muted">Wizard mode guides customers through open phases sequentially, while preserving direct access to a completed phase for review.</p></div>
+        <div className="rounded-lg border border-teal/20 bg-teal/5 p-4"><div className="flex items-center gap-2"><LayoutTemplate className="size-4 text-teal" /><p className="text-sm font-semibold text-ink">Customer workspace presentation</p></div><p className="mt-2 text-sm text-body">Every assigned workflow uses the guided wizard. Customers complete one step at a time, then may review locked completed steps without bypassing the current step.</p><input type="hidden" value={customerPresentation} /></div>
         <Alert tone="info">Stage keys are stable technical references. Rename a <strong>stage label</strong> freely; retain a key when it already has customer files or questions so those materials remain visible in its updated workspace.</Alert>
         <div className="rounded-xl border border-line bg-surface-soft p-4"><div className="mb-4 flex items-center justify-between gap-3"><div><p className="text-base font-semibold text-ink">Connected phase canvas</p><p className="text-sm text-muted">Drag a stage card to reorder it. Configure customer requirements and optional order actions per stage.</p></div><Button size="sm" variant="outline" leadingIcon={<Plus className="size-3.5" />} onClick={addStage}>Add phase</Button></div>
           <div className="space-y-3">{stages.map((stage, index) => <div key={`${stage.key}-${index}`} draggable onDragStart={() => setDraggedStage(index)} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (draggedStage !== null) moveStage(draggedStage, index); setDraggedStage(null); }} className={`rounded-xl border bg-white p-5 shadow-sm ${draggedStage === index ? "border-teal ring-2 ring-teal/20" : "border-line"}`}>
@@ -156,14 +157,14 @@ export function AdminOrderWorkflowsPage() {
 <p className="text-xs text-muted">These execute only when an administrator runs this stage on an assigned order.</p></div><Badge tone={actionCount(stage.actions) ? "teal" : "neutral"}>{actionCount(stage.actions)} configured</Badge></div>
                 <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   <Select label="Email alert template" value={stage.actions.emailTemplateKey ?? ""} onChange={(event) => updateActions(index, { emailTemplateKey: event.target.value || undefined })}><option value="">No customer email</option>{(templates.data ?? []).filter((template) => template.enabled).map((template) => <option key={template.templateKey} value={template.templateKey}>{template.name}</option>)}</Select>
-                  <Select label="Order status update" value={stage.actions.orderStatus ?? ""} onChange={(event) => updateActions(index, { orderStatus: event.target.value ? event.target.value as OrderStatus : undefined })}><option value="">Do not change status</option>{STATUS_OPTIONS.map((status) => <option key={status} value={status}>{statusLabel(status)}</option>)}</Select>
+                  <Select label="Order status update" value={stage.actions.orderStatus ?? ""} onChange={(event) => updateActions(index, { orderStatus: event.target.value || undefined })}><option value="">Do not change status</option>{activeStatuses.map((status) => <option key={status.key} value={status.key}>{status.label}</option>)}</Select>
                   <Input label="Completion percentage" type="number" min="0" max="100" placeholder="No update" value={stage.actions.completionPercent ?? ""} onChange={(event) => updateActions(index, { completionPercent: event.target.value === "" ? undefined : Math.max(0, Math.min(100, Number(event.target.value))) })} />
                   <Select label="Webhook trigger" value={stage.actions.webhookEndpointId ? String(stage.actions.webhookEndpointId) : ""} onChange={(event) => updateActions(index, { webhookEndpointId: event.target.value ? Number(event.target.value) : undefined })}><option value="">No webhook</option>{(endpoints.data ?? []).filter((endpoint) => endpoint.enabled).map((endpoint) => <option key={endpoint.id} value={String(endpoint.id)}>{endpoint.name}</option>)}</Select>
                   <label className={`flex cursor-pointer gap-2 rounded-lg border p-3 text-sm ${stage.actions.adminAlert?.enabled ? "border-teal/50 bg-teal/5" : "border-line"}`}><Checkbox checked={stage.actions.adminAlert?.enabled === true} onChange={(event) => updateActions(index, { adminAlert: { enabled: event.target.checked } })} label="" /><span><span className="flex items-center gap-1.5 font-medium text-ink"><Bell className="size-4 text-teal" />Administrator dashboard alert</span><span className="mt-0.5 block text-xs text-muted">Create an operational alert when this stage is run.</span></span></label>
                   {stage.actions.adminAlert?.enabled ? <Select label="Alert severity" value={stage.actions.adminAlert.severity ?? "warning"} onChange={(event) => updateActions(index, { adminAlert: { severity: event.target.value as "warning" | "error" | "critical" } })}><option value="warning">Warning</option><option value="error">Error</option><option value="critical">Critical</option></Select> : <div className="rounded-lg border border-dashed border-line p-3 text-xs text-muted">Enable the dashboard alert to select severity and custom text.</div>}
                 </div>
                 {stage.actions.adminAlert?.enabled ? <Textarea className="mt-3" label="Administrator alert message" value={stage.actions.adminAlert.message ?? ""} onChange={(event) => updateActions(index, { adminAlert: { message: event.target.value } })} help="Optional. A stage and order reference is used when blank." /> : null}
-                <div className="mt-3 flex flex-wrap gap-2 text-xs">{stage.actions.emailTemplateKey ? <Badge tone="teal"><Mail className="mr-1 inline size-3" />Email</Badge> : null}{stage.actions.orderStatus ? <Badge tone="teal"><ArrowDownUp className="mr-1 inline size-3" />Status: {statusLabel(stage.actions.orderStatus)}</Badge> : null}{stage.actions.completionPercent !== undefined ? <Badge tone="teal"><Gauge className="mr-1 inline size-3" />{stage.actions.completionPercent}%</Badge> : null}{stage.actions.webhookEndpointId ? <Badge tone="teal"><Webhook className="mr-1 inline size-3" />Webhook</Badge> : null}{stage.actions.adminAlert?.enabled ? <Badge tone="teal"><Bell className="mr-1 inline size-3" />Admin alert</Badge> : null}</div>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">{stage.actions.emailTemplateKey ? <Badge tone="teal"><Mail className="mr-1 inline size-3" />Email</Badge> : null}{stage.actions.orderStatus ? <Badge tone="teal"><ArrowDownUp className="mr-1 inline size-3" />Status: {configuredStatusLabel(stage.actions.orderStatus)}</Badge> : null}{stage.actions.completionPercent !== undefined ? <Badge tone="teal"><Gauge className="mr-1 inline size-3" />{stage.actions.completionPercent}%</Badge> : null}{stage.actions.webhookEndpointId ? <Badge tone="teal"><Webhook className="mr-1 inline size-3" />Webhook</Badge> : null}{stage.actions.adminAlert?.enabled ? <Badge tone="teal"><Bell className="mr-1 inline size-3" />Admin alert</Badge> : null}</div>
               </div>
             </div><div className="flex flex-col gap-1"><Button size="sm" variant="ghost" aria-label="Move stage up" disabled={index === 0} onClick={() => moveStage(index, index - 1)}><ArrowUp className="size-4" /></Button><Button size="sm" variant="ghost" aria-label="Move stage down" disabled={index === stages.length - 1} onClick={() => moveStage(index, index + 1)}><ArrowDownUp className="size-4" /></Button><Button size="sm" variant="ghost" aria-label="Remove stage" disabled={stages.length === 1} onClick={() => removeStage(index)}><Trash2 className="size-4 text-danger" /></Button></div></div>
           </div>)}</div>

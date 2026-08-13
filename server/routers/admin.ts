@@ -49,6 +49,7 @@ import {
 } from "../db/schema.js";
 import { decryptField, encryptField, hashPassword, randomToken } from "../security/crypto.js";
 import { getSetting, getSettingNumber, setSetting } from "../services/settings.js";
+import { getOrderStatusOptions, normalizeOrderStatusOptions, ORDER_STATUS_OPTIONS_SETTING } from "../services/orderStatusConfig.js";
 import {
   createUser,
   decryptUser,
@@ -85,7 +86,7 @@ const workflowStageActionsSchema = z.object({
     message: z.string().trim().max(500).optional(),
     severity: z.enum(["warning", "error", "critical"]).default("warning"),
   }).optional(),
-  orderStatus: z.enum(["new", "phase_1_intake", "phase_2_synthesis", "phase_3_review", "phase_4_delivery", "delivered", "closed", "cancelled"]).optional(),
+  orderStatus: z.string().trim().min(2).max(32).optional(),
   completionPercent: z.number().int().min(0).max(100).optional(),
   webhookEndpointId: z.number().int().positive().optional(),
 }).default({});
@@ -303,13 +304,30 @@ export const adminRouter = router({
     .input(z.object({ config: customReportConfigSchema }))
     .query(async ({ input }) => buildCustomReport(input.config)),
 
+  orderStatusOptions: adminProcedure.query(async () => getOrderStatusOptions(true)),
+
+  saveOrderStatusOptions: adminProcedure
+    .input(z.object({ options: z.array(z.object({ key: z.string().trim().min(2).max(32), label: z.string().trim().min(1).max(64), tone: z.enum(["neutral", "teal", "gold", "success", "warning", "danger"]), active: z.boolean(), sortOrder: z.number().int().min(0).max(9_999) })).min(ORDER_STATUSES.length).max(40) }))
+    .mutation(async ({ ctx, input }) => {
+      const options = normalizeOrderStatusOptions(input.options);
+      const requestedSystem = new Set(input.options.filter((option) => ORDER_STATUSES.includes(option.key as (typeof ORDER_STATUSES)[number])).map((option) => option.key));
+      if (requestedSystem.size !== ORDER_STATUSES.length) throw new TRPCError({ code: "BAD_REQUEST", message: "Every protected system order status must remain in the configuration." });
+      const configuredKeys = new Set(options.map((option) => option.key));
+      const liveRows = await db.select({ status: orders.status }).from(orders).where(isNull(orders.deletedAt));
+      const orphaned = [...new Set(liveRows.map((row) => row.status).filter((status) => !configuredKeys.has(status)))];
+      if (orphaned.length) throw new TRPCError({ code: "BAD_REQUEST", message: `Deactivate or transition active orders before removing these status options: ${orphaned.join(", ")}.` });
+      await setSetting(ORDER_STATUS_OPTIONS_SETTING, JSON.stringify(options), { valueType: "json", category: "orders", userId: ctx.session.user.id });
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "order.status_options_updated", entityType: "site_setting", entityId: 0, summary: `Updated ${options.length} order status option(s)`, changes: { options: options.map((option) => ({ key: option.key, label: option.label, active: option.active, sortOrder: option.sortOrder })) }, ipAddress: ctx.clientIp });
+      return options;
+    }),
+
   orders: staffProcedure
     .input(
       z
         .object({
           status: z.preprocess(
             (value) => (value === "" || value === "all" || value == null ? undefined : value),
-            z.enum(ORDER_STATUSES).optional(),
+            z.string().trim().min(2).max(32).optional(),
           ),
           limit: z.number().int().min(1).max(200).default(50),
           offset: z.number().int().min(0).default(0),
@@ -558,7 +576,7 @@ export const adminRouter = router({
     .input(
       z.object({
         orderId: z.number().int().positive(),
-        to: z.enum(ORDER_STATUSES),
+        to: z.string().trim().regex(/^[a-z][a-z0-9_]{1,31}$/),
         reason: z.string().trim().max(255).optional(),
       }),
     )
@@ -1220,7 +1238,7 @@ export const adminRouter = router({
       id: z.number().int().positive().optional(),
       name: z.string().trim().min(2).max(120),
       description: z.string().trim().max(4_000).optional(),
-      customerPresentation: z.enum(["cards", "wizard"]).default("cards"),
+      customerPresentation: z.literal("wizard").default("wizard"),
       stages: z.array(z.object({ key: z.string().trim().regex(/^[a-z0-9_]+$/).max(48), label: z.string().trim().min(2).max(120), order: z.number().int().min(1).max(50), capabilities: z.array(z.enum(["documents", "questions", "recording", "audio_upload"])).max(4).default([]), submissionNotice: z.string().trim().min(10).max(2_000).optional(), uploadLimits: z.object({ documentMaxFiles: z.number().int().min(1).max(50).optional(), documentMaxSizeMb: z.number().int().min(1).max(100).optional(), audioMaxFiles: z.number().int().min(1).max(50).optional(), audioMaxSizeMb: z.number().int().min(1).max(100).optional() }).optional(), actions: workflowStageActionsSchema })).min(1).max(20),
       isDefault: z.boolean().default(false),
       active: z.boolean().default(true),

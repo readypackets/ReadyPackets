@@ -94,6 +94,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { href: "/admin/email-automations", label: "Email automations", icon: Zap, adminOnly: true },
       { href: "/admin/order-automations", label: "Order automations", icon: Zap, adminOnly: true },
       { href: "/admin/order-workflows", label: "Order workflows", icon: ClipboardList, adminOnly: true },
+      { href: "/admin/order-statuses", label: "Order status options", icon: ClipboardList, adminOnly: true },
       { href: "/admin/question-templates", label: "Order Question Banks", icon: ClipboardList, adminOnly: true },
     ],
   },
