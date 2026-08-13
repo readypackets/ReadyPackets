@@ -2260,3 +2260,14 @@ All order workflows are now persisted as `wizard` presentation through migration
 **Validation and deployment:** TypeScript validation passed; the automated suite passed 155/155 tests; production health returned `{"status":"ok"}`; migration `0033` was applied; and server/client rollback copies were retained under `/opt/readypackets/rollback-20260813165944-workflow-governance`.
 
 **Publication:** Implementation commit `7330b7e75462b2084e77544c2e4e83aa3d7dbc27` was pushed to the private repository and set as `/opt/readypackets/RELEASE_COMMIT` after the production health endpoint returned `{"status":"ok"}`.
+
+
+## 2026-08-13 — Workflow management release: safe deletion, acknowledgement policy, and guided task designer
+
+The administrator workflow manager was extended with a server-authorized delete operation. An administrator must type `DELETE WORKFLOW`; default workflows and workflows assigned to active orders cannot be deleted, and the server records the deletion audit event. This prevents accidental removal or orphaning of active order workflows.
+
+Each stage now carries a persisted customer acknowledgement policy: `required`, `optional`, or `none`. The customer workflow portal adapts its submission interface accordingly, while the server independently reads the assigned workflow configuration and rejects a required acknowledgement that has not been supplied. Every mode still locks submitted phase materials and requires a separate administrator-confirmed unlock.
+
+Order Workflows now offers both the existing visual stage canvas and a new guided task wizard. The guided designer advances through stage selection, customer task selection, administrator task documentation, submission policy, and review. Administrator task records can document team document upload, question assignment, customer-submission review, and stage automation. The designer continues to expose server-validated status updates, completion percentage, email, webhook, and alert actions. A visible **Manage order statuses** action opens the administrator status manager for adding and governing custom statuses.
+
+Validation completed with TypeScript zero errors and 155/155 automated tests passing. The release was deployed with timestamped server and client rollback copies and the portal health check passed.

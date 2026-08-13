@@ -1239,7 +1239,7 @@ export const adminRouter = router({
       name: z.string().trim().min(2).max(120),
       description: z.string().trim().max(4_000).optional(),
       customerPresentation: z.literal("wizard").default("wizard"),
-      stages: z.array(z.object({ key: z.string().trim().regex(/^[a-z0-9_]+$/).max(48), label: z.string().trim().min(2).max(120), order: z.number().int().min(1).max(50), capabilities: z.array(z.enum(["documents", "questions", "recording", "audio_upload"])).max(4).default([]), submissionNotice: z.string().trim().min(10).max(2_000).optional(), uploadLimits: z.object({ documentMaxFiles: z.number().int().min(1).max(50).optional(), documentMaxSizeMb: z.number().int().min(1).max(100).optional(), audioMaxFiles: z.number().int().min(1).max(50).optional(), audioMaxSizeMb: z.number().int().min(1).max(100).optional(), recordingMaxDurationSeconds: z.number().int().min(1).max(7_200).optional(), audioTotalDurationSeconds: z.number().int().min(1).max(7_200).optional() }).optional(), sharePointDestination: z.string().trim().min(1).max(240).regex(/^(?!.*\.\.)(?:[A-Za-z0-9 _().-]+)(?:\/[A-Za-z0-9 _().-]+)*$/, "Use a safe relative SharePoint folder path without dot segments.").optional(), actions: workflowStageActionsSchema })).min(1).max(20),
+      stages: z.array(z.object({ key: z.string().trim().regex(/^[a-z0-9_]+$/).max(48), label: z.string().trim().min(2).max(120), order: z.number().int().min(1).max(50), capabilities: z.array(z.enum(["documents", "questions", "recording", "audio_upload"])).max(4).default([]), adminTasks: z.array(z.enum(["upload_document", "assign_questions", "review_submission", "run_automation"])).max(4).default([]), customerAcknowledgement: z.enum(["required", "optional", "none"]).default("required"), submissionNotice: z.string().trim().min(10).max(2_000).optional(), uploadLimits: z.object({ documentMaxFiles: z.number().int().min(1).max(50).optional(), documentMaxSizeMb: z.number().int().min(1).max(100).optional(), audioMaxFiles: z.number().int().min(1).max(50).optional(), audioMaxSizeMb: z.number().int().min(1).max(100).optional(), recordingMaxDurationSeconds: z.number().int().min(1).max(7_200).optional(), audioTotalDurationSeconds: z.number().int().min(1).max(7_200).optional() }).optional(), sharePointDestination: z.string().trim().min(1).max(240).regex(/^(?!.*\.\.)(?:[A-Za-z0-9 _().-]+)(?:\/[A-Za-z0-9 _().-]+)*$/, "Use a safe relative SharePoint folder path without dot segments.").optional(), actions: workflowStageActionsSchema })).min(1).max(20),
       isDefault: z.boolean().default(false),
       active: z.boolean().default(true),
     }))
@@ -1278,6 +1278,19 @@ export const adminRouter = router({
       const id = insertedId(result);
       void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "workflow.created", entityType: "order_workflow", entityId: id, summary: `Administrator created workflow ${input.name}`, ipAddress: ctx.clientIp });
       return { ok: true as const, id };
+    }),
+
+  deleteOrderWorkflow: adminProcedure
+    .input(z.object({ workflowId: z.number().int().positive(), confirmation: z.literal("DELETE WORKFLOW") }))
+    .mutation(async ({ ctx, input }) => {
+      const [workflow] = await db.select({ id: orderWorkflows.id, name: orderWorkflows.name, isDefault: orderWorkflows.isDefault }).from(orderWorkflows).where(eq(orderWorkflows.id, input.workflowId)).limit(1);
+      if (!workflow) throw new TRPCError({ code: "NOT_FOUND", message: "Workflow not found." });
+      if (workflow.isDefault) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Choose another default workflow before deleting this workflow." });
+      const [assignment] = await db.select({ total: count() }).from(orders).where(and(eq(orders.workflowId, input.workflowId), isNull(orders.deletedAt)));
+      if (Number(assignment?.total ?? 0) > 0) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "This workflow is assigned to active orders. Reassign those orders or archive the workflow instead of deleting it." });
+      await db.delete(orderWorkflows).where(eq(orderWorkflows.id, input.workflowId));
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "workflow.deleted", entityType: "order_workflow", entityId: input.workflowId, severity: "warning", summary: `Administrator deleted unused workflow ${workflow.name}`, ipAddress: ctx.clientIp });
+      return { ok: true as const };
     }),
 
   assignOrderWorkflow: adminProcedure

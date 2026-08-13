@@ -203,7 +203,8 @@ export const ordersRouter = router({
     .input(z.object({
       orderId: z.number().int().positive(),
       phaseKey: z.string().trim().regex(/^[a-z0-9_]+$/).max(64),
-      acknowledgementText: z.string().trim().min(10).max(2_000),
+      acknowledgementText: z.string().trim().min(10).max(2_000).optional(),
+      acknowledged: z.boolean().default(false),
     }))
     .mutation(async ({ ctx, input }) => {
       if (ctx.session.user.role !== "customer") {
@@ -222,18 +223,27 @@ export const ordersRouter = router({
           toTrpcError(error);
         }
       }
+      const [orderWorkflow] = await db.select({ workflowId: orders.workflowId }).from(orders).where(eq(orders.id, input.orderId)).limit(1);
+      const [workflow] = orderWorkflow?.workflowId ? await db.select({ stages: orderWorkflows.stages }).from(orderWorkflows).where(eq(orderWorkflows.id, orderWorkflow.workflowId)).limit(1) : [];
+      const stages = Array.isArray(workflow?.stages) ? workflow.stages as { key?: unknown; customerAcknowledgement?: unknown }[] : [];
+      const configuredPolicy = stages.find((stage) => stage.key === input.phaseKey)?.customerAcknowledgement;
+      const acknowledgementPolicy = configuredPolicy === "none" || configuredPolicy === "optional" || configuredPolicy === "required" ? configuredPolicy : "required";
+      if (acknowledgementPolicy === "required" && (!input.acknowledged || !input.acknowledgementText)) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "A customer acknowledgement is required before this phase can be submitted." });
+      }
+      const acknowledgementText = acknowledgementPolicy === "none" ? "Customer acknowledgement was not required for this workflow phase." : input.acknowledgementText ?? "Customer submitted this workflow phase without an optional acknowledgement.";
       const existing = await db.select({ id: orderPhaseLocks.id, unlockedAt: orderPhaseLocks.unlockedAt }).from(orderPhaseLocks).where(and(eq(orderPhaseLocks.orderId, input.orderId), eq(orderPhaseLocks.phaseKey, input.phaseKey))).limit(1);
       if (existing[0] && !existing[0].unlockedAt) {
         throw new TRPCError({ code: "PRECONDITION_FAILED", message: "This workflow phase is already locked." });
       }
       const lockedAt = new Date();
       if (existing[0]) {
-        await db.update(orderPhaseLocks).set({ acknowledgementText: input.acknowledgementText, lockedByUserId: ctx.session.user.id, lockedAt, unlockedByUserId: null, unlockedAt: null, unlockReason: null }).where(eq(orderPhaseLocks.id, existing[0].id));
+        await db.update(orderPhaseLocks).set({ acknowledgementText, lockedByUserId: ctx.session.user.id, lockedAt, unlockedByUserId: null, unlockedAt: null, unlockReason: null }).where(eq(orderPhaseLocks.id, existing[0].id));
       } else {
-        await db.insert(orderPhaseLocks).values({ orderId: input.orderId, phaseKey: input.phaseKey, acknowledgementText: input.acknowledgementText, lockedByUserId: ctx.session.user.id, lockedAt });
+        await db.insert(orderPhaseLocks).values({ orderId: input.orderId, phaseKey: input.phaseKey, acknowledgementText, lockedByUserId: ctx.session.user.id, lockedAt });
       }
       const workflowProgress = await syncOrderWorkflowProgress(input.orderId);
-      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: ctx.session.user.role, action: "order.phase_submitted", entityType: "order", entityId: input.orderId, summary: `Customer submitted and locked workflow phase ${input.phaseKey}`, changes: { phaseKey: input.phaseKey, workflowProgress }, ipAddress: ctx.clientIp });
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: ctx.session.user.role, action: "order.phase_submitted", entityType: "order", entityId: input.orderId, summary: `Customer submitted and locked workflow phase ${input.phaseKey}`, changes: { phaseKey: input.phaseKey, acknowledgementPolicy, acknowledged: input.acknowledged, workflowProgress }, ipAddress: ctx.clientIp });
       return { ok: true as const, lockedAt, workflowProgress };
     }),
 
