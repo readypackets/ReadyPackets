@@ -665,6 +665,8 @@ export function AdminOrderTrashPage() {
   const [restoreId, setRestoreId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkRestoreOpen, setBulkRestoreOpen] = useState(false);
+  const [purgeIds, setPurgeIds] = useState<number[]>([]);
+  const [purgePhrase, setPurgePhrase] = useState("");
   const trashed = trpc.admin.trashedOrders.useQuery();
   const restore = trpc.admin.restoreOrder.useMutation({
     async onSuccess() {
@@ -673,6 +675,22 @@ export function AdminOrderTrashPage() {
       toast.success("Order restored", "The order is visible in the order queue again.");
     },
     onError(error) { toast.error("Could not restore order", errorMessage(error)); },
+  });
+  const permanentlyPurge = trpc.admin.permanentlyPurgeOrder.useMutation({
+    async onSuccess() {
+      setPurgeIds([]); setPurgePhrase(""); setSelectedIds([]);
+      await Promise.all([trashed.refetch(), utils.admin.orders.invalidate()]);
+      toast.success("Order permanently deleted", "The trashed order and its order-linked records were removed.");
+    },
+    onError(error) { toast.error("Could not permanently delete order", errorMessage(error)); },
+  });
+  const bulkPurge = trpc.admin.bulkPurgeOrders.useMutation({
+    async onSuccess(result) {
+      setPurgeIds([]); setPurgePhrase(""); setSelectedIds([]);
+      await Promise.all([trashed.refetch(), utils.admin.orders.invalidate()]);
+      toast.success(`${result.count} order(s) permanently deleted`);
+    },
+    onError(error) { toast.error("Could not permanently delete selected orders", errorMessage(error)); },
   });
   const bulkRestore = trpc.admin.bulkRestoreOrders.useMutation({
     async onSuccess(result) {
@@ -692,14 +710,15 @@ export function AdminOrderTrashPage() {
     { key: "customer", header: "Customer", cell: (order) => <span className="text-sm text-body">{order.customer}</span> },
     { key: "deleted", header: "Moved to trash", cell: (order) => <span className="text-sm text-body">{formatDate(order.deletedAt)}</span> },
     { key: "total", header: "Total", align: "right", cell: (order) => <span className="font-medium tabular-nums text-ink">{formatMoney(order.totalCents)}</span> },
-    { key: "restore", header: <span className="sr-only">Restore</span>, align: "right", cell: (order) => <Button size="sm" variant="outline" onClick={() => setRestoreId(order.id)}>Restore</Button> },
+    { key: "restore", header: <span className="sr-only">Actions</span>, align: "right", cell: (order) => <div className="flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => setRestoreId(order.id)}>Restore</Button><Button size="sm" variant="danger" onClick={() => { setPurgeIds([order.id]); setPurgePhrase(""); }}>Delete</Button></div> },
   ];
   return <>
     <ConfirmDialog open={restoreId !== null} onClose={() => setRestoreId(null)} onConfirm={() => { if (restoreId !== null) restore.mutate({ orderId: restoreId }); }} title="Restore this order?" message="The order will return to the active order queue and become visible to its customer again." confirmLabel="Restore order" cancelLabel="Cancel" variant="primary" busy={restore.isPending} />
     <ConfirmDialog open={bulkRestoreOpen} onClose={() => setBulkRestoreOpen(false)} onConfirm={() => bulkRestore.mutate({ orderIds: selectedIds, confirmation: "RESTORE_FROM_TRASH" })} title="Restore selected orders?" message={`This restores ${selectedIds.length} selected order(s) to the active queue and preserves their customer, payment, history, and files.`} confirmLabel="Restore selected orders" cancelLabel="Cancel" variant="primary" busy={bulkRestore.isPending} />
+    <Modal open={purgeIds.length > 0} onClose={() => { if (!permanentlyPurge.isPending && !bulkPurge.isPending) { setPurgeIds([]); setPurgePhrase(""); } }} title={purgeIds.length === 1 ? "Permanently delete this order?" : `Permanently delete ${purgeIds.length} orders?`} description="This irreversible action removes the trashed order records, phase materials, notes, questions, automation history, and linked financial/order metadata." footer={<><Button variant="outline" onClick={() => { setPurgeIds([]); setPurgePhrase(""); }}>Cancel</Button><Button variant="danger" disabled={purgePhrase !== "DELETE ORDER"} busy={permanentlyPurge.isPending || bulkPurge.isPending} onClick={() => purgeIds.length === 1 ? permanentlyPurge.mutate({ orderId: purgeIds[0]!, confirmation: "DELETE ORDER" }) : bulkPurge.mutate({ orderIds: purgeIds, confirmation: "DELETE ORDER" })}>Permanently delete</Button></>}><Alert tone="danger"><strong>This cannot be undone.</strong> Type <code>DELETE ORDER</code> exactly to enable permanent deletion.</Alert><Input className="mt-4" label="Confirmation" value={purgePhrase} onChange={(event) => setPurgePhrase(event.target.value)} placeholder="DELETE ORDER" autoComplete="off" /></Modal>
     <PageHeader title="Order trash" description="Soft-deleted orders remain recoverable until the configured retention window expires." breadcrumb={{ href: "/admin/orders", label: "Order queue" }} actions={<LinkButton href="/admin/orders" variant="outline">Back to order queue</LinkButton>} />
     <Alert tone="info" className="mb-5">Restoring an order preserves its order number, payment state, history, files, and customer association.</Alert>
-    {selectedIds.length > 0 ? <Card className="mb-5 border-success/40 bg-success/5"><div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-medium text-ink">{selectedIds.length} order(s) selected</p><Button variant="primary" onClick={() => setBulkRestoreOpen(true)}>Restore selected orders</Button></div></Card> : null}
+    {selectedIds.length > 0 ? <Card className="mb-5 border-success/40 bg-success/5"><div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-medium text-ink">{selectedIds.length} order(s) selected</p><div className="flex flex-wrap gap-2"><Button variant="primary" onClick={() => setBulkRestoreOpen(true)}>Restore selected orders</Button><Button variant="danger" onClick={() => { setPurgeIds(selectedIds); setPurgePhrase(""); }}>Permanently delete selected</Button></div></div></Card> : null}
     {trashed.isLoading ? <div className="space-y-3">{Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-16 w-full" />)}</div> : <DataTable caption="Orders in trash" columns={columns} rows={rows} rowKey={(order) => order.id} empty={<EmptyState icon={Trash2} title="Order trash is empty" description="Deleted orders will appear here until the retention window expires." />} />}
   </>;
 }
@@ -925,7 +944,7 @@ export function AdminOrderDetailPage() {
               onClick={() => setDeleteOpen(true)}
               leadingIcon={<Trash2 className="size-4" aria-hidden="true" />}
             >
-              Archive
+              Move to trash
             </Button>
           ) : null
         }
@@ -1438,14 +1457,14 @@ export function AdminOrderDetailPage() {
         onConfirm={() =>
           softDelete.mutate({
             orderId,
-            reason: deleteReason.trim() || "Archived by an administrator from the order detail view.",
+            reason: deleteReason.trim() || "Moved to trash by an administrator from the order detail view.",
           })
         }
-        title="Archive this order?"
+        title="Move this order to trash?"
         message={
           <>
             <p>
-              The order is soft-deleted and hidden from both the customer and the queue. It remains
+              The order is moved to trash and hidden from both the customer and the queue. It remains
               recoverable in the database for the retention period before permanent purge.
             </p>
             <Input
@@ -1458,7 +1477,7 @@ export function AdminOrderDetailPage() {
             />
           </>
         }
-        confirmLabel="Archive order"
+        confirmLabel="Move to trash"
         variant="danger"
         busy={softDelete.isPending}
       />

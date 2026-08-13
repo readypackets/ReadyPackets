@@ -1894,6 +1894,24 @@ export const orderQuestionTemplates = mysqlTable(
   (table) => ({ phaseIdx: index("order_question_template_phase_idx").on(table.phase, table.isActive) }),
 );
 
+export const customReports = mysqlTable(
+  "custom_reports",
+  {
+    id: id(),
+    name: varchar("name", { length: 190 }).notNull(),
+    description: varchar("description", { length: 500 }),
+    dataset: varchar("dataset", { length: 32 }).notNull(),
+    configJson: json("config_json").notNull(),
+    createdByUserId: int("created_by_user_id"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    datasetIdx: index("custom_reports_dataset_idx").on(table.dataset),
+    creatorIdx: index("custom_reports_creator_idx").on(table.createdByUserId),
+  }),
+);
+
 export const portalAnnouncements = mysqlTable(
   "portal_announcements",
   {

@@ -6,13 +6,14 @@
  * are soft deletes wherever a record has legal or financial significance.
  */
 import { TRPCError } from "@trpc/server";
-import { and, asc, count, desc, eq, gte, inArray, isNull, like, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, like, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import {
   changelogEntries,
   changelogEntryVersions,
   contactMessages,
+  customReports,
   emailTemplates,
   emailLog,
   emailQueue,
@@ -88,11 +89,96 @@ const workflowStageActionsSchema = z.object({
   webhookEndpointId: z.number().int().positive().optional(),
 }).default({});
 
+async function purgeOrdersFromTrash(orderIds: number[]) {
+  if (orderIds.length === 0) return;
+  await db.transaction(async (tx) => {
+    const ids = sql.join(orderIds.map((id) => sql`${id}`), sql`, `);
+    await tx.execute(sql`DELETE ah FROM order_answer_history ah INNER JOIN order_answers oa ON oa.id = ah.answer_id WHERE oa.order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM order_answers WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE ia FROM intake_answers ia INNER JOIN intake_submissions s ON s.id = ia.submission_id WHERE s.order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM intake_submissions WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM workflow_stage_runs WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM webhook_deliveries WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM phase_jobs WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM sharepoint_sync_log WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM order_questions WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM order_notes WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM order_shares WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM order_status_history WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM order_items WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM mnda_acceptances WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM meeting_bookings WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM tickets WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM reviews WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM referrals WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM refunds WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM payments WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM invoices WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM billing_events WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM files WHERE order_id IN (${ids})`);
+    await tx.delete(orders).where(inArray(orders.id, orderIds));
+  });
+}
+
 function toTrpcError(error: unknown): never {
   if (error instanceof OrderStateError) {
     throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
   }
   throw error;
+}
+
+const customReportConfigSchema = z.object({
+  dataset: z.enum(["orders", "customers"]),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  orderStatus: z.string().trim().max(32).optional(),
+  paymentStatus: z.string().trim().max(32).optional(),
+  customerStatus: z.string().trim().max(32).optional(),
+});
+
+type CustomReportConfig = z.infer<typeof customReportConfigSchema>;
+
+async function buildCustomReport(config: CustomReportConfig) {
+  if (config.dataset === "orders") {
+    const conditions = [isNull(orders.deletedAt)];
+    if (config.from) conditions.push(gte(orders.createdAt, new Date(`${config.from}T00:00:00.000Z`)));
+    if (config.to) conditions.push(lte(orders.createdAt, new Date(`${config.to}T23:59:59.999Z`)));
+    if (config.orderStatus) conditions.push(eq(orders.status, config.orderStatus));
+    if (config.paymentStatus) conditions.push(eq(orders.paymentStatus, config.paymentStatus));
+    const rows = await db.select({ id: orders.id, orderNumber: orders.orderNumber, userId: orders.userId, status: orders.status, paymentStatus: orders.paymentStatus, totalCents: orders.totalCents, completionPercent: orders.completionPercent, dueAt: orders.dueAt, createdAt: orders.createdAt, projectNameEnc: orders.projectNameEnc }).from(orders).where(and(...conditions)).orderBy(desc(orders.createdAt)).limit(2_000);
+    const names = new Map<number, string>();
+    for (const userId of new Set(rows.map((row) => row.userId))) {
+      const user = await getUserById(userId);
+      names.set(userId, user ? displayNameOf(user) : "Deleted customer");
+    }
+    return {
+      dataset: "orders" as const,
+      columns: ["Order", "Customer", "Project", "Status", "Payment", "Total", "Complete", "Due", "Created"],
+      rows: rows.map((row) => ({
+        orderNumber: row.orderNumber,
+        customer: names.get(row.userId) ?? "Unknown",
+        projectName: decryptField(row.projectNameEnc, `order:${row.id}`) ?? "Untitled project",
+        status: row.status,
+        paymentStatus: row.paymentStatus,
+        totalCents: row.totalCents,
+        completionPercent: row.completionPercent,
+        dueAt: row.dueAt,
+        createdAt: row.createdAt,
+      })),
+    };
+  }
+
+  const conditions = [eq(users.role, "customer"), isNull(users.deletedAt)];
+  if (config.from) conditions.push(gte(users.createdAt, new Date(`${config.from}T00:00:00.000Z`)));
+  if (config.to) conditions.push(lte(users.createdAt, new Date(`${config.to}T23:59:59.999Z`)));
+  if (config.customerStatus) conditions.push(eq(users.status, config.customerStatus));
+  const rows = await db.select({ id: users.id, publicId: users.publicId, status: users.status, createdAt: users.createdAt }).from(users).where(and(...conditions)).orderBy(desc(users.createdAt)).limit(2_000);
+  const result = [] as Array<{ customerId: string | null; customer: string; status: string; joinedAt: Date }>;
+  for (const row of rows) {
+    const user = await getUserById(row.id);
+    result.push({ customerId: row.publicId, customer: user ? displayNameOf(user) : "Deleted customer", status: row.status, joinedAt: row.createdAt });
+  }
+  return { dataset: "customers" as const, columns: ["Customer ID", "Customer", "Status", "Joined"], rows: result };
 }
 
 export const adminRouter = router({
@@ -101,7 +187,7 @@ export const adminRouter = router({
   /* ---------------------------------------------------------------- */
 
   dashboard: staffProcedure.query(async () => {
-    const [orderStats, customerCount, openTickets, pendingReviews, newMessages] =
+    const [orderStats, customerCount, openTickets, pendingReviews, newMessages, failedPayments, overdueOrders, pendingPaymentOrders] =
       await Promise.all([
         getOrderStats(),
         db
@@ -114,6 +200,9 @@ export const adminRouter = router({
           .where(sql`${tickets.status} IN ('open','pending')`),
         db.select({ total: count() }).from(reviews).where(eq(reviews.status, "pending")),
         db.select({ total: count() }).from(contactMessages).where(eq(contactMessages.status, "new")),
+        db.select({ total: count() }).from(orders).where(and(isNull(orders.deletedAt), eq(orders.paymentStatus, "failed"))),
+        db.select({ total: count() }).from(orders).where(and(isNull(orders.deletedAt), lte(orders.dueAt, new Date()), sql`${orders.status} NOT IN ('delivered', 'closed')`)),
+        db.select({ total: count() }).from(orders).where(and(isNull(orders.deletedAt), inArray(orders.paymentStatus, ["unpaid", "processing", "awaiting_invoice"]))),
       ]);
 
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
@@ -151,6 +240,11 @@ export const adminRouter = router({
       openTickets: Number(openTickets[0]?.total ?? 0),
       pendingReviews: Number(pendingReviews[0]?.total ?? 0),
       newMessages: Number(newMessages[0]?.total ?? 0),
+      orderAlerts: {
+        failedPayments: Number(failedPayments[0]?.total ?? 0),
+        overdue: Number(overdueOrders[0]?.total ?? 0),
+        awaitingPayment: Number(pendingPaymentOrders[0]?.total ?? 0),
+      },
       signupTrend: signupTrend.map((row) => ({ day: row.day, total: Number(row.total) })),
       orderTrend: orderTrend.map((row) => ({ day: row.day, total: Number(row.total) })),
       revenueTrend: revenueTrend.map((row) => ({ day: row.day, revenueCents: Number(row.revenue) })),
@@ -160,6 +254,53 @@ export const adminRouter = router({
   /* ---------------------------------------------------------------- */
   /* Orders                                                            */
   /* ---------------------------------------------------------------- */
+
+  standardReports: adminProcedure.query(async () => {
+    const [ordersByStatus, paymentsByStatus, customersByStatus] = await Promise.all([
+      db.select({ label: orders.status, count: count(), totalCents: sql<number>`COALESCE(SUM(${orders.totalCents}), 0)` }).from(orders).where(isNull(orders.deletedAt)).groupBy(orders.status).orderBy(orders.status),
+      db.select({ label: orders.paymentStatus, count: count(), totalCents: sql<number>`COALESCE(SUM(${orders.totalCents}), 0)` }).from(orders).where(isNull(orders.deletedAt)).groupBy(orders.paymentStatus).orderBy(orders.paymentStatus),
+      db.select({ label: users.status, count: count() }).from(users).where(and(eq(users.role, "customer"), isNull(users.deletedAt))).groupBy(users.status).orderBy(users.status),
+    ]);
+    return {
+      orderPipeline: ordersByStatus.map((row) => ({ label: row.label, count: Number(row.count), totalCents: Number(row.totalCents) })),
+      paymentSummary: paymentsByStatus.map((row) => ({ label: row.label, count: Number(row.count), totalCents: Number(row.totalCents) })),
+      customerAccounts: customersByStatus.map((row) => ({ label: row.label, count: Number(row.count) })),
+    };
+  }),
+
+  customReports: adminProcedure.query(async () => {
+    const rows = await db.select().from(customReports).orderBy(desc(customReports.updatedAt), desc(customReports.id));
+    return rows.map((row) => ({ ...row, config: customReportConfigSchema.parse(row.configJson) }));
+  }),
+
+  saveCustomReport: adminProcedure
+    .input(z.object({ id: z.number().int().positive().optional(), name: z.string().trim().min(2).max(190), description: z.string().trim().max(500).optional(), config: customReportConfigSchema }))
+    .mutation(async ({ ctx, input }) => {
+      const values = { name: input.name, description: input.description || null, dataset: input.config.dataset, configJson: input.config, createdByUserId: ctx.session.user.id };
+      if (input.id) {
+        const existing = (await db.select({ id: customReports.id }).from(customReports).where(eq(customReports.id, input.id)).limit(1))[0];
+        if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Custom report not found." });
+        await db.update(customReports).set({ name: values.name, description: values.description, dataset: values.dataset, configJson: values.configJson }).where(eq(customReports.id, input.id));
+        void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "report.custom_updated", entityType: "custom_report", entityId: input.id, summary: `Updated custom report ${input.name}`, ipAddress: ctx.clientIp });
+        return { id: input.id };
+      }
+      const result = await db.insert(customReports).values(values);
+      const id = insertedId(result);
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "report.custom_created", entityType: "custom_report", entityId: id, summary: `Created custom report ${input.name}`, ipAddress: ctx.clientIp });
+      return { id };
+    }),
+
+  deleteCustomReport: adminProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      await db.delete(customReports).where(eq(customReports.id, input.id));
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "report.custom_deleted", entityType: "custom_report", entityId: input.id, severity: "warning", summary: "Deleted custom report", ipAddress: ctx.clientIp });
+      return { ok: true as const };
+    }),
+
+  runCustomReport: adminProcedure
+    .input(z.object({ config: customReportConfigSchema }))
+    .query(async ({ input }) => buildCustomReport(input.config)),
 
   orders: staffProcedure
     .input(
@@ -695,6 +836,27 @@ export const adminRouter = router({
       if ((result[0] as { affectedRows?: number } | undefined)?.affectedRows !== 1) throw new TRPCError({ code: "NOT_FOUND", message: "Trashed order not found." });
       void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "order.restore", entityType: "order", entityId: input.orderId, summary: "Administrator restored order from trash", ipAddress: ctx.clientIp });
       return { ok: true as const };
+    }),
+
+  permanentlyPurgeOrder: adminProcedure
+    .input(z.object({ orderId: z.number().int().positive(), confirmation: z.literal("DELETE ORDER") }))
+    .mutation(async ({ ctx, input }) => {
+      const [target] = await db.select({ id: orders.id, orderNumber: orders.orderNumber, deletedAt: orders.deletedAt }).from(orders).where(eq(orders.id, input.orderId)).limit(1);
+      if (!target?.deletedAt) throw new TRPCError({ code: "NOT_FOUND", message: "Only an order already in trash can be permanently deleted." });
+      await purgeOrdersFromTrash([target.id]);
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "order.permanently_purged", entityType: "order", entityId: target.id, severity: "critical", summary: `Administrator permanently deleted trashed order ${target.orderNumber}`, ipAddress: ctx.clientIp });
+      return { ok: true as const, count: 1 };
+    }),
+
+  bulkPurgeOrders: adminProcedure
+    .input(z.object({ orderIds: z.array(z.number().int().positive()).min(1).max(200), confirmation: z.literal("DELETE ORDER") }))
+    .mutation(async ({ ctx, input }) => {
+      const ids = [...new Set(input.orderIds)];
+      const rows = await db.select({ id: orders.id }).from(orders).where(and(inArray(orders.id, ids), sql`${orders.deletedAt} IS NOT NULL`));
+      if (rows.length !== ids.length) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Every selected order must already be in trash before permanent deletion." });
+      await purgeOrdersFromTrash(rows.map((row) => row.id));
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "order.bulk_permanently_purged", entityType: "order", entityId: 0, severity: "critical", summary: `Administrator permanently deleted ${rows.length} trashed order(s)`, changes: { count: rows.length }, ipAddress: ctx.clientIp });
+      return { ok: true as const, count: rows.length };
     }),
 
   /* ---------------------------------------------------------------- */

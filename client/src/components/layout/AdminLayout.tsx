@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import {
+  BarChart3,
   Bot,
   Calendar,
   ClipboardList,
@@ -69,6 +70,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { href: "/admin/customers", label: "Customers", icon: Users },
       { href: "/admin/tickets", label: "Support", icon: LifeBuoy },
       { href: "/admin/files", label: "Files", icon: FileText },
+      { href: "/admin/reports", label: "Reports", icon: BarChart3, adminOnly: true },
     ],
   },
   {

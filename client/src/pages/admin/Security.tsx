@@ -5,7 +5,8 @@
  * Every control here writes to the audit trail, including the act of reading a
  * log, because an investigation needs to know who looked at what and when.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useLocation } from "wouter";
 import {
   AlertTriangle,
   Ban,
@@ -47,7 +48,12 @@ const SEVERITY_TONES: Record<string, BadgeTone> = {
 };
 
 export function AdminSecurityPage() {
-  const [tab, setTab] = useState("limits");
+  const [location] = useLocation();
+  const search = new URLSearchParams(location.includes("?") ? location.slice(location.indexOf("?") + 1) : "");
+  const requestedTab = search.get("tab");
+  const requestedIp = search.get("ip") ?? "";
+  const [tab, setTab] = useState(requestedTab === "logs" ? "logs" : "limits");
+  useEffect(() => { if (requestedTab === "logs") setTab("logs"); }, [requestedTab]);
 
   return (
     <>
@@ -73,7 +79,7 @@ export function AdminSecurityPage() {
         {tab === "mfa" ? <MfaPolicyPanel /> : null}
         {tab === "limits" ? <RateLimitsPanel /> : null}
         {tab === "network" ? <NetworkPanel /> : null}
-        {tab === "logs" ? <LogsPanel /> : null}
+        {tab === "logs" ? <LogsPanel initialIp={requestedIp} /> : null}
         {tab === "sessions" ? <SessionsPanel /> : null}
         {tab === "alerts" ? <AlertsPanel /> : null}
       </div>
@@ -492,7 +498,7 @@ function NetworkPanel() {
   );
 }
 
-function LogsPanel() {
+function LogsPanel({ initialIp = "" }: { initialIp?: string }) {
   const toast = useToast();
   const [stream, setStream] = useState("security");
   const [severity, setSeverity] = useState("");
@@ -506,6 +512,7 @@ function LogsPanel() {
   const [selected, setSelected] = useState<Record<string, unknown> | null>(null);
   const [blocking, setBlocking] = useState<{ ipAddress: string } | null>(null);
   const [banning, setBanning] = useState<{ userId: number } | null>(null);
+  useEffect(() => { if (initialIp) { setStream("security"); setIpAddress(initialIp); } }, [initialIp]);
 
   const securityLogs = trpc.adminSecurity.securityLogSearch.useQuery(
     {

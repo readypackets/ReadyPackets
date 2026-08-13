@@ -1997,3 +1997,26 @@ The enlarged workflow automation release and complete session record will be com
 ### Publication outcome
 
 The workflow automation release was committed and published to the private `readypackets/ReadyPackets` `main` branch as `ce3320e3073f717e99d023d171c7e14f4e3759e3`. A final session-log publication commit will follow so the repository retains this outcome.
+
+
+## 2026-08-13 — Administration Operations, Order Purge, and Reporting Release
+
+### User request
+
+The user requested protected bulk order deletion with typed `DELETE ORDER` confirmation, an obvious individually confirmed order deletion path, clickable investigation of dashboard IP pressure rows, a dashboard card for order alerts, and an administrator workspace for standard and custom reports.
+
+### Delivered implementation
+
+Order Trash now supports individual and bulk permanent deletion for up to 200 selected trashed orders. The interface requires typing `DELETE ORDER` exactly, and the server independently accepts only that exact confirmation. Every selected record must already be in trash. The irreversible purge is executed in a dependency-safe transaction that removes the order’s linked application records, including files, phase materials, questions/answers, notes, sharing, status history, jobs, webhook history, tickets, reviews, payment/invoice/refund/referral/billing metadata, and the order itself. The active-order action was renamed from ambiguous **Archive** to **Move to trash** and retains its reason-aware click confirmation; permanent deletion is intentionally confined to Order Trash.
+
+The Operations dashboard now includes an **Order alerts** card with live counts for failed payments, overdue active orders, and orders awaiting payment. High-pressure source-address rows now link to Security Centre logs with the address prefilled. This event-level investigation surface includes the existing view-metadata, block-IP, and account-ban controls.
+
+A new **Reports** administrator workspace is available at `/admin/reports`. Standard reports cover the live order pipeline, payment summary, and customer-account state. Custom reports can be created, saved, edited, previewed, deleted, and exported as local CSV for approved Orders or Customers datasets. The server accepts only constrained dataset/date/status filters and does not execute arbitrary query text. Migration `0028_custom_reports.sql` creates the saved report-definition table.
+
+### Validation and deployment
+
+TypeScript validation passed with zero errors. The complete suite passed all 150 tests. Production client and server builds succeeded. Migration 0028 was applied to production. Server and Vite client assets were deployed with timestamped rollback copies, and the live health endpoint returned `{"status":"ok"}`. The post-deployment security verifier passed all 46 of 46 checks, including CSRF/origin enforcement, authorization boundaries, Host validation, safe errors, static traversal protection, and the login rate-limit `Retry-After` check.
+
+### Publication
+
+This release will be committed and published to the private `readypackets/ReadyPackets` repository with this appended session record. The publication commit and production release marker will be appended after the push completes.

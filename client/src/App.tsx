@@ -87,6 +87,7 @@ import EmailAutomations from "@/pages/admin/EmailAutomations";
 import { EmailCenterPage } from "@/pages/admin/EmailCenter";
 import { AdminOrderAutomations } from "@/pages/admin/OrderAutomations";
 import { AdminOrderWorkflowsPage } from "@/pages/admin/OrderWorkflows";
+import { AdminReportsPage } from "@/pages/admin/Reports";
 import { AdminQuestionTemplates } from "@/pages/admin/QuestionTemplates";
 import Checkout from "@/pages/portal/Checkout";
 import Wizard from "@/pages/portal/Wizard";
@@ -380,6 +381,7 @@ function AdminRoutes() {
         <Route path="/admin/email-automations" component={EmailAutomations} />
         <Route path="/admin/order-automations" component={AdminOrderAutomations} />
         <Route path="/admin/order-workflows" component={AdminOrderWorkflowsPage} />
+        <Route path="/admin/reports" component={AdminReportsPage} />
         <Route path="/admin/question-templates" component={AdminQuestionTemplates} />
         <Route path="/admin/knowledge-base" component={AdminKnowledgeBasePage} />
         <Route path="/admin/crm" component={AdminCRM} />

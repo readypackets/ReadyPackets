@@ -46,6 +46,7 @@ export function AdminDashboard() {
   const stats = dashboard.data;
   const orderStats = stats?.orders;
   const totalFailures = (pressure.data ?? []).reduce((sum, row) => sum + row.failures, 0);
+  const orderAlertTotal = Object.values(stats?.orderAlerts ?? {}).reduce((sum, value) => sum + value, 0);
 
   const signupChartData = (stats?.signupTrend ?? []).map((p) => ({
     date: shortDate(p.day),
@@ -214,6 +215,20 @@ export function AdminDashboard() {
             )}
           </Card>
 
+          <Card>
+            <CardHeader
+              title={<span className="flex items-center gap-2"><ShieldAlert className="size-4 text-warning" aria-hidden="true" />Order alerts</span>}
+              description="Orders needing payment, schedule, or delivery attention."
+              actions={<LinkButton href="/admin/orders" size="sm" variant="outline">Review orders</LinkButton>}
+            />
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-lg border border-line p-3"><p className="text-xs text-muted">Failed payments</p><p className={`mt-1 text-2xl font-semibold tabular-nums ${((stats?.orderAlerts?.failedPayments ?? 0) > 0) ? "text-danger" : "text-ink"}`}>{stats?.orderAlerts?.failedPayments ?? 0}</p></div>
+              <div className="rounded-lg border border-line p-3"><p className="text-xs text-muted">Overdue orders</p><p className={`mt-1 text-2xl font-semibold tabular-nums ${((stats?.orderAlerts?.overdue ?? 0) > 0) ? "text-warning" : "text-ink"}`}>{stats?.orderAlerts?.overdue ?? 0}</p></div>
+              <div className="rounded-lg border border-line p-3"><p className="text-xs text-muted">Awaiting payment</p><p className={`mt-1 text-2xl font-semibold tabular-nums ${((stats?.orderAlerts?.awaitingPayment ?? 0) > 0) ? "text-warning" : "text-ink"}`}>{stats?.orderAlerts?.awaitingPayment ?? 0}</p></div>
+            </div>
+            {orderAlertTotal === 0 ? <p className="mt-3 text-sm text-muted">No active order alerts.</p> : null}
+          </Card>
+
           {(pressure.data ?? []).length > 0 ? (
             <Card>
               <CardHeader
@@ -227,7 +242,7 @@ export function AdminDashboard() {
                     <span className="font-mono text-xs text-ink">{row.ipAddress ?? "unknown"}</span>
                     <span className="flex items-center gap-2">
                       <span className="tabular-nums text-body">{row.failures}</span>
-                      {row.failures >= 20 ? <Badge tone="danger">investigate</Badge> : null}
+                      {row.ipAddress ? <Link href={`/admin/security?tab=logs&ip=${encodeURIComponent(row.ipAddress)}`} className="no-underline"><Badge tone={row.failures >= 20 ? "danger" : "warning"}>investigate</Badge></Link> : null}
                     </span>
                   </li>
                 ))}
