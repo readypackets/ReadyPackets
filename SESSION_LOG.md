@@ -2258,3 +2258,5 @@ All order workflows are now persisted as `wizard` presentation through migration
 - Updated native and Docker installation paths to include `ffmpeg`/`ffprobe` for server-side duration validation. Production installed `ffmpeg` because the prior host did not contain `/usr/bin/ffprobe`; Ubuntu reported a pending kernel update but did not reboot the host.
 
 **Validation and deployment:** TypeScript validation passed; the automated suite passed 155/155 tests; production health returned `{"status":"ok"}`; migration `0033` was applied; and server/client rollback copies were retained under `/opt/readypackets/rollback-20260813165944-workflow-governance`.
+
+**Publication:** Implementation commit `7330b7e75462b2084e77544c2e4e83aa3d7dbc27` was pushed to the private repository and set as `/opt/readypackets/RELEASE_COMMIT` after the production health endpoint returned `{"status":"ok"}`.
