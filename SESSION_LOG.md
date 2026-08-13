@@ -1930,3 +1930,37 @@ After deployment, the stage-workspace review identified that historical standard
 ### Historical alignment publication outcome
 
 The historical workflow-stage alignment migration and session update were published to the private `main` branch as `db88bb474e43f569d9dd355381a7b4d2aca1d30a` (`fix: align historical files with workflow stages`).
+
+## 2026-08-12 — Visual Workflow Builder, Cloning, and Phase Audio Upload
+
+### User request
+
+The administrator requested an easier workflow experience: one-click cloning and renaming, a visual connected/drag-and-drop style phase builder, explicit per-phase required actions, and synchronized administrator and customer order workspaces. During implementation, the user clarified that phases may optionally allow both customers and staff to upload prerecorded audio files; browser recording remains a separate phase capability.
+
+### Delivered functionality
+
+- Replaced the text-only workflow-stage editor with a visual connected stage builder in **Administration → Order workflows**.
+- Added native drag-and-drop stage reordering, button-based up/down reordering, stage creation/removal, editable stable keys and labels, and visual capability cards.
+- Added one-click **Clone** for workflows. The clone opens as a new workflow with copied stages/capabilities, a renameable name, and no default assignment.
+- Retained direct workflow renaming in the visual editor.
+- Added stage-level capabilities: customer document upload, phase questions, in-browser WebM recording, and capability-gated prerecorded audio-file upload for both customers and staff.
+- Added custom workflow-stage audio upload controls in the customer order workspace and in administrator phase uploads.
+- Enforced audio uploads server-side: accepted formats are WebM, MP3, M4A, WAV, and OGG containers, and an audio upload is rejected unless the selected phase enables `audio_upload`.
+- Retained the browser-recording-only behavior unless the administrator explicitly enables the new prerecorded-audio capability for that phase.
+- Strengthened workflow editing safeguards: an administrator cannot remove a stage key from a workflow when orders assigned to it contain files or questions for that stage. They can instead retain the stable key, rename the label, or disable customer actions.
+- Confirmed synchronized behavior: customer and administrator workspaces resolve the currently assigned workflow definition dynamically, so saved labels, ordering, and capabilities update without copying workflow definitions into each order.
+
+### Validation and deployment
+
+- `pnpm run typecheck` passed with 0 TypeScript errors.
+- `pnpm test` passed: 150 automated tests.
+- Production client and server builds completed successfully.
+- Deployed server and client with timestamped rollback copies. The first three-second local health probe occurred before the Node listener completed startup; subsequent service logs confirmed startup and the direct health check returned `{"status":"ok"}` with `readypackets.service` active.
+
+### Follow-up
+
+The visual builder release and complete session record will be committed and pushed to the private ReadyPackets repository. The production release marker will be updated after publication.
+
+---
+
+*End of workflow builder release entry.*

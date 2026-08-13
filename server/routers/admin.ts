@@ -1043,7 +1043,7 @@ export const adminRouter = router({
       id: z.number().int().positive().optional(),
       name: z.string().trim().min(2).max(120),
       description: z.string().trim().max(4_000).optional(),
-      stages: z.array(z.object({ key: z.string().trim().regex(/^[a-z0-9_]+$/).max(48), label: z.string().trim().min(2).max(120), order: z.number().int().min(1).max(50), capabilities: z.array(z.enum(["documents", "questions", "recording"])).max(3).default([]) })).min(1).max(20),
+      stages: z.array(z.object({ key: z.string().trim().regex(/^[a-z0-9_]+$/).max(48), label: z.string().trim().min(2).max(120), order: z.number().int().min(1).max(50), capabilities: z.array(z.enum(["documents", "questions", "recording", "audio_upload"])).max(4).default([]) })).min(1).max(20),
       isDefault: z.boolean().default(false),
       active: z.boolean().default(true),
     }))
@@ -1052,6 +1052,18 @@ export const adminRouter = router({
       if (new Set(stages.map((stage) => stage.key)).size !== stages.length) throw new TRPCError({ code: "BAD_REQUEST", message: "Workflow stages must have unique keys." });
       if (input.isDefault) await db.update(orderWorkflows).set({ isDefault: false });
       if (input.id) {
+        const existingRows = await db.select({ stages: orderWorkflows.stages }).from(orderWorkflows).where(eq(orderWorkflows.id, input.id)).limit(1);
+        if (!existingRows[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Workflow not found." });
+        const existingStages = Array.isArray(existingRows[0].stages) ? existingRows[0].stages as { key?: unknown }[] : [];
+        const removedStageKeys = existingStages.map((stage) => typeof stage.key === "string" ? stage.key : "").filter((key) => key && !stages.some((stage) => stage.key === key));
+        if (removedStageKeys.length) {
+          const [fileReferences, questionReferences] = await Promise.all([
+            db.select({ total: count() }).from(files).innerJoin(orders, eq(files.orderId, orders.id)).where(and(eq(orders.workflowId, input.id), inArray(files.phase, removedStageKeys), isNull(files.deletedAt))),
+            db.select({ total: count() }).from(orderQuestions).innerJoin(orders, eq(orderQuestions.orderId, orders.id)).where(and(eq(orders.workflowId, input.id), inArray(orderQuestions.phase, removedStageKeys))),
+          ]);
+          const references = Number(fileReferences[0]?.total ?? 0) + Number(questionReferences[0]?.total ?? 0);
+          if (references > 0) throw new TRPCError({ code: "BAD_REQUEST", message: "This phase contains existing order files or questions. Keep its stable key and rename or disable its customer actions instead of removing it." });
+        }
         await db.update(orderWorkflows).set({ name: input.name, description: input.description ?? null, stages, isDefault: input.isDefault, active: input.active }).where(eq(orderWorkflows.id, input.id));
         void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "workflow.updated", entityType: "order_workflow", entityId: input.id, summary: `Administrator updated workflow ${input.name}`, ipAddress: ctx.clientIp });
         return { ok: true as const, id: input.id };

@@ -110,6 +110,7 @@ export function createUploadRouter(): Router {
       const intakeQuestionKey =
         typeof req.body.intakeQuestionKey === "string" ? req.body.intakeQuestionKey : null;
       const recordedPitch = req.body.recordedPitch === "true" && req.get("x-rp-recorded-pitch") === "true";
+      const prerecordedAudio = req.body.prerecordedAudio === "true";
 
       // Customers may only attach to their own orders, and only in safe categories.
       if (orderId !== null) {
@@ -141,10 +142,15 @@ export function createUploadRouter(): Router {
         res.status(403).json({ error: "You cannot upload files of that type." });
         return;
       }
+      if (stageCapabilities && prerecordedAudio && !stageCapabilities.includes("audio_upload")) {
+        res.status(403).json({ error: "This workflow phase does not allow pre-recorded audio uploads." });
+        return;
+      }
       if (!isStaff && stageCapabilities) {
-        const requiredCapability = recordedPitch ? "recording" : "documents";
+        const requiredCapability = recordedPitch ? "recording" : prerecordedAudio ? "audio_upload" : "documents";
         if (!stageCapabilities.includes(requiredCapability)) {
-          res.status(403).json({ error: `This workflow phase does not accept customer ${requiredCapability === "recording" ? "recordings" : "document uploads"}.` });
+          const capabilityLabel = requiredCapability === "recording" ? "browser recordings" : requiredCapability === "audio_upload" ? "pre-recorded audio uploads" : "document uploads";
+          res.status(403).json({ error: `This workflow phase does not accept customer ${capabilityLabel}.` });
           return;
         }
       }
@@ -178,6 +184,8 @@ export function createUploadRouter(): Router {
             res.status(400).json({ error: `This intake already has the maximum of ${maxPitchRecordings} Business Pitch recording(s).` });
             return;
           }
+        } else if (prerecordedAudio) {
+          allowedExtensions = [".webm", ".mp3", ".m4a", ".wav", ".ogg"];
         } else {
           const allowedTypesSetting = await getSetting("intake.allowed_document_types");
           if (allowedTypesSetting) allowedExtensions = allowedTypesSetting.split(",").map(s => s.trim().toLowerCase());
@@ -200,15 +208,18 @@ export function createUploadRouter(): Router {
           continue;
         }
 
-        if (category === "intake_attachment" && !isStaff) {
-          if (recordedPitch && validation.mime !== "audio/webm") {
-            rejected.push({ name: file.originalname, reason: "Business Pitch recordings must be recorded in WebM format." });
-            continue;
-          }
-          if (!recordedPitch && validation.mime?.startsWith("audio/")) {
-            rejected.push({ name: file.originalname, reason: "Audio file uploads are not permitted. Use the in-browser Business Pitch recorder." });
-            continue;
-          }
+        const isAudio = validation.mime?.startsWith("audio/") || validation.mime === "video/webm" || validation.mime === "video/ogg";
+        if (recordedPitch && validation.mime !== "audio/webm") {
+          rejected.push({ name: file.originalname, reason: "Business Pitch recordings must be recorded in WebM format." });
+          continue;
+        }
+        if (isAudio && !recordedPitch && !prerecordedAudio) {
+          rejected.push({ name: file.originalname, reason: "Choose the pre-recorded audio upload option for an audio file and enable it for this workflow phase." });
+          continue;
+        }
+        if (prerecordedAudio && !isAudio) {
+          rejected.push({ name: file.originalname, reason: "Select an approved audio file for this workflow phase." });
+          continue;
         }
 
         try {

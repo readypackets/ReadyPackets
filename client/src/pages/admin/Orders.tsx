@@ -731,6 +731,7 @@ export function AdminOrderDetailPage() {
   const [phaseUploadOpen, setPhaseUploadOpen] = useState(false);
   const [phaseUpload, setPhaseUpload] = useState("phase_1");
   const [phaseUploading, setPhaseUploading] = useState(false);
+  const [phaseUploadPreRecordedAudio, setPhaseUploadPreRecordedAudio] = useState(false);
   const phaseFileInput = useRef<HTMLInputElement>(null);
 
   const assignedWorkflow = (workflows.data ?? []).find((workflow) => String(workflow.id) === (workflowId || String(detail.data?.order.workflowId ?? "")));
@@ -738,13 +739,16 @@ export function AdminOrderDetailPage() {
     ? (assignedWorkflow.stages as { key?: unknown; label?: unknown; order?: unknown }[])
         .filter((stage) => typeof stage.key === "string" && typeof stage.label === "string")
         .sort((left, right) => (typeof left.order === "number" ? left.order : 0) - (typeof right.order === "number" ? right.order : 0))
-        .map((stage) => ({ value: stage.key as string, label: stage.label as string }))
+        .map((stage) => ({ value: stage.key as string, label: stage.label as string, capabilities: Array.isArray((stage as { capabilities?: unknown }).capabilities) ? (stage as { capabilities: unknown[] }).capabilities.filter((capability): capability is string => typeof capability === "string") : ["documents", "questions", "recording"] }))
     : [];
   const phaseUploadOptions = [
-    { value: "phase_1", label: "Phase 1" },
-    { value: "phase_2", label: "Phase 2" },
+    { value: "phase_1", label: "Phase 1", capabilities: ["documents", "questions", "recording"] },
+    { value: "phase_2", label: "Phase 2", capabilities: ["documents", "questions", "recording"] },
     ...workflowStageOptions.filter((stage) => stage.value !== "phase_1" && stage.value !== "phase_2"),
   ];
+
+  const selectedPhaseOption = phaseUploadOptions.find((option) => option.value === phaseUpload);
+  const phaseAllowsPreRecordedAudio = selectedPhaseOption?.capabilities.includes("audio_upload") ?? false;
 
   const refetchAll = async () => {
     await Promise.all([detail.refetch(), files.refetch()]);
@@ -832,8 +836,13 @@ export function AdminOrderDetailPage() {
 
   const uploadPhaseDocuments = async (selected: FileList | null) => {
     if (!selected || selected.length === 0) return;
-    const selectedFiles = Array.from(selected).slice(0, 5);
-    setPhaseUploading(true);
+          const selectedFiles = Array.from(selected).slice(0, 5);
+      if (phaseUploadPreRecordedAudio && !phaseAllowsPreRecordedAudio) {
+        toast.error("Audio upload is not enabled", "Enable Pre-recorded audio file for this workflow phase before uploading audio.");
+        return;
+      }
+      setPhaseUploading(true);
+
     try {
       const post = async (token: string) => {
         const body = new FormData();
@@ -841,6 +850,7 @@ export function AdminOrderDetailPage() {
         body.append("orderId", String(orderId));
         body.append("category", "reference");
         body.append("phase", phaseUpload);
+        if (phaseUploadPreRecordedAudio) body.append("prerecordedAudio", "true");
         const response = await fetch("/api/files/upload", { method: "POST", credentials: "same-origin", headers: { "x-rp-csrf": token }, body });
         let payload: { error?: string; files?: unknown[] } = {};
         try { payload = await response.json() as typeof payload; } catch { /* status below handles malformed responses */ }
@@ -1420,7 +1430,7 @@ export function AdminOrderDetailPage() {
         ) : null}
       </div>
 
-      <Modal open={phaseUploadOpen} onClose={() => setPhaseUploadOpen(false)} title="Upload phase documents" description="Attach administrator documents to this order and assign them to the correct workflow phase." footer={<><Button variant="outline" onClick={() => setPhaseUploadOpen(false)}>Cancel</Button><Button busy={phaseUploading} leadingIcon={<Upload className="size-4" />} onClick={() => phaseFileInput.current?.click()}>Choose documents</Button></>}><div className="space-y-4"><Select label="Order phase" value={phaseUpload} onChange={(event) => setPhaseUpload(event.target.value)} options={phaseUploadOptions} /><Alert tone="info">Uploaded administrator documents are initially internal. Use the visibility control in the Files tab to publish a file to the customer inside this order’s matching phase workspace.</Alert><input ref={phaseFileInput} className="hidden" type="file" multiple onChange={(event) => void uploadPhaseDocuments(event.target.files)} /></div></Modal>
+      <Modal open={phaseUploadOpen} onClose={() => setPhaseUploadOpen(false)} title="Upload phase documents" description="Attach administrator documents to this order and assign them to the correct workflow phase." footer={<><Button variant="outline" onClick={() => setPhaseUploadOpen(false)}>Cancel</Button><Button busy={phaseUploading} leadingIcon={<Upload className="size-4" />} onClick={() => phaseFileInput.current?.click()}>Choose documents</Button></>}><div className="space-y-4"><Select label="Order phase" value={phaseUpload} onChange={(event) => { setPhaseUpload(event.target.value); setPhaseUploadPreRecordedAudio(false); }} options={phaseUploadOptions} />{phaseAllowsPreRecordedAudio ? <Checkbox label="Upload pre-recorded audio files for this phase" checked={phaseUploadPreRecordedAudio} onChange={(event) => setPhaseUploadPreRecordedAudio(event.target.checked)} /> : null}<Alert tone="info">Uploaded administrator documents are initially internal. Use the visibility control in the Files tab to publish a file to the customer inside this order’s matching phase workspace.</Alert><input ref={phaseFileInput} className="hidden" type="file" accept={phaseUploadPreRecordedAudio ? "audio/*,.webm,.ogg" : undefined} multiple onChange={(event) => void uploadPhaseDocuments(event.target.files)} /></div></Modal>
 
       <ConfirmDialog
         open={deleteOpen}

@@ -37,7 +37,7 @@ import { Modal } from "@/components/ui/Modal";
 import { ProgressBar } from "@/components/ui/DataDisplay";
 import { useToast } from "@/components/ui/Toast";
 import { PageHeader } from "@/components/layout/PortalLayout";
-type WorkflowStage = { key: string; label: string; order: number; capabilities?: ("documents" | "questions" | "recording")[] };
+type WorkflowStage = { key: string; label: string; order: number; capabilities?: ("documents" | "questions" | "recording" | "audio_upload")[] };
 
 function workflowStages(value: unknown): WorkflowStage[] {
   if (!Array.isArray(value)) return [];
@@ -49,8 +49,8 @@ function workflowStages(value: unknown): WorkflowStage[] {
       label: item.label as string,
       order: typeof item.order === "number" ? item.order : index + 1,
       capabilities: Array.isArray(item.capabilities)
-        ? item.capabilities.filter((capability): capability is "documents" | "questions" | "recording" => capability === "documents" || capability === "questions" || capability === "recording")
-        : ["documents", "questions", "recording"] as ("documents" | "questions" | "recording")[],
+        ? item.capabilities.filter((capability): capability is "documents" | "questions" | "recording" | "audio_upload" => capability === "documents" || capability === "questions" || capability === "recording" || capability === "audio_upload")
+        : ["documents", "questions", "recording"] as ("documents" | "questions" | "recording" | "audio_upload")[],
     }))
     .sort((left, right) => left.order - right.order);
 }
@@ -299,7 +299,7 @@ export function OrderDetailPage() {
             {configuredWorkflowStages.map((stage) => (
               <div key={stage.key} className="rounded-lg border border-line bg-white p-4">
                 <p className="text-sm font-semibold text-ink">{stage.order}. {stage.label}</p>
-                <p className="mt-1 text-xs text-muted">{(stage.capabilities ?? []).map((capability) => capability === "recording" ? "Audio recording" : capability === "documents" ? "Documents" : "Questions").join(" · ")}</p>
+                <p className="mt-1 text-xs text-muted">{(stage.capabilities ?? []).map((capability) => capability === "recording" ? "Audio recording" : capability === "audio_upload" ? "Audio upload" : capability === "documents" ? "Documents" : "Questions").join(" · ")}</p>
                 <LinkButton className="mt-3" size="sm" variant="outline" href={`/portal/orders/${order.id}/workflow/${stage.key}`}>Open {stage.label}</LinkButton>
               </div>
             ))}

@@ -10,7 +10,7 @@ import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { PageHeader } from "@/components/layout/PortalLayout";
 
-type Capability = "documents" | "questions" | "recording";
+type Capability = "documents" | "questions" | "recording" | "audio_upload";
 type WorkflowStage = { key: string; label: string; order: number; capabilities?: Capability[] };
 const AUDIO_EXTENSIONS = new Set(["webm", "wav", "mp3", "m4a", "ogg"]);
 
@@ -24,7 +24,7 @@ function stagesFromUnknown(value: unknown): WorkflowStage[] {
       label: item.label as string,
       order: typeof item.order === "number" ? item.order : index + 1,
       capabilities: Array.isArray(item.capabilities)
-        ? item.capabilities.filter((capability): capability is Capability => capability === "documents" || capability === "questions" || capability === "recording")
+        ? item.capabilities.filter((capability): capability is Capability => capability === "documents" || capability === "questions" || capability === "recording" || capability === "audio_upload")
         : ["documents", "questions", "recording"] as Capability[],
     }))
     .sort((left, right) => left.order - right.order);
@@ -58,7 +58,7 @@ export function WorkflowStagePage() {
     onError(error) { toast.error("Could not save answer", errorMessage(error)); },
   });
 
-  async function upload(selected: FileList | File[] | null, recordedPitch = false) {
+  async function upload(selected: FileList | File[] | null, recordedPitch = false, prerecordedAudio = false) {
     if (!selected || selected.length === 0) return;
     setUploading(true);
     try {
@@ -69,6 +69,7 @@ export function WorkflowStagePage() {
         body.append("category", "intake_attachment");
         body.append("phase", phaseKey);
         if (recordedPitch) body.append("recordedPitch", "true");
+        if (prerecordedAudio) body.append("prerecordedAudio", "true");
         const response = await fetch("/api/files/upload", {
           method: "POST", credentials: "same-origin",
           headers: { "x-rp-csrf": token, ...(recordedPitch ? { "x-rp-recorded-pitch": "true" } : {}) }, body,
@@ -146,8 +147,8 @@ export function WorkflowStagePage() {
         <ul className="mt-4 space-y-2">{documentFiles.length ? documentFiles.map((file) => <li key={file.id} className="flex items-center justify-between gap-3 rounded border border-line px-3 py-2 text-sm"><span className="min-w-0 truncate"><FileText className="mr-1 inline size-4" />{file.originalName} <span className="text-xs text-muted">· {formatBytes(file.sizeBytes)} · {formatDate(file.createdAt)}</span></span>{!file.uploadedByStaff ? <Button size="sm" variant="ghost" onClick={() => deleteFile.mutate({ fileId: file.id })}>Remove</Button> : <Badge tone="teal">Team document</Badge>}</li>) : <li className="text-sm text-muted">No documents for this phase yet.</li>}</ul>
       </Card>
       <Card>
-        <CardHeader title={`${stage.label} audio recording`} description={capabilities.has("recording") ? "Record an in-browser WebM update for this phase. Audio files cannot be uploaded from your device." : "No customer audio recording is enabled for this phase."} />
-        {capabilities.has("recording") ? <Button className="mt-4" leadingIcon={<Mic className="size-4" />} variant={recording ? "danger" : "primary"} busy={uploading} onClick={() => recording ? stopRecording() : setMicrophoneOpen(true)}>{recording ? `Stop recording (${recordingSeconds}s)` : `Record ${stage.label} audio`}</Button> : null}
+        <CardHeader title={`${stage.label} audio recording`} description={capabilities.has("recording") || capabilities.has("audio_upload") ? "Record an in-browser WebM update or upload approved prerecorded audio when this phase enables the relevant action." : "No customer audio action is enabled for this phase."} />
+        <div className="mt-4 flex flex-wrap gap-2">{capabilities.has("recording") ? <Button leadingIcon={<Mic className="size-4" />} variant={recording ? "danger" : "primary"} busy={uploading} onClick={() => recording ? stopRecording() : setMicrophoneOpen(true)}>{recording ? `Stop recording (${recordingSeconds}s)` : `Record ${stage.label} audio`}</Button> : null}{capabilities.has("audio_upload") ? <><input id={`audio-upload-${stage.key}`} className="hidden" type="file" accept="audio/*,.webm,.ogg" onChange={(event) => void upload(event.target.files, false, true)} /><Button variant="outline" leadingIcon={<Upload className="size-4" />} busy={uploading} onClick={() => document.getElementById(`audio-upload-${stage.key}`)?.click()}>Upload audio file</Button></> : null}</div>
         <ul className="mt-4 space-y-2">{audioFiles.length ? audioFiles.map((file) => <li key={file.id} className="flex items-center justify-between gap-3 rounded border border-line px-3 py-2 text-sm"><span className="truncate"><FileAudio className="mr-1 inline size-4" />{file.originalName}</span>{!file.uploadedByStaff ? <Button size="sm" variant="ghost" onClick={() => deleteFile.mutate({ fileId: file.id })}>Remove</Button> : <Badge tone="teal">Team recording</Badge>}</li>) : <li className="text-sm text-muted">No recordings for this phase yet.</li>}</ul>
       </Card>
       {capabilities.has("questions") ? <Card className="lg:col-span-2"><CardHeader title={`${stage.label} questions`} description="Questions assigned by your project team for this specific workflow phase." /><div className="mt-4 space-y-4">{phaseQuestions.length ? phaseQuestions.map((question) => <div key={question.id} className="rounded border border-line p-4"><p className="text-sm font-medium text-ink">{question.question}</p>{question.status === "answered" || question.status === "resolved" ? <p className="mt-2 flex items-center gap-1.5 text-sm text-success"><CheckCircle2 className="size-4" /> Answer received</p> : <><Textarea className="mt-3" label="Your answer" value={answers[question.id] ?? ""} onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))} rows={3} /><Button className="mt-3" size="sm" busy={answerQuestion.isPending} disabled={(answers[question.id] ?? "").trim().length === 0} onClick={() => answerQuestion.mutate({ questionId: question.id, body: (answers[question.id] ?? "").trim() })}>Save answer</Button></>}</div>) : <p className="text-sm text-muted">No questions have been assigned to this phase.</p>}</div></Card> : null}
