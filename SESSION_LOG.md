@@ -2302,3 +2302,8 @@ The category-separated SharePoint destination implementation was published in co
 Added a `review_space` workflow capability. Administrators enable **Customer file review** for a stage in the workflow designer, then curate the stage by uploading or assigning team files to that phase and using the Order Files **Publish** visibility control. The customer wizard renders a dedicated read-only review card that includes only staff-uploaded, non-placeholder, customer-visible files associated with that review phase.
 
 Each customer download is issued through the existing protected tRPC ticket flow: order access and `visibleToCustomer` are rechecked server-side, the URL is short-lived and single-use, and content is delivered as an attachment rather than rendered inline from the portal origin. The customer sees file name, size, and publication date; staff can remove a file from the review space by unpublishing it. The default standard workflow now marks its Phase 4 delivery stage as a customer review stage. TypeScript validation, 155/155 tests, production builds, and health verification completed successfully. Rollback assets are at `/opt/readypackets/rollback-20260813190309-customer-review-space`.
+
+
+### Publication record
+
+The customer review-space workflow capability was published in commit `0320b1f4d6361bb28b08f89f25ac470112d021c9` (`feat: add customer review workflow spaces`). The production release marker was updated after a successful `{"status":"ok"}` health response, and the VPS operations record includes the corresponding rollback locations.
