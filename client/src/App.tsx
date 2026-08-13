@@ -8,7 +8,7 @@
  * the security control.
  */
 import { useEffect, useMemo, type ReactNode } from "react";
-import { Route, Switch, Redirect, useLocation } from "wouter";
+import { Route, Switch, Redirect, useLocation, useParams } from "wouter";
 import {
   ClipboardList,
   FileText,
@@ -305,8 +305,8 @@ function PortalRoutes() {
         <Route path="/portal/orders/new" component={NewOrderPage} />
         <Route path="/portal/orders/:id" component={OrderDetailPage} />
         <Route path="/portal/orders/:id/invoice" component={InvoicePage} />
-        <Route path="/portal/orders/:id/intake" component={IntakePage} />
-        <Route path="/portal/orders/:id/phase-2" component={Phase2ArtifactsPage} />
+        <Route path="/portal/orders/:id/intake">{() => <LegacyWorkflowRedirect stageKey="phase_1_intake" />}</Route>
+        <Route path="/portal/orders/:id/phase-2">{() => <LegacyWorkflowRedirect stageKey="phase_2_synthesis" />}</Route>
         <Route path="/portal/orders/:id/workflow/:phaseKey" component={WorkflowStagePage} />
         <Route path="/portal/orders/:id/mnda" component={MndaPage} />
         {/* Backward-compatible alias for links issued before the route was renamed. */}
@@ -333,6 +333,11 @@ function PortalRoutes() {
       </Switch>
     </PortalLayout>
   );
+}
+
+function LegacyWorkflowRedirect({ stageKey }: { stageKey: string }) {
+  const params = useParams<{ id: string }>();
+  return <Redirect to={`/portal/orders/${params.id}/workflow/${stageKey}`} replace />;
 }
 
 /** Admin shell and routes; staff and administrators only. */
