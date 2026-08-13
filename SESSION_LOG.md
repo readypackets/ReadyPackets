@@ -2189,3 +2189,6 @@ The new administrator-only **Platform setup** wizard centralizes first-run confi
 **Roadmap:** Added a P1 item for a secret-safe first-run setup-wizard configuration bundle that can be exported/imported during installation and retained as a Git-tracked template without storing live secrets, customer data, encryption keys, or OAuth tokens.
 
 **Validation:** TypeScript validation passed with zero errors; 155/155 automated tests passed; backup helper and installer shell syntax passed; daemon syntax passed; the production portal and backup-control daemon are active; the production health endpoint returned `{"status":"ok"}`; and the protected archive verification passed. Timestamped rollback material was retained under `/opt/readypackets/rollback-20260813053220`.
+
+
+**Publication record:** The backup repair and provider-specific cloud configuration source was published to the private repository as commit `b23465d36c79037f673f70f6b38e9ce32d6906cb`. Production was marked with that release commit after the portal, timer, and root backup-control daemon were verified active. The final session-log publication record follows this release entry.
