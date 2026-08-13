@@ -14,6 +14,7 @@ import {
   mndaAcceptances,
   orderItems,
   orderWorkflows,
+  workflowStageRuns,
   orderAutomationRules,
   orders,
   orderStatusHistory,
@@ -26,7 +27,7 @@ import {
 } from "../db/schema.js";
 import { decryptField, encryptField, generateOrderNumber } from "../security/crypto.js";
 import { logger } from "../observability/logger.js";
-import { recordActivity } from "../observability/audit.js";
+import { raiseAlert, recordActivity } from "../observability/audit.js";
 import { priceSelection } from "./catalog.js";
 import { fireAutomations } from "./emailAutomations.js";
 import { queueFullOrderFolderProvisioning } from "./sharepoint.js";
@@ -276,6 +277,102 @@ export async function applyOrderAutomationRules(
         changes: { ruleId: rule.id, triggerType, triggerValue: triggerValue ?? null, endpointId: endpoint.id },
       });
     }
+  }
+}
+
+export type WorkflowStageActionConfig = {
+  emailTemplateKey?: string;
+  adminAlert?: { enabled?: boolean; message?: string; severity?: "warning" | "error" | "critical" };
+  orderStatus?: OrderStatus;
+  completionPercent?: number;
+  webhookEndpointId?: number;
+};
+
+/** Execute the configured actions for an assigned workflow stage. Every request is recorded. */
+export async function runWorkflowStageActions(input: {
+  orderId: number;
+  stageKey: string;
+  actorUserId: number;
+  actorRole: string;
+  ipAddress?: string | null;
+}) {
+  const [order] = await db.select().from(orders).where(and(eq(orders.id, input.orderId), isNull(orders.deletedAt))).limit(1);
+  if (!order?.workflowId) throw new OrderStateError("Assign a workflow before running stage actions.");
+  const [workflow] = await db.select().from(orderWorkflows).where(eq(orderWorkflows.id, order.workflowId)).limit(1);
+  if (!workflow) throw new OrderStateError("Assigned workflow not found.");
+  const stages = Array.isArray(workflow.stages) ? workflow.stages as Array<{ key?: string; label?: string; actions?: WorkflowStageActionConfig }> : [];
+  const stage = stages.find((candidate) => candidate.key === input.stageKey);
+  if (!stage) throw new OrderStateError("This phase is not part of the assigned workflow.");
+  const actions = stage.actions ?? {};
+  const run = await db.insert(workflowStageRuns).values({
+    orderId: order.id,
+    workflowId: workflow.id,
+    stageKey: input.stageKey,
+    actions,
+    status: "running",
+    startedByUserId: input.actorUserId,
+  });
+  const runId = insertedId(run);
+  const executed: string[] = [];
+  try {
+    const customer = await getUserById(order.userId);
+    const projectName = order.projectNameEnc ? decryptField(order.projectNameEnc, `order:${order.id}`) : null;
+    const variables = {
+      name: customer ? displayNameOf(customer) : "Customer",
+      email: customer?.email ?? "",
+      orderNumber: order.orderNumber,
+      orderId: order.id,
+      projectName: projectName ?? "",
+      orderStatus: order.status,
+      paymentStatus: order.paymentStatus,
+      workflowStage: stage.label ?? input.stageKey,
+    };
+
+    if (actions.orderStatus && actions.orderStatus !== order.status) {
+      await transitionOrder({ orderId: order.id, to: actions.orderStatus, actorUserId: input.actorUserId, actorRole: input.actorRole, reason: `Workflow stage ${stage.label ?? input.stageKey} action`, ipAddress: input.ipAddress });
+      executed.push(`status:${actions.orderStatus}`);
+    }
+    if (actions.completionPercent !== undefined) {
+      const completionPercent = Math.max(0, Math.min(100, Math.round(actions.completionPercent)));
+      await db.update(orders).set({ completionPercent }).where(eq(orders.id, order.id));
+      executed.push(`completion:${completionPercent}`);
+    }
+    if (actions.emailTemplateKey && customer?.email) {
+      await queueTemplatedEmail({ to: customer.email, templateKey: actions.emailTemplateKey, variables });
+      executed.push(`email:${actions.emailTemplateKey}`);
+    }
+    if (actions.adminAlert?.enabled) {
+      await raiseAlert({
+        alertKey: `workflow-stage-${order.id}-${workflow.id}-${input.stageKey}`,
+        severity: actions.adminAlert.severity ?? "warning",
+        source: "workflow",
+        message: actions.adminAlert.message?.trim() || `Workflow stage ${stage.label ?? input.stageKey} action run for ${order.orderNumber}`,
+        detail: `Order ${order.orderNumber}; workflow ${workflow.name}; stage ${stage.label ?? input.stageKey}.`,
+      });
+      executed.push("admin-alert");
+    }
+    if (actions.webhookEndpointId) {
+      const [endpoint] = await db.select({ id: webhookEndpoints.id }).from(webhookEndpoints).where(and(eq(webhookEndpoints.id, actions.webhookEndpointId), eq(webhookEndpoints.enabled, true))).limit(1);
+      if (!endpoint) throw new OrderStateError("The configured webhook endpoint is unavailable.");
+      await db.insert(webhookDeliveries).values({
+        endpointId: endpoint.id,
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        customerName: customer ? displayNameOf(customer) : null,
+        eventType: "workflow.stage_action",
+        payload: { orderId: order.id, orderNumber: order.orderNumber, customerId: order.userId, workflowId: workflow.id, workflowName: workflow.name, stageKey: input.stageKey, stageLabel: stage.label ?? input.stageKey, actions, occurredAt: new Date().toISOString() },
+        status: "pending",
+        attempts: 0,
+      });
+      executed.push(`webhook:${endpoint.id}`);
+    }
+    await db.update(workflowStageRuns).set({ actions: { configured: actions, executed }, status: "completed", completedAt: new Date() }).where(eq(workflowStageRuns.id, runId));
+    await recordActivity({ actorUserId: input.actorUserId, actorRole: input.actorRole, action: "workflow.stage_actions_run", entityType: "order", entityId: order.id, summary: `Ran ${executed.length} workflow action(s) for ${stage.label ?? input.stageKey}`, changes: { workflowId: workflow.id, stageKey: input.stageKey, executed }, ipAddress: input.ipAddress });
+    return { runId, executed };
+  } catch (error) {
+    const errorDetail = error instanceof Error ? error.message : "Workflow stage actions failed.";
+    await db.update(workflowStageRuns).set({ status: "failed", errorDetail: errorDetail.slice(0, 1000), completedAt: new Date() }).where(eq(workflowStageRuns.id, runId));
+    throw error;
   }
 }
 

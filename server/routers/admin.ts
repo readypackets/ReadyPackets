@@ -29,6 +29,7 @@ import {
   orderAnswerHistory,
   orderItems,
   orderWorkflows,
+  workflowStageRuns,
   orderAutomationRules,
   orders,
   packetGroups,
@@ -66,6 +67,7 @@ import {
   createOrder,
   applyOrderAutomationRules,
   getOrderStats,
+  runWorkflowStageActions,
   transitionOrder,
 } from "../services/orders.js";
 import { getCatalog } from "../services/catalog.js";
@@ -73,6 +75,18 @@ import { queueTemplatedEmail, wrapHtmlBody } from "../services/email.js";
 import { adminProcedure, staffProcedure, router } from "../trpc/trpc.js";
 import { ORDER_STATUSES, PRODUCT_TIERS, USER_ROLES } from "../../shared/domain.js";
 import { insertedId } from "../db/result.js";
+
+const workflowStageActionsSchema = z.object({
+  emailTemplateKey: z.string().trim().min(1).max(64).optional(),
+  adminAlert: z.object({
+    enabled: z.boolean().default(false),
+    message: z.string().trim().max(500).optional(),
+    severity: z.enum(["warning", "error", "critical"]).default("warning"),
+  }).optional(),
+  orderStatus: z.enum(["new", "phase_1_intake", "phase_2_synthesis", "phase_3_review", "phase_4_delivery", "delivered", "closed", "cancelled"]).optional(),
+  completionPercent: z.number().int().min(0).max(100).optional(),
+  webhookEndpointId: z.number().int().positive().optional(),
+}).default({});
 
 function toTrpcError(error: unknown): never {
   if (error instanceof OrderStateError) {
@@ -1043,13 +1057,23 @@ export const adminRouter = router({
       id: z.number().int().positive().optional(),
       name: z.string().trim().min(2).max(120),
       description: z.string().trim().max(4_000).optional(),
-      stages: z.array(z.object({ key: z.string().trim().regex(/^[a-z0-9_]+$/).max(48), label: z.string().trim().min(2).max(120), order: z.number().int().min(1).max(50), capabilities: z.array(z.enum(["documents", "questions", "recording", "audio_upload"])).max(4).default([]) })).min(1).max(20),
+      stages: z.array(z.object({ key: z.string().trim().regex(/^[a-z0-9_]+$/).max(48), label: z.string().trim().min(2).max(120), order: z.number().int().min(1).max(50), capabilities: z.array(z.enum(["documents", "questions", "recording", "audio_upload"])).max(4).default([]), actions: workflowStageActionsSchema })).min(1).max(20),
       isDefault: z.boolean().default(false),
       active: z.boolean().default(true),
     }))
     .mutation(async ({ ctx, input }) => {
       const stages = [...input.stages].sort((a, b) => a.order - b.order);
       if (new Set(stages.map((stage) => stage.key)).size !== stages.length) throw new TRPCError({ code: "BAD_REQUEST", message: "Workflow stages must have unique keys." });
+      for (const stage of stages) {
+        if (stage.actions.emailTemplateKey) {
+          const [template] = await db.select({ templateKey: emailTemplates.templateKey }).from(emailTemplates).where(eq(emailTemplates.templateKey, stage.actions.emailTemplateKey)).limit(1);
+          if (!template) throw new TRPCError({ code: "BAD_REQUEST", message: `Select a valid Email Template Center template for ${stage.label}.` });
+        }
+        if (stage.actions.webhookEndpointId) {
+          const [endpoint] = await db.select({ id: webhookEndpoints.id }).from(webhookEndpoints).where(and(eq(webhookEndpoints.id, stage.actions.webhookEndpointId), eq(webhookEndpoints.enabled, true))).limit(1);
+          if (!endpoint) throw new TRPCError({ code: "BAD_REQUEST", message: `Select an enabled webhook endpoint for ${stage.label}.` });
+        }
+      }
       if (input.isDefault) await db.update(orderWorkflows).set({ isDefault: false });
       if (input.id) {
         const existingRows = await db.select({ stages: orderWorkflows.stages }).from(orderWorkflows).where(eq(orderWorkflows.id, input.id)).limit(1);
@@ -1083,6 +1107,22 @@ export const adminRouter = router({
       if (Number((result as { affectedRows?: number }).affectedRows ?? 0) === 0) throw new TRPCError({ code: "NOT_FOUND", message: "Order not found." });
       void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "order.workflow_assigned", entityType: "order", entityId: input.orderId, summary: `Administrator assigned workflow ${workflow[0].name}`, changes: { workflowId: workflow[0].id }, ipAddress: ctx.clientIp });
       return { ok: true as const, workflow: workflow[0] };
+    }),
+
+  workflowStageRuns: staffProcedure
+    .input(z.object({ orderId: z.number().int().positive() }))
+    .query(async ({ input }) =>
+      db.select().from(workflowStageRuns).where(eq(workflowStageRuns.orderId, input.orderId)).orderBy(desc(workflowStageRuns.startedAt), desc(workflowStageRuns.id)),
+    ),
+
+  runWorkflowStageActions: adminProcedure
+    .input(z.object({ orderId: z.number().int().positive(), stageKey: z.string().trim().regex(/^[a-z0-9_]+$/).max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await runWorkflowStageActions({ orderId: input.orderId, stageKey: input.stageKey, actorUserId: ctx.session.user.id, actorRole: "admin", ipAddress: ctx.clientIp });
+      } catch (error) {
+        return toTrpcError(error);
+      }
     }),
 
   /* ---------------------------------------------------------------- */

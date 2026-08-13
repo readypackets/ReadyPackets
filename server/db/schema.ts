@@ -1472,6 +1472,27 @@ export const apiKeys = mysqlTable(
   }),
 );
 
+export const workflowStageRuns = mysqlTable(
+  "workflow_stage_runs",
+  {
+    id: id(),
+    orderId: int("order_id").notNull(),
+    workflowId: int("workflow_id").notNull(),
+    stageKey: varchar("stage_key", { length: 64 }).notNull(),
+    actions: json("actions").notNull(),
+    status: varchar("status", { length: 16 }).notNull().default("completed"),
+    errorDetail: varchar("error_detail", { length: 1000 }),
+    startedByUserId: int("started_by_user_id"),
+    startedAt: timestamp("started_at").notNull().defaultNow(),
+    completedAt: timestamp("completed_at"),
+  },
+  (table) => ({
+    orderIdx: index("workflow_stage_runs_order_idx").on(table.orderId, table.startedAt),
+    workflowStageIdx: index("workflow_stage_runs_workflow_stage_idx").on(table.workflowId, table.stageKey),
+    statusIdx: index("workflow_stage_runs_status_idx").on(table.status),
+  }),
+);
+
 export const webhookEndpoints = mysqlTable(
   "webhook_endpoints",
   {

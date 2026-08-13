@@ -1470,8 +1470,18 @@ function OrderAutomationTab({ order, customer }: { order: any; customer: any }) 
   const toast = useToast();
   const utils = trpc.useUtils();
   const graphConfig = trpc.integrations.graphConfig.useQuery();
+  const workflows = trpc.admin.orderWorkflows.useQuery();
+  const workflowStageRuns = trpc.admin.workflowStageRuns.useQuery({ orderId: order.id });
+  const assignedWorkflow = (workflows.data ?? []).find((workflow) => workflow.id === order.workflowId);
+  const workflowStages = Array.isArray(assignedWorkflow?.stages)
+    ? (assignedWorkflow.stages as Array<{ key?: unknown; label?: unknown; order?: unknown; actions?: unknown }>).filter((stage) => typeof stage.key === "string" && typeof stage.label === "string").sort((left, right) => (typeof left.order === "number" ? left.order : 0) - (typeof right.order === "number" ? right.order : 0))
+    : [];
   const phaseJobs = trpc.integrations.phaseJobs.useQuery({ orderId: order.id });
   const deliveryLog = trpc.integrations.webhookDeliveries.useQuery({ orderId: order.id });
+  const runWorkflowActions = trpc.admin.runWorkflowStageActions.useMutation({
+    onSuccess(result) { void workflowStageRuns.refetch(); toast.success("Workflow actions completed", result.executed.length ? result.executed.join(" • ") : "No actions are configured for this phase."); },
+    onError(error) { toast.error("Could not run workflow actions", errorMessage(error)); },
+  });
   const retryPhaseJob = trpc.integrations.retryPhaseJob.useMutation({ onSuccess: () => { void phaseJobs.refetch(); toast.success("Phase job queued for retry"); }, onError: (error) => toast.error("Could not retry phase job", errorMessage(error)) });
   const retryDelivery = trpc.integrations.retryWebhookDelivery.useMutation({ onSuccess: () => { void deliveryLog.refetch(); toast.success("Webhook delivery queued for retry"); }, onError: (error) => toast.error("Could not retry delivery", errorMessage(error)) });
   const redeliver = trpc.integrations.redeliverWebhook.useMutation({ onSuccess: () => { void deliveryLog.refetch(); toast.success("New webhook redelivery queued"); }, onError: (error) => toast.error("Could not create redelivery", errorMessage(error)) });
@@ -1516,6 +1526,15 @@ function OrderAutomationTab({ order, customer }: { order: any; customer: any }) 
   return (
     <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr] lg:items-start">
       <div className="space-y-6">
+        <Card>
+          <CardHeader title="Workflow stage actions" description={assignedWorkflow ? `${assignedWorkflow.name} actions run only when an administrator selects Run actions for this order. Every run is recorded below.` : "Assign an active workflow on the Overview tab to configure order-specific stage actions."} />
+          {workflowStages.length ? <div className="mt-4 space-y-2">{workflowStages.map((stage) => {
+            const actions = stage.actions && typeof stage.actions === "object" ? stage.actions as Record<string, unknown> : {};
+            const actionCount = Number(Boolean(actions.emailTemplateKey)) + Number(Boolean(actions.orderStatus)) + Number(actions.completionPercent !== undefined) + Number(Boolean(actions.webhookEndpointId)) + Number((actions.adminAlert as { enabled?: unknown } | undefined)?.enabled === true);
+            return <div key={stage.key as string} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line p-3"><div><p className="font-medium text-ink">{stage.label as string}</p><p className="text-xs text-muted">{actionCount ? `${actionCount} configured action${actionCount === 1 ? "" : "s"}` : "No administrator actions configured"}</p></div><Button size="sm" variant={actionCount ? "primary" : "outline"} busy={runWorkflowActions.isPending} disabled={!actionCount} onClick={() => runWorkflowActions.mutate({ orderId: order.id, stageKey: stage.key as string })}>Run actions</Button></div>;
+          })}</div> : <Alert tone="info" className="mt-4">No workflow stages are assigned to this order yet.</Alert>}
+          {(workflowStageRuns.data ?? []).length ? <div className="mt-4 border-t border-line pt-4"><p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Recent workflow action runs</p><div className="space-y-2">{(workflowStageRuns.data ?? []).slice(0, 6).map((run) => <div key={run.id} className="flex items-center justify-between gap-3 rounded-lg bg-surface-soft px-3 py-2 text-xs"><span><strong>{run.stageKey}</strong> · {new Date(run.startedAt).toLocaleString()}</span><Badge tone={run.status === "completed" ? "success" : run.status === "failed" ? "danger" : "warning"}>{run.status}</Badge></div>)}</div></div> : null}
+        </Card>
         <Card>
           <CardHeader
             title="Phase I Start Webhook (P101)"

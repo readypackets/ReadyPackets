@@ -1969,3 +1969,26 @@ The visual builder release and complete session record will be committed and pus
 ### Publication outcome
 
 The visual workflow builder release was committed and published to the private `readypackets/ReadyPackets` `main` branch as `17dd4ad6ab6288041162ea03ec87fb88d4982135`. A final session-log publication commit will follow so the repository retains this outcome.
+
+
+## 2026-08-13 — Enlarged Workflow Canvas and Per-Stage Automation Actions
+
+### User request
+
+The administrator asked for a larger workflow editing window and the ability to configure email alerts, administrator dashboard alerts, order status updates, completion percentages, and webhook triggers directly inside each workflow phase.
+
+### Delivered functionality
+
+The Order Workflows editor now uses an extra-large `max-w-6xl` modal canvas, providing substantially more horizontal room for stage fields, customer actions, and automation controls. Each visual stage card now contains a separate **Administrator-run stage actions** area that may configure a customer Email Template Center message, a dashboard alert with severity and custom text, an order status transition, a completion percentage, and an existing enabled webhook endpoint. These configuration choices are stored with the workflow stage and validated at save time; selected email templates and webhook endpoints must exist and be enabled.
+
+The administrator order Automation tab now resolves the order's currently assigned workflow and displays every stage with its configured-action count. An administrator can explicitly select **Run actions** for a stage. Execution is intentionally not automatic upon editing a workflow or customer interaction. This keeps status changes, customer email, outbound webhooks, and dashboard alerts under administrator control for the individual order.
+
+The new `workflow_stage_runs` table provides an ordered, auditable run history per order. Each run records the stage key, configured/executed actions, status, executor, start and completion times, and a bounded error detail when a run fails. Successful executions use the existing hardened services: status changes go through the order state machine, completion updates are bounded to 0–100, email uses a configured Email Template Center template, dashboard alerts use the deduplicated system-alert writer, and webhooks queue through the existing webhook delivery log with order context. The selected endpoint is validated as enabled at save time and immediately before queueing.
+
+### Validation and deployment
+
+TypeScript validation passed with 0 errors. The complete suite passed with 150 automated tests. Production client and server builds completed successfully. Migration `0027_workflow_stage_actions.sql` was applied before the new server began serving traffic. Client assets and the server bundle were rotated with timestamped rollback copies. The initial health probes ran before Node completed startup, then the direct production health endpoint returned `{"status":"ok"}`.
+
+### Follow-up
+
+The enlarged workflow automation release and complete session record will be committed and published to the private ReadyPackets repository. The production release marker will be updated after publication.
