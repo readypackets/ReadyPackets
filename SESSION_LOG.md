@@ -2535,3 +2535,14 @@ Validation passed before deployment: `pnpm run typecheck`, `pnpm test` (155/155 
 **Validation:** TypeScript and server bundle generation passed. Production validation will requeue one failed WebM transfer; only after success will the remaining failed audio records be requeued.
 
 **Requested user prompt:** “I was successfully able to manually upload the file.”
+
+
+## 2026-08-14 — SharePoint WebM staging-and-rename Graph compatibility fallback
+
+**Additional production evidence:** The explicit Graph file-item creation attempt for the final `.webm` name returned a Microsoft Graph `generalException` HTTP 500, while the administrator successfully uploaded the identical WebM files manually into the identical SharePoint folder. This isolates the incompatibility to the app-only Graph operation applied directly to the final WebM filename, not to the recording, file policy, destination, or customer order state.
+
+**Correction:** Small WebM synchronizations now create a unique neutral `.bin` drive item, upload the unchanged verified WebM byte stream with `audio/webm`, and then rename the completed drive item to its original audit-prefixed `.webm` name. The temporary object name is generated with a cryptographically random UUID and is cleaned up best-effort if content transfer or rename fails. The final SharePoint artifact retains the original WebM bytes and exact ReadyPackets permanent filename. Non-WebM document transfers retain the existing direct path; larger files retain resumable Graph sessions.
+
+**Validation:** TypeScript and server bundle generation passed. Production validation will retry one failed WebM first; remaining failed recordings will only be requeued after this exact staged upload completes successfully.
+
+**Requested user prompt:** “I was successfully able to manually upload the file.”

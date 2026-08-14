@@ -15,6 +15,7 @@
  * correct model for a server-side service acting on behalf of the organisation
  * rather than on behalf of an individual user.
  */
+import { randomUUID } from "node:crypto";
 import { and, eq, isNull, lte, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
@@ -500,10 +501,36 @@ async function createSharePointFileItem(
   throw new Error(`SharePoint file-item creation failed (${createResponse.status}): ${text.slice(0, 500)}`);
 }
 
+async function renameSharePointFileItem(driveId: string, itemId: string, fileName: string, token: string): Promise<string> {
+  const response = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ name: fileName }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`SharePoint WebM final rename failed (${response.status}): ${text.slice(0, 500)}`);
+  }
+  const renamed = (await response.json()) as GraphUploadResult;
+  if (!renamed.id) throw new Error("Microsoft Graph renamed the WebM file without returning its item ID.");
+  return renamed.id;
+}
+
+async function deleteSharePointFileItem(driveId: string, itemId: string, token: string): Promise<void> {
+  try {
+    await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    // A failed cleanup must not obscure the primary upload or rename diagnostic.
+  }
+}
+
 async function uploadBinaryFile(folderId: string, fileName: string, content: Buffer, contentType: string): Promise<string> {
-  // WebM recordings work in the SharePoint browser and the library accepts their
-  // names. Use the same two-step drive-item then content-stream contract instead
-  // of Graph's shorthand parent-path content route, which returned invalidRequest.
+  // The SharePoint browser accepts the exact WebM name, but app-only Graph rejects
+  // a direct item creation for it. Stage its content under a unique neutral name,
+  // then rename the completed drive item to the unchanged original WebM filename.
   const resolvedContentType = contentType || "application/octet-stream";
   const simpleUploadLimit = 4 * 1024 * 1024;
   if (content.byteLength > simpleUploadLimit) return uploadBinaryViaSession(folderId, fileName, content, resolvedContentType);
@@ -511,20 +538,27 @@ async function uploadBinaryFile(folderId: string, fileName: string, content: Buf
   const { driveId } = await getGraphRuntimeConfig();
   if (!driveId) throw new Error("GRAPH_SHAREPOINT_DRIVE_ID must be set.");
   const token = await getGraphToken();
-  const fileItemId = await createSharePointFileItem(driveId, folderId, fileName, token);
-  const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${fileItemId}/content`;
-  const response = await fetch(url, {
-    method: "PUT",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": resolvedContentType, "Content-Length": String(content.byteLength) },
-    body: content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength) as ArrayBuffer,
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`SharePoint file-content update failed (${response.status}): ${text.slice(0, 500)}`);
+  const stageWebm = /\.webm$/i.test(fileName);
+  const uploadName = stageWebm ? `rp-upload-${randomUUID()}.bin` : fileName;
+  const fileItemId = await createSharePointFileItem(driveId, folderId, uploadName, token);
+  try {
+    const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${fileItemId}/content`;
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": resolvedContentType, "Content-Length": String(content.byteLength) },
+      body: content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength) as ArrayBuffer,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`SharePoint file-content update failed (${response.status}): ${text.slice(0, 500)}`);
+    }
+    const uploaded = (await response.json()) as GraphUploadResult;
+    if (!uploaded.id) throw new Error("Microsoft Graph did not return a SharePoint item ID after upload.");
+    return stageWebm ? await renameSharePointFileItem(driveId, uploaded.id, fileName, token) : uploaded.id;
+  } catch (error) {
+    if (stageWebm) await deleteSharePointFileItem(driveId, fileItemId, token);
+    throw error;
   }
-  const data = (await response.json()) as GraphUploadResult;
-  if (!data.id) throw new Error("Microsoft Graph did not return a SharePoint item ID after upload.");
-  return data.id;
 }
 
 type WorkflowSharePointStage = { key?: unknown; sharePointDestination?: unknown; sharePointAudioDestination?: unknown };
