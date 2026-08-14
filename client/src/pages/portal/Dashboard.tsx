@@ -221,14 +221,16 @@ export function PortalDashboard() {
 
       {(announcements.data ?? []).length > 0 ? <Card className="mb-6 border-teal/30"><CardHeader title="Announcements" description="Updates from the ReadyPackets team." /> <div className="mt-4 space-y-3">{(announcements.data ?? []).map((announcement) => <div key={announcement.id} className="rounded-lg border border-line bg-surface-soft p-3"><p className="font-medium text-ink">{announcement.title}</p><p className="mt-1 whitespace-pre-wrap text-sm text-body">{announcement.bodyMarkdown}</p></div>)}</div></Card> : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4">
         {summary.isLoading ? (
-          Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-24 w-full" />)
+          Array.from({ length: 8 }, (_, index) => <Skeleton key={index} className="h-24 w-full" />)
         ) : (
           <>
             <Link href="/portal/orders" className="no-underline"><StatTile label="Active orders" value={summary.data?.active ?? 0} icon={ClipboardList} tone="teal" /></Link>
             <Link href="/portal/files" className="no-underline"><StatTile label="Delivered" value={summary.data?.delivered ?? 0} icon={FileCheck2} tone="success" /></Link>
             <Link href="/portal/orders" className="no-underline"><StatTile label="Awaiting payment" value={summary.data?.awaitingPayment ?? 0} icon={MailCheck} tone="warning" /></Link>
+            <Link href="/portal/orders" className="no-underline"><StatTile label="Awaiting team review" value={summary.data?.awaitingTeamReview ?? 0} icon={ClipboardList} tone="warning" hint="Submitted phases being reviewed" /></Link>
+            <Link href="/portal/orders" className="no-underline"><StatTile label="Your action required" value={summary.data?.awaitingYourResponse ?? 0} icon={ClipboardList} tone="teal" hint="Open order questions" /></Link>
             <Link href="/portal/tickets" className="no-underline"><StatTile label="Support replies" value={tickets.data ?? 0} icon={Inbox} tone="navy" /></Link>
             <Link href="/portal/messages" className="no-underline"><StatTile label="Order messages" value={orderMessages.data?.count ?? 0} icon={MessageSquare} tone="teal" hint={(orderMessages.data?.count ?? 0) > 0 ? "Open Message center" : "All caught up"} /></Link>
             <Link href="/portal/referrals" className="no-underline"><StatTile label="Referral rewards" value={formatMoney(referralStats.data?.totalRewardCents ?? 0)} icon={Gift} tone="gold" hint={`${referralStats.data?.total ?? 0} referral(s)`} /></Link>
@@ -283,6 +285,8 @@ export function PortalDashboard() {
                             {order.statusLabel ?? STATUS_LABELS[order.status] ?? order.status}
                           </Badge>
                           {order.bundleApplied ? <Badge tone="gold">Bundle</Badge> : null}
+                          {order.attention?.state === "awaiting_staff_review" ? <Badge tone="warning">Team review pending</Badge> : null}
+                          {order.attention?.state === "awaiting_customer_response" ? <Badge tone="teal">Your response required</Badge> : null}
                         </div>
                         <p className="mt-1.5 truncate text-sm font-medium text-ink group-hover:text-teal-dark">
                           {order.projectName ?? "Untitled project"}

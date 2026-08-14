@@ -273,9 +273,22 @@ interface AdminOrderRow {
   projectName: string | null;
   createdAt: string | Date;
   dueAt: string | Date | null;
+  attention: { state: "awaiting_staff_review" | "awaiting_customer_response" | "none"; phaseKey: string | null; occurredAt: string | Date | null };
 }
 
-/** Grid card with inline status transition and completion % editing. */
+function adminAttentionLabel(attention: AdminOrderRow["attention"]) {
+  if (attention.state === "awaiting_staff_review") return "Customer submission awaiting review";
+  if (attention.state === "awaiting_customer_response") return "Awaiting customer response";
+  return "No action required";
+}
+
+function adminAttentionTone(attention: AdminOrderRow["attention"]): "warning" | "teal" | "neutral" {
+  if (attention.state === "awaiting_staff_review") return "warning";
+  if (attention.state === "awaiting_customer_response") return "teal";
+  return "neutral";
+}
+
+/** Grid card with inline completion editing; lifecycle status changes stay in the audited order workspace control. */
 function InlineOrderCard({
   order,
   onUpdated,
@@ -298,25 +311,11 @@ function InlineOrderCard({
     },
   });
 
-  const transitionMut = trpc.admin.transitionOrder.useMutation({
-    onSuccess() {
-      toast.success("Status updated");
-      onUpdated();
-    },
-    onError(err) {
-      toast.error("Transition failed", errorMessage(err));
-    },
-  });
-
-  const transitions = ORDER_TRANSITIONS[order.status as keyof typeof ORDER_TRANSITIONS] ?? [];
-
   return (
     <Card className="flex flex-col gap-3 p-4">
       <div className="flex items-start justify-between gap-2">
         <span className="font-mono text-xs font-semibold text-muted">{order.orderNumber}</span>
-        <Badge tone={STATUS_TONES[order.status] ?? "neutral"} className="shrink-0">
-          {STATUS_LABELS[order.status] ?? order.status}
-        </Badge>
+        <div className="flex flex-wrap justify-end gap-1"><Badge tone={STATUS_TONES[order.status] ?? "neutral"} className="shrink-0">{STATUS_LABELS[order.status] ?? order.status}</Badge>{order.attention.state !== "none" ? <Badge tone={adminAttentionTone(order.attention)}>{order.attention.state === "awaiting_staff_review" ? "Review needed" : "Customer action"}</Badge> : null}</div>
       </div>
 
       <div>
@@ -373,23 +372,6 @@ function InlineOrderCard({
         )}
       </div>
 
-      {/* Status transitions */}
-      {transitions.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {transitions.map((to) => (
-            <button
-              key={to}
-              type="button"
-              disabled={transitionMut.isPending}
-              className="rounded border border-line px-2 py-0.5 text-xs text-muted hover:border-teal hover:text-teal disabled:opacity-50"
-              onClick={() => transitionMut.mutate({ orderId: order.id, to: to as never })}
-            >
-              → {STATUS_LABELS[to] ?? to}
-            </button>
-          ))}
-        </div>
-      )}
-
       <div className="flex items-center justify-between border-t border-line pt-2">
         <Badge tone={PAYMENT_TONES[order.paymentStatus] ?? "neutral"}>
           {PAYMENT_LABELS[order.paymentStatus] ?? order.paymentStatus}
@@ -415,7 +397,9 @@ export function AdminOrdersPage() {
   const utils = trpc.useUtils();
   const [params] = useSearchParams();
   const statusParam = params.get("status") ?? "";
+  const attentionParam = params.get("attention") ?? "";
   const [status, setStatus] = useState(statusParam);
+  const [attention, setAttention] = useState(attentionParam);
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [createOpen, setCreateOpen] = useState(false);
@@ -424,6 +408,7 @@ export function AdminOrdersPage() {
 
   const orders = trpc.admin.orders.useQuery({
     status: status || undefined,
+    attention: attention === "awaiting_staff_review" || attention === "awaiting_customer_response" ? attention : undefined,
     limit: 200,
     offset: 0,
   });
@@ -485,6 +470,12 @@ export function AdminOrdersPage() {
           <ProgressBar value={order.completionPercent} className="w-24" />
         </div>
       ),
+    },
+    {
+      key: "attention",
+      header: "Next action",
+      hideOnMobile: true,
+      cell: (order) => order.attention.state === "none" ? <span className="text-xs text-muted">No action</span> : <Link href={`/admin/orders/${order.id}`} className="no-underline"><Badge tone={adminAttentionTone(order.attention)}>{adminAttentionLabel(order.attention)}</Badge></Link>,
     },
     {
       key: "payment",
@@ -589,6 +580,18 @@ export function AdminOrdersPage() {
               options={[
                 { value: "", label: "All statuses" },
                 ...(configuredStatuses.data ?? []).filter((option) => option.active).map((option) => ({ value: option.key, label: option.label })),
+              ]}
+            />
+          </div>
+          <div className="w-56">
+            <Select
+              label="Next action"
+              value={attention}
+              onChange={(event) => setAttention(event.target.value)}
+              options={[
+                { value: "", label: "All response states" },
+                { value: "awaiting_staff_review", label: "Customer submission awaiting review" },
+                { value: "awaiting_customer_response", label: "Awaiting customer response" },
               ]}
             />
           </div>
@@ -901,6 +904,11 @@ export function AdminOrderDetailPage() {
     }
   };
 
+  const reviewWorkflowPhase = trpc.admin.reviewWorkflowPhase.useMutation({
+    async onSuccess() { await refetchAll(); toast.success("Customer submission reviewed", "The order no longer appears in the staff review queue."); },
+    onError(error) { toast.error("Could not mark the submission reviewed", errorMessage(error)); },
+  });
+
   const unlockWorkflowPhase = trpc.admin.unlockWorkflowPhase.useMutation({
     async onSuccess() {
       setUnlockTarget(null);
@@ -992,7 +1000,7 @@ export function AdminOrderDetailPage() {
       <TabStrip
         tabs={[
           { id: "overview", label: "Overview" },
-          ...(intakeSubmission || (files.data ?? []).some((file) => file.category === "intake_attachment") ? [{ id: "intake", label: "Phase I record" }] : []),
+          ...(intakeSubmission?.status === "submitted" || (files.data ?? []).some((file) => file.category === "intake_attachment") ? [{ id: "intake", label: "Phase I record" }] : []),
           { id: "notes", label: `Notes (${notes.length})` },
                     { id: "questions", label: `Questions (${questions.length})` },
           { id: "files", label: `Files (${attachments.length})` },
@@ -1022,8 +1030,8 @@ export function AdminOrderDetailPage() {
             <div className="space-y-6">
               <Card>
                 <CardHeader
-                  title="Advance the order"
-                  description="Only transitions permitted by the lifecycle are offered."
+                  title="Manage lifecycle status"
+                  description="Use this controlled exception tool to change the business lifecycle status. Assigned workflow phases advance through customer submissions and staff review, not this form."
                 />
                 {allowedNext.length === 0 ? (
                   <Alert tone="info" className="mt-4">
@@ -1061,7 +1069,7 @@ export function AdminOrderDetailPage() {
                         })
                       }
                     >
-                      Apply transition
+                      Apply status change
                     </Button>
                   </div>
                 )}
@@ -1440,8 +1448,8 @@ export function AdminOrderDetailPage() {
 
         {tab === "phase-locks" ? (
           <Card>
-            <CardHeader title="Workflow phase locks" description="Customer submissions lock their own files, recordings, and answers. Unlocking is an administrator-only, audited action." />
-            {(phaseLocks.data ?? []).length === 0 ? <p className="mt-4 text-sm text-muted">No workflow phases have been submitted yet.</p> : <div className="mt-4 space-y-3">{(phaseLocks.data ?? []).map((lock) => <div key={lock.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line p-4"><div><p className="font-medium text-ink">{lock.phaseKey.replaceAll("_", " ")}</p><p className="mt-1 text-xs text-muted">Submitted {formatDateTime(lock.lockedAt)}{lock.unlockedAt ? ` · Unlocked ${formatDateTime(lock.unlockedAt)}` : " · Customer changes are locked"}</p>{lock.unlockReason ? <p className="mt-1 text-xs text-muted">Unlock reason: {lock.unlockReason}</p> : null}</div>{!lock.unlockedAt ? <Button variant="danger" size="sm" disabled={!session.isAdmin} onClick={() => { setUnlockTarget({ phaseKey: lock.phaseKey }); setUnlockReason(""); setUnlockConfirmation(""); }}>Unlock phase</Button> : <Badge tone="success">Unlocked</Badge>}</div>)}</div>}
+            <CardHeader title="Workflow phase review" description="Customer submissions remain locked after submission. Mark a phase reviewed to clear the staff review queue; unlock only when the customer must make changes." />
+            {(phaseLocks.data ?? []).length === 0 ? <p className="mt-4 text-sm text-muted">No workflow phases have been submitted yet.</p> : <div className="mt-4 space-y-3">{(phaseLocks.data ?? []).map((lock) => <div key={lock.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line p-4"><div><p className="font-medium text-ink">{lock.phaseKey.replaceAll("_", " ")}</p><p className="mt-1 text-xs text-muted">Submitted {formatDateTime(lock.lockedAt)}{lock.unlockedAt ? ` · Unlocked ${formatDateTime(lock.unlockedAt)}` : " · Customer changes are locked"}</p>{lock.reviewedAt ? <p className="mt-1 text-xs text-success">Reviewed {formatDateTime(lock.reviewedAt)}</p> : !lock.unlockedAt ? <p className="mt-1 text-xs font-medium text-warning">Awaiting staff review</p> : null}{lock.unlockReason ? <p className="mt-1 text-xs text-muted">Unlock reason: {lock.unlockReason}</p> : null}</div>{!lock.unlockedAt ? <div className="flex flex-wrap gap-2">{!lock.reviewedAt ? <Button variant="primary" size="sm" busy={reviewWorkflowPhase.isPending} onClick={() => reviewWorkflowPhase.mutate({ orderId, phaseKey: lock.phaseKey })}>Mark reviewed</Button> : <Badge tone="success">Reviewed</Badge>}{session.isAdmin ? <Button variant="danger" size="sm" onClick={() => { setUnlockTarget({ phaseKey: lock.phaseKey }); setUnlockReason(""); setUnlockConfirmation(""); }}>Unlock phase</Button> : null}</div> : <Badge tone="success">Unlocked</Badge>}</div>)}</div>}
           </Card>
         ) : null}
 

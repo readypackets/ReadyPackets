@@ -14,6 +14,7 @@ import {
   mndaAcceptances,
   orderItems,
   orderPhaseLocks,
+  orderQuestions,
   orderWorkflows,
   workflowStageRuns,
   orderAutomationRules,
@@ -647,6 +648,46 @@ export async function enqueuePhaseJobs(orderId: number, phase: OrderStatus): Pro
   logger.info("Queued phase kickoff jobs", { orderId, phase, count: jobs.length });
 }
 
+export type OrderAttentionState = "awaiting_staff_review" | "awaiting_customer_response" | "none";
+
+export interface OrderAttention {
+  state: OrderAttentionState;
+  phaseKey: string | null;
+  occurredAt: Date | null;
+}
+
+/**
+ * Resolves the next response owner for orders without inferring it from the
+ * lifecycle label. A customer phase becomes a staff-review item only after the
+ * customer explicitly submits and locks it; an open staff question becomes a
+ * customer-action item. Staff-review takes precedence because it is a newly
+ * submitted customer artifact requiring acknowledgement.
+ */
+export async function getOrderAttentionStates(orderIds: number[]): Promise<Map<number, OrderAttention>> {
+  const result = new Map<number, OrderAttention>();
+  if (orderIds.length === 0) return result;
+  const [submittedPhases, openQuestions] = await Promise.all([
+    db
+      .select({ orderId: orderPhaseLocks.orderId, phaseKey: orderPhaseLocks.phaseKey, occurredAt: orderPhaseLocks.lockedAt })
+      .from(orderPhaseLocks)
+      .where(and(inArray(orderPhaseLocks.orderId, orderIds), isNull(orderPhaseLocks.unlockedAt), isNull(orderPhaseLocks.reviewedAt)))
+      .orderBy(desc(orderPhaseLocks.lockedAt)),
+    db
+      .select({ orderId: orderQuestions.orderId, phaseKey: orderQuestions.phase, occurredAt: orderQuestions.createdAt })
+      .from(orderQuestions)
+      .where(and(inArray(orderQuestions.orderId, orderIds), eq(orderQuestions.status, "open")))
+      .orderBy(desc(orderQuestions.createdAt)),
+  ]);
+
+  for (const phase of submittedPhases) {
+    if (!result.has(phase.orderId)) result.set(phase.orderId, { state: "awaiting_staff_review", phaseKey: phase.phaseKey, occurredAt: phase.occurredAt });
+  }
+  for (const question of openQuestions) {
+    if (!result.has(question.orderId)) result.set(question.orderId, { state: "awaiting_customer_response", phaseKey: question.phaseKey, occurredAt: question.occurredAt });
+  }
+  return result;
+}
+
 export interface OrderSummary {
   id: number;
   orderNumber: string;
@@ -664,6 +705,7 @@ export interface OrderSummary {
   itemCount: number;
   currentPhaseKey: string | null;
   currentPhaseLabel: string | null;
+  attention: OrderAttention;
 }
 
 export async function listOrdersForUser(userId: number): Promise<OrderSummary[]> {
@@ -701,6 +743,7 @@ export async function listOrdersForUser(userId: number): Promise<OrderSummary[]>
     ? await db.select({ id: orderWorkflows.id, stages: orderWorkflows.stages }).from(orderWorkflows).where(inArray(orderWorkflows.id, workflowIds))
     : [];
   const workflowMap = new Map(workflowRows.map((workflow) => [workflow.id, normalizeCustomerWorkflowStages(workflow.stages)]));
+  const attentionByOrder = await getOrderAttentionStates(rows.map((row) => row.id));
   const phaseLocks = await db
     .select({ orderId: orderPhaseLocks.orderId, phaseKey: orderPhaseLocks.phaseKey })
     .from(orderPhaseLocks)
@@ -733,6 +776,7 @@ export async function listOrdersForUser(userId: number): Promise<OrderSummary[]>
     itemCount: countMap.get(row.id) ?? 0,
     currentPhaseKey: currentStage?.key ?? null,
     currentPhaseLabel: currentStage?.label ?? null,
+    attention: attentionByOrder.get(row.id) ?? { state: "none", phaseKey: null, occurredAt: null },
   };
   });
 }

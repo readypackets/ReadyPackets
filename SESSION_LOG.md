@@ -2414,3 +2414,22 @@ The requested release covered seven connected portal improvements:
 
 
 **Publication:** The release was committed and pushed as `d11701ae533e1fad617f22d1f8e0c0770d5c8649` (`feat: add unified order message center`). Production health returned `{"status":"ok"}` after deployment, and `/opt/readypackets/RELEASE_COMMIT` was updated to the same feature commit. The final client rollback copy is `/opt/readypackets/rollback-20260814005026-message-center-final-client`.
+
+
+### Order response-owner visibility and workspace-control release
+
+The order queue, dashboards, and customer order list now distinguish a lifecycle/payment state from the next person who must act. A submitted and still-unreviewed customer workflow phase is represented as `awaiting_staff_review`; it appears to administrators and staff as **Customer submission awaiting review** and to customers as **Team review pending**. A staff-created open order question is represented as `awaiting_customer_response`; it appears to staff as **Awaiting customer response** and to customers as **Your response required**. This response-owner calculation is server-side and does not infer workflow action from percentage, order status, or payment status.
+
+Administrators can filter the Order queue by either response state. The Operations dashboard adds clickable order-alert queues for customer submissions awaiting staff review and customer responses awaiting action. The customer dashboard adds distinct **Awaiting team review** and **Your action required** cards, and the customer order list adds a **Next action** column. Recent-order cards also display the matching response-owner badge.
+
+Migration `0036_order_phase_review_queue.sql` adds audited `reviewed_at` and `reviewed_by_user_id` fields to `order_phase_locks`. Staff may now use **Mark reviewed** in the administrator order workspace’s **Workflow phase review** tab to acknowledge a submitted phase and clear the staff-review queue. The phase remains locked unless an administrator separately performs the existing typed-confirmation unlock action.
+
+The administrator **Advance the order** control was retained only as an explicit lifecycle exception tool and renamed **Manage lifecycle status**. It now states that normal workflow movement comes from customer submissions and staff review; inline queue-card status-advance buttons were removed to avoid bypassing this distinction. The legacy administrator Intake tab was further narrowed to **Phase I record** and now appears only when a legacy submitted intake or intake attachment exists. Empty/new orders rely on the MNDA, assigned workflow, Questions, Files, and Workflow phase review surfaces instead.
+
+Validation passed before deployment: `pnpm run typecheck`, `pnpm test` (155/155 tests), `pnpm run build:client`, `pnpm run build:server`, and `git diff --check`. The production migration was applied and verified with `reviewed_at` present on `order_phase_locks`; live health returned `{"status":"ok"}`. Rollback material is retained at `/opt/readypackets/rollback-20260814013346-order-attention`.
+
+#### Request received
+
+1. Administrators should see customer submissions awaiting a response in order lists and dashboards, while customers should see the corresponding state on their dashboard and order list.
+2. Assess whether the administrator Advance the order control remains needed.
+3. Assess whether the administrator Phase 1 Intake tab remains needed.

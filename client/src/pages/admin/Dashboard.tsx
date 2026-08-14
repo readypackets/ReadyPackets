@@ -218,13 +218,15 @@ export function AdminDashboard() {
           <Card>
             <CardHeader
               title={<span className="flex items-center gap-2"><ShieldAlert className="size-4 text-warning" aria-hidden="true" />Order alerts</span>}
-              description="Orders needing payment, schedule, or delivery attention."
+              description="Orders needing payment, schedule, delivery, customer response, or staff review attention."
               actions={<LinkButton href="/admin/orders" size="sm" variant="outline">Review orders</LinkButton>}
             />
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
               <div className="rounded-lg border border-line p-3"><p className="text-xs text-muted">Failed payments</p><p className={`mt-1 text-2xl font-semibold tabular-nums ${((stats?.orderAlerts?.failedPayments ?? 0) > 0) ? "text-danger" : "text-ink"}`}>{stats?.orderAlerts?.failedPayments ?? 0}</p></div>
               <div className="rounded-lg border border-line p-3"><p className="text-xs text-muted">Overdue orders</p><p className={`mt-1 text-2xl font-semibold tabular-nums ${((stats?.orderAlerts?.overdue ?? 0) > 0) ? "text-warning" : "text-ink"}`}>{stats?.orderAlerts?.overdue ?? 0}</p></div>
               <div className="rounded-lg border border-line p-3"><p className="text-xs text-muted">Awaiting payment</p><p className={`mt-1 text-2xl font-semibold tabular-nums ${((stats?.orderAlerts?.awaitingPayment ?? 0) > 0) ? "text-warning" : "text-ink"}`}>{stats?.orderAlerts?.awaitingPayment ?? 0}</p></div>
+              <Link href="/admin/orders?attention=awaiting_staff_review" className="rounded-lg border border-line p-3 no-underline transition-colors hover:border-warning/50 hover:bg-warning/5"><p className="text-xs text-muted">Customer submissions</p><p className={`mt-1 text-2xl font-semibold tabular-nums ${((stats?.orderAlerts?.awaitingStaffReview ?? 0) > 0) ? "text-warning" : "text-ink"}`}>{stats?.orderAlerts?.awaitingStaffReview ?? 0}</p><p className="mt-1 text-xs text-muted">Awaiting staff review</p></Link>
+              <Link href="/admin/orders?attention=awaiting_customer_response" className="rounded-lg border border-line p-3 no-underline transition-colors hover:border-teal/50 hover:bg-teal/5"><p className="text-xs text-muted">Customer responses</p><p className={`mt-1 text-2xl font-semibold tabular-nums ${((stats?.orderAlerts?.awaitingCustomerResponse ?? 0) > 0) ? "text-teal-dark" : "text-ink"}`}>{stats?.orderAlerts?.awaitingCustomerResponse ?? 0}</p><p className="mt-1 text-xs text-muted">Awaiting customer action</p></Link>
             </div>
             {orderAlertTotal === 0 ? <p className="mt-3 text-sm text-muted">No active order alerts.</p> : null}
           </Card>

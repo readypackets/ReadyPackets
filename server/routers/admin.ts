@@ -73,6 +73,7 @@ import {
   OrderStateError,
   createOrder,
   applyOrderAutomationRules,
+  getOrderAttentionStates,
   getOrderStats,
   runWorkflowStageActions,
   transitionOrder,
@@ -193,7 +194,7 @@ export const adminRouter = router({
   /* ---------------------------------------------------------------- */
 
   dashboard: staffProcedure.query(async () => {
-    const [orderStats, customerCount, openTickets, pendingReviews, newMessages, failedPayments, overdueOrders, pendingPaymentOrders] =
+    const [orderStats, customerCount, openTickets, pendingReviews, newMessages, failedPayments, overdueOrders, pendingPaymentOrders, activeOrderRows] =
       await Promise.all([
         getOrderStats(),
         db
@@ -209,7 +210,11 @@ export const adminRouter = router({
         db.select({ total: count() }).from(orders).where(and(isNull(orders.deletedAt), eq(orders.paymentStatus, "failed"))),
         db.select({ total: count() }).from(orders).where(and(isNull(orders.deletedAt), lte(orders.dueAt, new Date()), sql`${orders.status} NOT IN ('delivered', 'closed')`)),
         db.select({ total: count() }).from(orders).where(and(isNull(orders.deletedAt), inArray(orders.paymentStatus, ["unpaid", "processing", "awaiting_invoice"]))),
+        db.select({ id: orders.id }).from(orders).where(isNull(orders.deletedAt)),
       ]);
+    const attentionByOrder = await getOrderAttentionStates(activeOrderRows.map((row) => row.id));
+    const awaitingStaffReview = [...attentionByOrder.values()].filter((attention) => attention.state === "awaiting_staff_review").length;
+    const awaitingCustomerResponse = [...attentionByOrder.values()].filter((attention) => attention.state === "awaiting_customer_response").length;
 
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const [signupTrend, orderTrend, revenueTrend] = await Promise.all([
@@ -250,6 +255,8 @@ export const adminRouter = router({
         failedPayments: Number(failedPayments[0]?.total ?? 0),
         overdue: Number(overdueOrders[0]?.total ?? 0),
         awaitingPayment: Number(pendingPaymentOrders[0]?.total ?? 0),
+        awaitingStaffReview,
+        awaitingCustomerResponse,
       },
       signupTrend: signupTrend.map((row) => ({ day: row.day, total: Number(row.total) })),
       orderTrend: orderTrend.map((row) => ({ day: row.day, total: Number(row.total) })),
@@ -333,6 +340,10 @@ export const adminRouter = router({
             (value) => (value === "" || value === "all" || value == null ? undefined : value),
             z.string().trim().min(2).max(32).optional(),
           ),
+          attention: z.preprocess(
+            (value) => (value === "" || value === "all" || value == null ? undefined : value),
+            z.enum(["awaiting_staff_review", "awaiting_customer_response"]).optional(),
+          ),
           limit: z.number().int().min(1).max(200).default(50),
           offset: z.number().int().min(0).default(0),
         })
@@ -368,7 +379,8 @@ export const adminRouter = router({
         customerNames.set(userId, user ? displayNameOf(user) : "Deleted customer");
       }
 
-      return rows.map((row) => ({
+      const attentionByOrder = await getOrderAttentionStates(rows.map((row) => row.id));
+      const result = rows.map((row) => ({
         id: row.id,
         orderNumber: row.orderNumber,
         customer: customerNames.get(row.userId) ?? "Unknown",
@@ -381,7 +393,9 @@ export const adminRouter = router({
         projectName: decryptField(row.projectNameEnc, `order:${row.id}`),
         createdAt: row.createdAt,
         dueAt: row.dueAt,
+        attention: attentionByOrder.get(row.id) ?? { state: "none" as const, phaseKey: null, occurredAt: null },
       }));
+      return input?.attention ? result.filter((row) => row.attention.state === input.attention) : result;
     }),
 
   trashedOrders: adminProcedure
@@ -1363,6 +1377,30 @@ export const adminRouter = router({
       const conditions = [eq(orderPhaseLocks.orderId, input.orderId)];
       if (!input.includeUnlocked) conditions.push(isNull(orderPhaseLocks.unlockedAt));
       return db.select().from(orderPhaseLocks).where(and(...conditions)).orderBy(desc(orderPhaseLocks.lockedAt));
+    }),
+
+  reviewWorkflowPhase: staffProcedure
+    .input(z.object({ orderId: z.number().int().positive(), phaseKey: z.string().trim().regex(/^[a-z0-9_]+$/).max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      const lockRows = await db
+        .select({ id: orderPhaseLocks.id })
+        .from(orderPhaseLocks)
+        .where(and(eq(orderPhaseLocks.orderId, input.orderId), eq(orderPhaseLocks.phaseKey, input.phaseKey), isNull(orderPhaseLocks.unlockedAt), isNull(orderPhaseLocks.reviewedAt)))
+        .limit(1);
+      const lock = lockRows[0];
+      if (!lock) throw new TRPCError({ code: "NOT_FOUND", message: "An unreviewed submitted workflow phase was not found." });
+      await db.update(orderPhaseLocks).set({ reviewedAt: new Date(), reviewedByUserId: ctx.session.user.id }).where(eq(orderPhaseLocks.id, lock.id));
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: ctx.session.user.role,
+        action: "order.phase_reviewed",
+        entityType: "order",
+        entityId: input.orderId,
+        summary: `Staff reviewed submitted workflow phase ${input.phaseKey}`,
+        changes: { phaseKey: input.phaseKey },
+        ipAddress: ctx.clientIp,
+      });
+      return { ok: true as const };
     }),
 
   unlockWorkflowPhase: adminProcedure

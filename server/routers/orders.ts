@@ -630,11 +630,7 @@ export const ordersRouter = router({
 
   /** Dashboard counters for the portal landing page. */
   summary: protectedProcedure.query(async ({ ctx }) => {
-    const rows = await db
-      .select({ status: orders.status, paymentStatus: orders.paymentStatus })
-      .from(orders)
-      .where(and(eq(orders.userId, ctx.session.user.id), isNull(orders.deletedAt)));
-
+    const rows = await listOrdersForUser(ctx.session.user.id);
     const active = rows.filter(
       (row) => !["delivered", "closed", "cancelled", "refunded"].includes(row.status),
     ).length;
@@ -643,7 +639,9 @@ export const ordersRouter = router({
     const awaitingPayment = rows.filter(
       (row) => row.paymentStatus === "unpaid" || row.paymentStatus === "awaiting_invoice",
     ).length;
+    const awaitingTeamReview = rows.filter((row) => row.attention.state === "awaiting_staff_review").length;
+    const awaitingYourResponse = rows.filter((row) => row.attention.state === "awaiting_customer_response").length;
 
-    return { total: rows.length, active, delivered, awaitingPayment };
+    return { total: rows.length, active, delivered, awaitingPayment, awaitingTeamReview, awaitingYourResponse };
   }),
 });

@@ -1525,6 +1525,8 @@ export const orderPhaseLocks = mysqlTable(
     acknowledgementText: text("acknowledgement_text").notNull(),
     lockedByUserId: int("locked_by_user_id").notNull(),
     lockedAt: timestamp("locked_at").notNull().defaultNow(),
+    reviewedAt: timestamp("reviewed_at"),
+    reviewedByUserId: int("reviewed_by_user_id"),
     unlockedByUserId: int("unlocked_by_user_id"),
     unlockedAt: timestamp("unlocked_at"),
     unlockReason: varchar("unlock_reason", { length: 1000 }),
@@ -1532,6 +1534,7 @@ export const orderPhaseLocks = mysqlTable(
   (table) => ({
     orderPhaseUnique: uniqueIndex("order_phase_locks_order_phase_unique").on(table.orderId, table.phaseKey),
     activeLockIdx: index("order_phase_locks_active_idx").on(table.orderId, table.unlockedAt),
+    reviewQueueIdx: index("order_phase_locks_review_queue_idx").on(table.orderId, table.unlockedAt, table.reviewedAt),
   }),
 );
 

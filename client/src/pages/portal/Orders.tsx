@@ -50,6 +50,19 @@ interface OrderRow {
   itemCount: number;
   currentPhaseKey: string | null;
   currentPhaseLabel: string | null;
+  attention: { state: "awaiting_staff_review" | "awaiting_customer_response" | "none"; phaseKey: string | null; occurredAt: string | Date | null };
+}
+
+function customerAttentionLabel(attention: OrderRow["attention"]) {
+  if (attention.state === "awaiting_staff_review") return "Team review pending";
+  if (attention.state === "awaiting_customer_response") return "Your response required";
+  return "No action required";
+}
+
+function customerAttentionTone(attention: OrderRow["attention"]): "warning" | "teal" | "neutral" {
+  if (attention.state === "awaiting_staff_review") return "warning";
+  if (attention.state === "awaiting_customer_response") return "teal";
+  return "neutral";
 }
 
 export function OrdersListPage() {
@@ -84,7 +97,7 @@ export function OrdersListPage() {
             {order.projectName ?? "Untitled project"}
           </p>
           <p className="mt-0.5 text-xs text-muted sm:hidden">
-            {orderStatusLabel(order)} · {order.currentPhaseLabel ?? "Workflow not assigned"} · {order.completionPercent}% complete · {formatMoney(order.totalCents)}
+            {orderStatusLabel(order)} · {order.currentPhaseLabel ?? "Workflow not assigned"} · {order.attention.state !== "none" ? `${customerAttentionLabel(order.attention)} · ` : ""}{order.completionPercent}% complete · {formatMoney(order.totalCents)}
           </p>
         </div>
       ),
@@ -106,6 +119,12 @@ export function OrdersListPage() {
       header: "Current phase",
       hideOnMobile: true,
       cell: (order) => <div className="max-w-44"><p className="truncate text-sm font-medium text-ink" title={order.currentPhaseLabel ?? undefined}>{order.currentPhaseLabel ?? "Workflow complete"}</p><p className="mt-0.5 text-xs text-muted">{order.currentPhaseKey ? "Assigned workflow" : "No active phase"}</p></div>,
+    },
+    {
+      key: "attention",
+      header: "Next action",
+      hideOnMobile: true,
+      cell: (order) => order.attention.state === "none" ? <span className="text-xs text-muted">No action</span> : <Link href={`/portal/orders/${order.id}`} className="no-underline"><Badge tone={customerAttentionTone(order.attention)}>{customerAttentionLabel(order.attention)}</Badge></Link>,
     },
     {
       key: "payment",
