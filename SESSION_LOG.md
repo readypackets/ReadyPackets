@@ -2481,3 +2481,16 @@ Validation passed before deployment: `pnpm run typecheck`, `pnpm test` (155/155 
 **Safe operator sequence after deployment:** Enter complete Microsoft Entra Tenant and Application (client) IDs once to replace the currently invalid 11-character values, enter a valid secret value if required, rediscover the site and library, select the ReadyPackets base above `customers`, save, and test the connection. Existing completed folders are preserved; new jobs resolve beneath `<base>/customers/<customer>/orders/<order>/...`.
 
 **Requested user prompt:** “I know that it was working because it created folders for users but int he wrong location. and after ever order sync it truncates the values what other method could i use to keep the information and make sure the files go to the correct location. I selected the customers folder and it created a new customers folder.”
+
+
+## 2026-08-14 — SharePoint Sync Log Center and controlled retry
+
+**User request:** “can there be a log center for synced files with an option for a retry”.
+
+**Observed production evidence:** Phase I document transfers succeeded while WebM recordings created pending sync rows and then failed after five upload attempts. The retained failure message is a Microsoft Graph `invalidRequest` HTTP 400 response for the WebM upload; documents are unaffected. The new operational interface exposes this contrast per file without requiring staff to inspect the database or server journal.
+
+**Implementation:** Added an administrator-only SharePoint Sync Log Center to Admin → Integrations. It lists searchable file-transfer history by order number, filename, or destination path; identifies audio versus document transfers; displays phase, state, attempts, latest update, destination, and retained sanitized error context; and supports paging and status filtering. Retry is permitted only for a failed `file_sync` record whose source file and order still exist. Retrying resets the existing row to pending, clears the previous error, resets its attempt count, and records an administrator audit event. Succeeded, pending, and running rows cannot be retried, preventing duplicate concurrent uploads. Each administrator order workspace now links directly to the filtered log for that order.
+
+**Validation:** TypeScript validation passed. Client and server production bundles passed. The existing repository suite was not used as a release gate because the canonical checkout has known unrelated catalogue/bundle-pricing fixture failures; the changed log-center code compiled successfully and uses the established integrations retry/audit pattern.
+
+**Requested user prompt:** “can there be a log center for synced files with an option for a retry”.

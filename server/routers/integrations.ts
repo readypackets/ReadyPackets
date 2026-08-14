@@ -4,11 +4,14 @@
  * All procedures require at least staff access; destructive operations require admin.
  */
 import { z } from "zod";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, like, or, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   phaseJobs,
   phaseKickoffConfigs,
+  sharepointSyncLog,
+  files,
+  orders,
   webhookDeliveries,
   webhookEndpoints,
 } from "../db/schema.js";
@@ -19,7 +22,6 @@ import { env } from "../config/env.js";
 import { browseSharePointFolders, discoverSharePointConfig, normalizeSharePointRootFolderPath, runPhaseKickoff, resetGraphTokenCache, testSharePointConnection } from "../services/sharepoint.js";
 import { getSetting, setSetting } from "../services/settings.js";
 import { recordActivity } from "../observability/audit.js";
-import { orders } from "../db/schema.js";
 
 export const integrationsRouter = router({
   // =========================================================================
@@ -363,6 +365,108 @@ export const integrationsRouter = router({
         .update(phaseJobs)
         .set({ status: "pending", runAfter: new Date(), lastError: null })
         .where(eq(phaseJobs.id, input.jobId));
+    }),
+
+  // =========================================================================
+  // SharePoint file synchronization log and controlled retry
+  // =========================================================================
+
+  sharepointSyncLogs: staffProcedure
+    .input(z.object({
+      orderId: z.number().int().positive().optional(),
+      status: z.enum(["pending", "running", "succeeded", "failed"]).optional(),
+      search: z.string().trim().max(120).optional(),
+      page: z.number().int().min(1).default(1),
+    }))
+    .query(async ({ input }) => {
+      const offset = (input.page - 1) * 50;
+      const conditions = [eq(sharepointSyncLog.operationType, "file_sync")];
+      if (input.orderId) conditions.push(eq(sharepointSyncLog.orderId, input.orderId));
+      if (input.status) conditions.push(eq(sharepointSyncLog.status, input.status));
+      if (input.search) {
+        const escaped = input.search.replace(/[\\%_]/g, "\\$&");
+        const pattern = `%${escaped}%`;
+        conditions.push(or(
+          like(orders.orderNumber, pattern),
+          like(files.originalName, pattern),
+          like(sharepointSyncLog.sharepointPath, pattern),
+        )!);
+      }
+
+      const where = and(...conditions);
+      const rows = await db
+        .select({
+          id: sharepointSyncLog.id,
+          orderId: sharepointSyncLog.orderId,
+          orderNumber: orders.orderNumber,
+          fileId: sharepointSyncLog.fileId,
+          fileName: files.originalName,
+          detectedMime: files.detectedMime,
+          extension: files.extension,
+          phase: files.phase,
+          status: sharepointSyncLog.status,
+          attempts: sharepointSyncLog.attempts,
+          sharepointPath: sharepointSyncLog.sharepointPath,
+          errorMessage: sharepointSyncLog.errorMessage,
+          createdAt: sharepointSyncLog.createdAt,
+          updatedAt: sharepointSyncLog.updatedAt,
+        })
+        .from(sharepointSyncLog)
+        .leftJoin(orders, eq(orders.id, sharepointSyncLog.orderId))
+        .leftJoin(files, eq(files.id, sharepointSyncLog.fileId))
+        .where(where)
+        .orderBy(desc(sharepointSyncLog.updatedAt))
+        .limit(50)
+        .offset(offset);
+
+      const totals = await db
+        .select({ total: sql<number>`count(*)` })
+        .from(sharepointSyncLog)
+        .leftJoin(orders, eq(orders.id, sharepointSyncLog.orderId))
+        .leftJoin(files, eq(files.id, sharepointSyncLog.fileId))
+        .where(where);
+
+      return { rows, total: Number(totals[0]?.total ?? 0) };
+    }),
+
+  retrySharepointSync: adminProcedure
+    .input(z.object({ logId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const rows = await db
+        .select({
+          id: sharepointSyncLog.id,
+          orderId: sharepointSyncLog.orderId,
+          fileId: sharepointSyncLog.fileId,
+          status: sharepointSyncLog.status,
+          orderNumber: orders.orderNumber,
+          fileDeletedAt: files.deletedAt,
+        })
+        .from(sharepointSyncLog)
+        .leftJoin(orders, eq(orders.id, sharepointSyncLog.orderId))
+        .leftJoin(files, eq(files.id, sharepointSyncLog.fileId))
+        .where(and(eq(sharepointSyncLog.id, input.logId), eq(sharepointSyncLog.operationType, "file_sync")))
+        .limit(1);
+      const log = rows[0];
+      if (!log) throw new TRPCError({ code: "NOT_FOUND", message: "SharePoint sync record not found." });
+      if (!log.fileId || !log.orderId || !log.orderNumber || log.fileDeletedAt) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "The source order file is no longer available for requeue." });
+      }
+      if (log.status !== "failed") {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Only failed file transfers can be requeued. A pending or running transfer is already being processed." });
+      }
+      await db.update(sharepointSyncLog)
+        .set({ status: "pending", attempts: 0, errorMessage: null })
+        .where(and(eq(sharepointSyncLog.id, log.id), eq(sharepointSyncLog.status, "failed")));
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: "admin",
+        action: "sharepoint.file_sync_requeued",
+        entityType: "sharepoint_sync_log",
+        entityId: log.id,
+        summary: `SharePoint file synchronization requeued for order ${log.orderNumber}`,
+        ipAddress: ctx.clientIp,
+      });
+      return { ok: true as const };
     }),
 
   // =========================================================================

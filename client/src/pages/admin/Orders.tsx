@@ -1697,7 +1697,14 @@ function OrderAutomationTab({ order, customer }: { order: any; customer: any }) 
                 </a>
               ) : null}
               <LinkButton
-                href="/admin/integrations"
+                href={`/admin/integrations?tab=sync&orderId=${order.id}`}
+                variant="outline"
+                className="w-full justify-center"
+              >
+                View this order’s SharePoint sync log
+              </LinkButton>
+              <LinkButton
+                href="/admin/integrations?tab=sharepoint"
                 variant="outline"
                 className="w-full justify-center"
               >

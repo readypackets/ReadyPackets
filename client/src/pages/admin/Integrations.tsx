@@ -576,11 +576,84 @@ function SharePointTab() {
 }
 
 // ---------------------------------------------------------------------------
+// SharePoint sync log center
+// ---------------------------------------------------------------------------
+
+function SharePointSyncLogTab({ orderId }: { orderId?: number }) {
+  const toast = useToast();
+  const [status, setStatus] = useState("");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const logs = trpc.integrations.sharepointSyncLogs.useQuery({
+    orderId,
+    status: status as "pending" | "running" | "succeeded" | "failed" | undefined,
+    search: search.trim() || undefined,
+    page,
+  });
+  const retry = trpc.integrations.retrySharepointSync.useMutation({
+    async onSuccess() {
+      await logs.refetch();
+      toast.success("File sync requeued", "The background SharePoint worker will retry this transfer shortly.");
+    },
+    onError(error) {
+      toast.error("Could not requeue file sync", error.message);
+    },
+  });
+  const rows = logs.data?.rows ?? [];
+  const total = logs.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / 50));
+  const statusClass = (value: string) => value === "succeeded" ? "bg-green-100 text-green-800" : value === "failed" ? "bg-red-100 text-red-800" : value === "running" ? "bg-blue-100 text-blue-800" : "bg-amber-100 text-amber-800";
+  const classify = (mime: string | null, extension: string | null) => (mime?.startsWith("audio/") || mime === "video/webm" || ["webm", "wav", "mp3", "m4a", "ogg", "aac", "flac"].includes((extension ?? "").toLowerCase())) ? "Audio" : "Document";
+
+  return (
+    <div className="space-y-5">
+      <Card>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-brand-navy">SharePoint Sync Log Center</h2>
+            <p className="mt-1 max-w-3xl text-sm text-gray-600">Track each order document and recording transfer. Retry is available only for failed items; pending and running transfers are already being processed.{orderId ? ` Showing transfers for order #${orderId}.` : ""}</p>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => void logs.refetch()} busy={logs.isFetching}>Refresh</Button>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-[1fr_220px]">
+          <Input label="Search order, file, or SharePoint path" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="RP-C…, recording.webm, or Phase I/Audio" />
+          <Select label="Transfer status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} options={[
+            { value: "", label: "All statuses" },
+            { value: "failed", label: "Failed" },
+            { value: "pending", label: "Pending" },
+            { value: "running", label: "Running" },
+            { value: "succeeded", label: "Succeeded" },
+          ]} />
+        </div>
+      </Card>
+
+      <Card className="overflow-hidden" padded={false}>
+        {logs.isLoading ? <p className="px-5 py-8 text-sm text-gray-500">Loading SharePoint transfer records…</p> : rows.length === 0 ? <p className="px-5 py-8 text-sm text-gray-500">No SharePoint file transfers match this filter.</p> : (
+          <div className="overflow-x-auto">
+            <table className="min-w-[1080px] w-full text-left text-sm">
+              <thead className="bg-surface-soft text-xs uppercase tracking-wide text-gray-500"><tr><th className="px-4 py-3 font-semibold">Order / file</th><th className="px-4 py-3 font-semibold">Type / phase</th><th className="px-4 py-3 font-semibold">Destination</th><th className="px-4 py-3 font-semibold">Status</th><th className="px-4 py-3 font-semibold">Attempts</th><th className="px-4 py-3 font-semibold">Updated</th><th className="px-4 py-3 font-semibold text-right">Action</th></tr></thead>
+              <tbody className="divide-y divide-line">
+                {rows.map((row) => <tr key={row.id} className="align-top"><td className="px-4 py-3"><p className="font-medium text-brand-navy">{row.orderNumber ?? `Order #${row.orderId}`}</p><p className="mt-1 max-w-[250px] break-all text-xs text-gray-600">{row.fileName ?? "Source file unavailable"}</p></td><td className="px-4 py-3"><p>{classify(row.detectedMime, row.extension)}</p><p className="mt-1 text-xs text-gray-500">{row.phase?.replace(/_/g, " ") ?? "Unassigned"}</p></td><td className="px-4 py-3"><p className="max-w-[310px] break-all font-mono text-xs text-gray-600">{row.sharepointPath}</p>{row.errorMessage ? <details className="mt-2 max-w-[310px]"><summary className="cursor-pointer text-xs font-medium text-red-700">View sanitized error</summary><p className="mt-1 break-words text-xs text-red-700">{row.errorMessage}</p></details> : null}</td><td className="px-4 py-3"><span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${statusClass(row.status)}`}>{row.status}</span></td><td className="px-4 py-3">{row.attempts}</td><td className="px-4 py-3 text-xs text-gray-600">{row.updatedAt ? new Date(row.updatedAt).toLocaleString() : "—"}</td><td className="px-4 py-3 text-right">{row.status === "failed" ? <Button size="sm" variant="outline" busy={retry.isPending && retry.variables?.logId === row.id} onClick={() => retry.mutate({ logId: row.id })}>Retry</Button> : <span className="text-xs text-gray-400">{row.status === "succeeded" ? "Completed" : "Queued"}</span>}</td></tr>)}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="flex items-center justify-between border-t border-line px-4 py-3 text-sm text-gray-600"><span>{total} transfer{total === 1 ? "" : "s"} · page {page} of {totalPages}</span><div className="flex gap-2"><Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage((current) => current - 1)}>Previous</Button><Button size="sm" variant="outline" disabled={page >= totalPages} onClick={() => setPage((current) => current + 1)}>Next</Button></div></div>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
 
 export function AdminIntegrationsPage() {
-  const [tab, setTab] = useState("webhooks");
+  const query = new URLSearchParams(window.location.search);
+  const initialTab = query.get("tab") === "sync" ? "sync" : "webhooks";
+  const parsedOrderId = Number(query.get("orderId"));
+  const syncOrderId = Number.isSafeInteger(parsedOrderId) && parsedOrderId > 0 ? parsedOrderId : undefined;
+  const [tab, setTab] = useState(initialTab);
 
   return (
           <div className="max-w-6xl mx-auto px-4 py-8">
@@ -590,6 +663,7 @@ export function AdminIntegrationsPage() {
             { id: "webhooks", label: "Webhook Endpoints" },
             { id: "deliveries", label: "Delivery Log" },
             { id: "kickoff", label: "Phase Kickoff" },
+            { id: "sync", label: "SharePoint Sync Log" },
             { id: "sharepoint", label: "SharePoint & SAML" },
           ]}
           initialId={tab}
@@ -599,6 +673,7 @@ export function AdminIntegrationsPage() {
           {tab === "webhooks" && <WebhooksTab />}
           {tab === "deliveries" && <DeliveryLogTab />}
           {tab === "kickoff" && <PhaseKickoffTab />}
+          {tab === "sync" && <SharePointSyncLogTab orderId={syncOrderId} />}
           {tab === "sharepoint" && <SharePointTab />}
         </div>
       </div>
