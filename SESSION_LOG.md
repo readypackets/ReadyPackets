@@ -2411,3 +2411,6 @@ The requested release covered seven connected portal improvements:
 5. Assess whether the legacy administrator Intake tab is still required.
 6. Add unified customer and administrator Message centers, with order messages appearing in the centers.
 7. Add customer-dashboard message notifications and popups with navigation to the source order message or the Message center.
+
+
+**Publication:** The release was committed and pushed as `d11701ae533e1fad617f22d1f8e0c0770d5c8649` (`feat: add unified order message center`). Production health returned `{"status":"ok"}` after deployment, and `/opt/readypackets/RELEASE_COMMIT` was updated to the same feature commit. The final client rollback copy is `/opt/readypackets/rollback-20260814005026-message-center-final-client`.
