@@ -505,12 +505,16 @@ async function uploadBinaryFile(folderId: string, fileName: string, content: Buf
   const token = await getGraphToken();
   const stageWebm = /\.webm$/i.test(fileName);
   const uploadName = stageWebm ? `rp-upload-${randomUUID()}.bin` : fileName;
+  // The intermediate item is intentionally a neutral binary object. The portal
+  // retains the source WebM metadata and the final SharePoint rename restores
+  // the exact .webm filename after Graph accepts the byte stream.
+  const uploadContentType = stageWebm ? "application/octet-stream" : resolvedContentType;
   const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(uploadName)}:/content`;
   let uploadedId: string | null = null;
   try {
     const response = await fetch(url, {
       method: "PUT",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": resolvedContentType, "Content-Length": String(content.byteLength) },
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": uploadContentType, "Content-Length": String(content.byteLength) },
       body: content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength) as ArrayBuffer,
     });
     if (!response.ok) {

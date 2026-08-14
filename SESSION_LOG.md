@@ -2557,3 +2557,14 @@ Validation passed before deployment: `pnpm run typecheck`, `pnpm test` (155/155 
 **Validation:** TypeScript and server bundle generation passed. One controlled production retry will verify direct temporary upload and final rename before any remaining audio records are requeued.
 
 **Requested user prompt:** “I was successfully able to manually upload the file.”
+
+
+## 2026-08-14 — Neutral-name/octet-stream WebM Graph staging correction
+
+**Final request-combination evidence:** The direct Graph content endpoint rejected final-name `.webm` requests both with `audio/webm` and `application/octet-stream`. It also rejected a neutral `.bin` name when the payload declared `audio/webm`. The SharePoint browser accepts the same final-name file and content.
+
+**Correction:** The final compatible request combination stages the unchanged WebM bytes under a unique neutral `.bin` name using the same `application/octet-stream` direct Graph content request proven to work for general binary document transfers. After Graph returns the item ID, ReadyPackets renames the item to the exact original audit-prefixed `.webm` filename. The portal’s internal `files.detectedMime` remains `audio/webm`; only the short-lived transfer representation is neutral. A failed final rename triggers best-effort cleanup of the temporary item.
+
+**Validation:** TypeScript and server bundle generation passed. Production validation will retry one failed WebM first; successful completion is required before the remaining audio-sync records are requeued.
+
+**Requested user prompt:** “I was successfully able to manually upload the file.”
