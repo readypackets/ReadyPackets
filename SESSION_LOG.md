@@ -2507,3 +2507,18 @@ Validation passed before deployment: `pnpm run typecheck`, `pnpm test` (155/155 
 **Validation:** TypeScript and server bundle generation passed. Production validation will requeue one affected failed WebM record first; remaining failed recordings will only be requeued after that transfer succeeds.
 
 **Requested user prompt:** “The audio isnt syncing and this is the error.”
+
+
+## 2026-08-14 — Original ReadyPackets WebM sync comparison and MIME correction
+
+**User request:** “I was able to upload .webm before with the original ReadyPackets site can you review the code and tell me whats wrong and whats difference between the code?” An uploaded `readypackets-main.zip` was inspected without execution and compared against the current source.
+
+**Verified original behavior:** `server/sharepointClient.ts` uploaded files under 4 MiB through Graph’s direct content endpoint with the file’s actual MIME type. Browser-recorded pitches were routed to `Phase I/audio` and stored/synchronized as `audio/webm`. Larger files used a Graph upload session with `@microsoft.graph.conflictBehavior: rename` and sent the actual MIME type with every fragment.
+
+**Regressed current behavior:** `server/services/sharepoint.ts` routed every binary file, including small WebM recordings, through the direct endpoint with `Content-Type: application/octet-stream`, ignoring the persisted `files.detectedMime`. The production recordings retain `detected_mime = audio/webm`. A later upload-session experiment also changed small media behavior and was rejected at session creation; it did not match the original working path.
+
+**Correction:** Restored the original MIME-aware strategy while retaining current authorization, encryption, durable queue, audit, and folder controls. Files of 4 MiB or less, including the recorded WebM files, now use the direct Graph content endpoint with `Content-Type: audio/webm`. Transfers above 4 MiB use Graph upload sessions, use `rename` conflict behavior, and send the verified MIME type on every fragment. The corrected strategy retains `Phase I/Audio` routing and does not transcode or alter the customer’s original recording.
+
+**Validation:** Source comparison complete; TypeScript and bundled server compilation passed. Production validation will requeue one failed WebM first; remaining failures will be requeued only after a successful upload is recorded.
+
+**Requested user prompt:** “I was able to upload .webm before with the original ReadyPackets site can you review the code and tell me whats wrong and whats difference between the code?”

@@ -417,11 +417,7 @@ async function uploadPlaceholder(folderId: string, fileName: string, content: st
 type GraphUploadSession = { uploadUrl?: string };
 type GraphUploadResult = { id?: string };
 
-function isMediaUpload(fileName: string, contentType: string): boolean {
-  return /^(audio|video)\//i.test(contentType) || /\.(webm|wav|mp3|m4a|ogg|aac|flac)$/i.test(fileName);
-}
-
-async function uploadBinaryViaSession(folderId: string, fileName: string, content: Buffer): Promise<string> {
+async function uploadBinaryViaSession(folderId: string, fileName: string, content: Buffer, contentType: string): Promise<string> {
   const { driveId } = await getGraphRuntimeConfig();
   if (!driveId) throw new Error("GRAPH_SHAREPOINT_DRIVE_ID must be set.");
   if (content.byteLength === 0) throw new Error("The audio recording is empty and cannot be synchronized.");
@@ -431,7 +427,7 @@ async function uploadBinaryViaSession(folderId: string, fileName: string, conten
   const sessionResponse = await fetch(sessionUrl, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": "replace", name: fileName } }),
+    body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": "rename", name: fileName } }),
   });
   if (!sessionResponse.ok) {
     const text = await sessionResponse.text();
@@ -453,6 +449,7 @@ async function uploadBinaryViaSession(folderId: string, fileName: string, conten
       headers: {
         "Content-Length": String(chunk.byteLength),
         "Content-Range": `bytes ${offset}-${end}/${content.byteLength}`,
+        "Content-Type": contentType,
       },
       body: chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer,
     });
@@ -469,24 +466,25 @@ async function uploadBinaryViaSession(folderId: string, fileName: string, conten
 }
 
 async function uploadBinaryFile(folderId: string, fileName: string, content: Buffer, contentType: string): Promise<string> {
-  // Recorded audio is routed through Graph's upload-session protocol. This avoids
-  // the direct-content endpoint that the affected SharePoint library rejects for
-  // WebM recordings, and gives a precise error phase if tenant policy still blocks it.
-  if (isMediaUpload(fileName, contentType)) return uploadBinaryViaSession(folderId, fileName, content);
+  // The original working ReadyPackets implementation used a MIME-aware direct
+  // Graph upload for small recordings. Keep that path for WebM files and use the
+  // resumable protocol only once a transfer exceeds 4 MiB.
+  const resolvedContentType = contentType || "application/octet-stream";
+  const simpleUploadLimit = 4 * 1024 * 1024;
+  if (content.byteLength > simpleUploadLimit) return uploadBinaryViaSession(folderId, fileName, content, resolvedContentType);
 
   const { driveId } = await getGraphRuntimeConfig();
   if (!driveId) throw new Error("GRAPH_SHAREPOINT_DRIVE_ID must be set.");
-  if (content.byteLength > 250 * 1024 * 1024) throw new Error("This file exceeds the 250 MB Microsoft Graph direct-upload limit.");
   const token = await getGraphToken();
   const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}:/content`;
   const response = await fetch(url, {
     method: "PUT",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/octet-stream", "Content-Length": String(content.byteLength) },
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": resolvedContentType, "Content-Length": String(content.byteLength) },
     body: content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength) as ArrayBuffer,
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`SharePoint binary upload failed (${response.status}): ${text.slice(0, 300)}`);
+    throw new Error(`SharePoint binary upload failed (${response.status}): ${text.slice(0, 500)}`);
   }
   const data = (await response.json()) as GraphUploadResult;
   if (!data.id) throw new Error("Microsoft Graph did not return a SharePoint item ID after upload.");
