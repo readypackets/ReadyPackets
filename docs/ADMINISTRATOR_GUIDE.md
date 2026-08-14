@@ -168,3 +168,8 @@ Administrators can initiate a Stripe refund either from **Admin → Finance → 
 The administrator order workspace now includes **Order history** and **MNDA** tabs beside Automation. Order history presents lifecycle status transitions and order-scoped activity events. MNDA presents order-specific acceptance status, policy version, signer, acceptance date, captured source address, and whether a signed file was attached. The **Files** tab separates order files into their assigned workflow phases, making customer artifacts, staff documents, and customer publication visibility easier to review by phase.
 
 Customer workflow steps map legacy `phase_1` and `phase_2` lock records to the corresponding guided workflow keys, so the current starting step shows **Open** and completed legacy phases show **Review** instead of incorrectly appearing as Upcoming.
+
+
+### Guided workflow system steps
+
+Some workflow definitions include prerequisite system steps such as **New Order Payment Confirmed**. When the server has opened a later customer phase, the customer stepper marks earlier non-customer prerequisite steps as **Confirmed** rather than incorrectly displaying them as Upcoming. These system steps do not create a customer upload, question, or submission workspace; customer-authored phases remain controlled by their own submitted phase locks.

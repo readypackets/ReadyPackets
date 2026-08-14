@@ -2375,3 +2375,8 @@ The SharePoint repair and connection-management implementation was published in 
 **Validation:** TypeScript passed with zero errors; `pnpm test` passed 155/155; production server/client deployment completed with timestamped rollback copies; production health returned `{"status":"ok"}` after its normal post-restart startup interval.
 
 **Operational note:** The background SharePoint queue currently reports Microsoft Graph authentication HTTP 400 for pending file transfers, which is separate from this release and requires re-testing the saved Graph tenant/client/secret configuration in Admin → Integrations.
+
+
+### Follow-up: customer workflow system-step state correction
+
+After deployment, the customer screenshot showed the automatic **New Order Payment Confirmed** prerequisite as Upcoming while the server had already opened the next customer phase. The stepper now treats every prerequisite stage that precedes the server-designated current stage as a system-confirmed step. It displays **Confirmed** rather than Upcoming and does not offer a misleading customer workspace link. Existing locked customer phases still show Review, and the actual active customer phase shows Open. The corrected client was deployed with rollback material at `/opt/readypackets/rollback-20260814001220-payment-stage-wizard-client`.
