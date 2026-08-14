@@ -2546,3 +2546,14 @@ Validation passed before deployment: `pnpm run typecheck`, `pnpm test` (155/155 
 **Validation:** TypeScript and server bundle generation passed. Production validation will retry one failed WebM first; remaining failed recordings will only be requeued after this exact staged upload completes successfully.
 
 **Requested user prompt:** “I was successfully able to manually upload the file.”
+
+
+## 2026-08-14 — Direct temporary-name WebM Graph upload correction
+
+**Iteration evidence:** A direct final-name WebM Graph content upload returned `invalidRequest`; an explicit Graph file-item `POST /children` also returned `generalException` HTTP 500. The administrator’s successful browser upload of the identical WebM file to the identical `Phase I/Audio` folder proves the folder, file bytes, and final name are acceptable.
+
+**Correction:** The small-file app-only Graph path now uploads WebM bytes using the same direct content endpoint that successfully synchronizes documents, but uses a short unique neutral `.bin` item name during the upload. After Graph creates the item and returns its item ID, the service uses a metadata `PATCH` to rename it to the unchanged ReadyPackets audit-prefixed `.webm` name. If the upload or rename fails after creation, the temporary item is best-effort deleted. The portal source, local encrypted object, playback behavior, permanent filename, and final SharePoint WebM content remain unchanged.
+
+**Validation:** TypeScript and server bundle generation passed. One controlled production retry will verify direct temporary upload and final rename before any remaining audio records are requeued.
+
+**Requested user prompt:** “I was successfully able to manually upload the file.”

@@ -466,41 +466,6 @@ async function uploadBinaryViaSession(folderId: string, fileName: string, conten
   return finalResult.id;
 }
 
-async function createSharePointFileItem(
-  driveId: string,
-  folderId: string,
-  fileName: string,
-  token: string,
-): Promise<string> {
-  // Creating the file item first mirrors the library's browser workflow: the
-  // filename is accepted as a drive item before its binary stream is written.
-  const createUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}/children`;
-  const createResponse = await fetch(createUrl, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ name: fileName, file: {}, "@microsoft.graph.conflictBehavior": "fail" }),
-  });
-  if (createResponse.ok) {
-    const created = (await createResponse.json()) as GraphUploadResult;
-    if (created.id) return created.id;
-    throw new Error("Microsoft Graph created the SharePoint file item without returning its ID.");
-  }
-
-  // A stable file name may already exist after a prior successful upload. Resolve
-  // that exact item and replace its content rather than creating a renamed copy.
-  if (createResponse.status === 409) {
-    const getUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}`;
-    const existingResponse = await fetch(getUrl, { headers: { Authorization: `Bearer ${token}` } });
-    if (existingResponse.ok) {
-      const existing = (await existingResponse.json()) as GraphUploadResult;
-      if (existing.id) return existing.id;
-    }
-  }
-
-  const text = await createResponse.text();
-  throw new Error(`SharePoint file-item creation failed (${createResponse.status}): ${text.slice(0, 500)}`);
-}
-
 async function renameSharePointFileItem(driveId: string, itemId: string, fileName: string, token: string): Promise<string> {
   const response = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}`, {
     method: "PATCH",
@@ -528,9 +493,9 @@ async function deleteSharePointFileItem(driveId: string, itemId: string, token: 
 }
 
 async function uploadBinaryFile(folderId: string, fileName: string, content: Buffer, contentType: string): Promise<string> {
-  // The SharePoint browser accepts the exact WebM name, but app-only Graph rejects
-  // a direct item creation for it. Stage its content under a unique neutral name,
-  // then rename the completed drive item to the unchanged original WebM filename.
+  // The app-only Graph library accepts direct content uploads for documents but
+  // rejects a direct `.webm` name. Upload the exact bytes through the accepted
+  // direct route under a random neutral name, then rename to the original WebM.
   const resolvedContentType = contentType || "application/octet-stream";
   const simpleUploadLimit = 4 * 1024 * 1024;
   if (content.byteLength > simpleUploadLimit) return uploadBinaryViaSession(folderId, fileName, content, resolvedContentType);
@@ -540,9 +505,9 @@ async function uploadBinaryFile(folderId: string, fileName: string, content: Buf
   const token = await getGraphToken();
   const stageWebm = /\.webm$/i.test(fileName);
   const uploadName = stageWebm ? `rp-upload-${randomUUID()}.bin` : fileName;
-  const fileItemId = await createSharePointFileItem(driveId, folderId, uploadName, token);
+  const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(uploadName)}:/content`;
+  let uploadedId: string | null = null;
   try {
-    const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${fileItemId}/content`;
     const response = await fetch(url, {
       method: "PUT",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": resolvedContentType, "Content-Length": String(content.byteLength) },
@@ -550,13 +515,14 @@ async function uploadBinaryFile(folderId: string, fileName: string, content: Buf
     });
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`SharePoint file-content update failed (${response.status}): ${text.slice(0, 500)}`);
+      throw new Error(`SharePoint file-content upload failed (${response.status}): ${text.slice(0, 500)}`);
     }
     const uploaded = (await response.json()) as GraphUploadResult;
     if (!uploaded.id) throw new Error("Microsoft Graph did not return a SharePoint item ID after upload.");
-    return stageWebm ? await renameSharePointFileItem(driveId, uploaded.id, fileName, token) : uploaded.id;
+    uploadedId = uploaded.id;
+    return stageWebm ? await renameSharePointFileItem(driveId, uploadedId, fileName, token) : uploadedId;
   } catch (error) {
-    if (stageWebm) await deleteSharePointFileItem(driveId, fileItemId, token);
+    if (stageWebm && uploadedId) await deleteSharePointFileItem(driveId, uploadedId, token);
     throw error;
   }
 }
