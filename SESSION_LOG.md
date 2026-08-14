@@ -2522,3 +2522,16 @@ Validation passed before deployment: `pnpm run typecheck`, `pnpm test` (155/155 
 **Validation:** Source comparison complete; TypeScript and bundled server compilation passed. Production validation will requeue one failed WebM first; remaining failures will be requeued only after a successful upload is recorded.
 
 **Requested user prompt:** “I was able to upload .webm before with the original ReadyPackets site can you review the code and tell me whats wrong and whats difference between the code?”
+
+
+## 2026-08-14 — Browser-upload-confirmed SharePoint Graph request correction
+
+**New evidence:** The administrator manually uploaded the exact failed WebM recordings into the same SharePoint `Phase I/Audio` folder successfully. This eliminated SharePoint library file-type policy, Purview/DLP policy, retention/sensitivity policy, filename length, and folder destination as causes.
+
+**Root cause:** The portal’s Graph shorthand upload route `PUT /drives/{driveId}/items/{parentId}:/{filename}:/content` returned `invalidRequest` for these files even after restoring `audio/webm`. The application had previously established the folder successfully, but this single-step filename-plus-content request was not accepted by the affected SharePoint library/app-only Graph combination.
+
+**Correction:** The small-file sync path now uses Microsoft Graph’s explicit two-step drive-item contract: first `POST /drives/{driveId}/items/{parentId}/children` with a file driveItem and a fail-on-conflict policy, then `PUT /drives/{driveId}/items/{itemId}/content` for the verified binary stream. On a conflict, the exact existing child item is resolved and its content is updated. Original recordings are not renamed, transcoded, or changed. Larger files retain Graph upload-session processing.
+
+**Validation:** TypeScript and server bundle generation passed. Production validation will requeue one failed WebM transfer; only after success will the remaining failed audio records be requeued.
+
+**Requested user prompt:** “I was successfully able to manually upload the file.”

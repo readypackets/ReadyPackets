@@ -465,10 +465,45 @@ async function uploadBinaryViaSession(folderId: string, fileName: string, conten
   return finalResult.id;
 }
 
+async function createSharePointFileItem(
+  driveId: string,
+  folderId: string,
+  fileName: string,
+  token: string,
+): Promise<string> {
+  // Creating the file item first mirrors the library's browser workflow: the
+  // filename is accepted as a drive item before its binary stream is written.
+  const createUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}/children`;
+  const createResponse = await fetch(createUrl, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ name: fileName, file: {}, "@microsoft.graph.conflictBehavior": "fail" }),
+  });
+  if (createResponse.ok) {
+    const created = (await createResponse.json()) as GraphUploadResult;
+    if (created.id) return created.id;
+    throw new Error("Microsoft Graph created the SharePoint file item without returning its ID.");
+  }
+
+  // A stable file name may already exist after a prior successful upload. Resolve
+  // that exact item and replace its content rather than creating a renamed copy.
+  if (createResponse.status === 409) {
+    const getUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}`;
+    const existingResponse = await fetch(getUrl, { headers: { Authorization: `Bearer ${token}` } });
+    if (existingResponse.ok) {
+      const existing = (await existingResponse.json()) as GraphUploadResult;
+      if (existing.id) return existing.id;
+    }
+  }
+
+  const text = await createResponse.text();
+  throw new Error(`SharePoint file-item creation failed (${createResponse.status}): ${text.slice(0, 500)}`);
+}
+
 async function uploadBinaryFile(folderId: string, fileName: string, content: Buffer, contentType: string): Promise<string> {
-  // The original working ReadyPackets implementation used a MIME-aware direct
-  // Graph upload for small recordings. Keep that path for WebM files and use the
-  // resumable protocol only once a transfer exceeds 4 MiB.
+  // WebM recordings work in the SharePoint browser and the library accepts their
+  // names. Use the same two-step drive-item then content-stream contract instead
+  // of Graph's shorthand parent-path content route, which returned invalidRequest.
   const resolvedContentType = contentType || "application/octet-stream";
   const simpleUploadLimit = 4 * 1024 * 1024;
   if (content.byteLength > simpleUploadLimit) return uploadBinaryViaSession(folderId, fileName, content, resolvedContentType);
@@ -476,7 +511,8 @@ async function uploadBinaryFile(folderId: string, fileName: string, content: Buf
   const { driveId } = await getGraphRuntimeConfig();
   if (!driveId) throw new Error("GRAPH_SHAREPOINT_DRIVE_ID must be set.");
   const token = await getGraphToken();
-  const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}:/content`;
+  const fileItemId = await createSharePointFileItem(driveId, folderId, fileName, token);
+  const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${fileItemId}/content`;
   const response = await fetch(url, {
     method: "PUT",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": resolvedContentType, "Content-Length": String(content.byteLength) },
@@ -484,7 +520,7 @@ async function uploadBinaryFile(folderId: string, fileName: string, content: Buf
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`SharePoint binary upload failed (${response.status}): ${text.slice(0, 500)}`);
+    throw new Error(`SharePoint file-content update failed (${response.status}): ${text.slice(0, 500)}`);
   }
   const data = (await response.json()) as GraphUploadResult;
   if (!data.id) throw new Error("Microsoft Graph did not return a SharePoint item ID after upload.");
