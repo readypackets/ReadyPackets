@@ -53,6 +53,7 @@ import {
 import { decryptField, encryptField, hashPassword, randomToken } from "../security/crypto.js";
 import { getSetting, getSettingNumber, setSetting } from "../services/settings.js";
 import { getOrderStatusOptions, normalizeOrderStatusOptions, ORDER_STATUS_OPTIONS_SETTING } from "../services/orderStatusConfig.js";
+import { createOrderMessageReceipts } from "../services/orderMessages.js";
 import {
   createUser,
   decryptUser,
@@ -693,6 +694,21 @@ export const adminRouter = router({
         .update(orderNotes)
         .set({ bodyEnc: encryptField(input.body, `order_note:${noteId}`) ?? "" })
         .where(eq(orderNotes.id, noteId));
+      await createOrderMessageReceipts({
+        orderId: input.orderId,
+        orderNoteId: noteId,
+        authorUserId: ctx.session.user.id,
+        visibility: input.visibility,
+      });
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: ctx.session.user.role,
+        action: "order.message_sent",
+        entityType: "order",
+        entityId: input.orderId,
+        summary: input.visibility === "shared" ? "Staff sent a shared order message" : "Staff saved an internal order note",
+        ipAddress: ctx.clientIp,
+      });
       return { ok: true as const, noteId };
     }),
 

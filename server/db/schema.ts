@@ -572,6 +572,21 @@ export const orderNotes = mysqlTable(
   }),
 );
 
+export const orderMessageReceipts = mysqlTable(
+  "order_message_receipts",
+  {
+    id: id(),
+    orderNoteId: int("order_note_id").notNull(),
+    userId: int("user_id").notNull(),
+    readAt: timestamp("read_at"),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    noteUserUnique: uniqueIndex("order_message_receipts_note_user_unique").on(table.orderNoteId, table.userId),
+    userReadIdx: index("order_message_receipts_user_read_idx").on(table.userId, table.readAt),
+  }),
+);
+
 export const orderShares = mysqlTable(
   "order_shares",
   {

@@ -5,6 +5,7 @@
  * who is mid-way through the process can see exactly what is outstanding and act
  * on it directly.
  */
+import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import {
   ArrowRight,
@@ -15,6 +16,7 @@ import {
   Gift,
   Inbox,
   MailCheck,
+  MessageSquare,
   Package,
   ShieldCheck,
   Sparkles,
@@ -33,6 +35,7 @@ import {
 } from "@/components/ui/Surface";
 import { ProgressBar, StatTile } from "@/components/ui/DataDisplay";
 import { useToast } from "@/components/ui/Toast";
+import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/layout/PortalLayout";
 import { STATUS_TONES, STATUS_LABELS } from "./orderStatus";
 
@@ -42,6 +45,11 @@ export function PortalDashboard() {
   const summary = trpc.orders.summary.useQuery(undefined, { refetchOnMount: "always" });
   const orders = trpc.orders.list.useQuery(undefined, { refetchOnMount: "always" });
   const tickets = trpc.tickets.unreadCount.useQuery();
+  const orderMessages = trpc.messages.unread.useQuery(undefined, { refetchInterval: 30_000 });
+  const messageUtils = trpc.useUtils();
+  const markDashboardMessageRead = trpc.messages.markRead.useMutation({
+    async onSuccess() { await messageUtils.messages.unread.invalidate(); },
+  });
   const referralStats = trpc.tier4.referral.myStats.useQuery();
   const mfa = trpc.auth.mfaStatus.useQuery();
   const announcements = trpc.tier3.announcements.visible.useQuery();
@@ -62,6 +70,26 @@ export function PortalDashboard() {
   });
 
   const user = session.user;
+  const [newMessage, setNewMessage] = useState<(typeof orderMessages.data extends { messages: (infer Message)[] } | undefined ? Message : never) | null>(null);
+  const notificationKey = user?.id ? `readypackets.message-notification-seen.${user.id}` : null;
+  const lastNotificationKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!notificationKey || !orderMessages.data) return;
+    const currentIds = orderMessages.data.messages.map((message) => message.id);
+    const rawSeen = window.sessionStorage.getItem(notificationKey);
+    const seen = new Set<number>(rawSeen ? JSON.parse(rawSeen) as number[] : []);
+    if (lastNotificationKey.current !== notificationKey && rawSeen === null) {
+      const outstanding = orderMessages.data.messages[0];
+      if (outstanding) setNewMessage(outstanding);
+      window.sessionStorage.setItem(notificationKey, JSON.stringify(currentIds));
+      lastNotificationKey.current = notificationKey;
+      return;
+    }
+    const incoming = orderMessages.data.messages.find((message) => !seen.has(message.id));
+    if (incoming) setNewMessage(incoming);
+    window.sessionStorage.setItem(notificationKey, JSON.stringify([...new Set([...seen, ...currentIds])].slice(-100)));
+    lastNotificationKey.current = notificationKey;
+  }, [notificationKey, orderMessages.data]);
   const recentOrders = (orders.data ?? []).slice(0, 4);
   const hasOrders = (orders.data ?? []).length > 0;
 
@@ -132,6 +160,16 @@ export function PortalDashboard() {
         </Alert>
       ) : null}
 
+      <Modal
+        open={Boolean(newMessage)}
+        onClose={() => setNewMessage(null)}
+        title="New order message"
+        description={newMessage ? `A new message was received for ${newMessage.orderNumber}.` : undefined}
+        footer={<><Button variant="outline" onClick={() => setNewMessage(null)}>Later</Button>{newMessage ? <LinkButton href={`/portal/orders/${newMessage.orderId}#message-${newMessage.id}`} onClick={() => { markDashboardMessageRead.mutate({ noteId: newMessage.id }); setNewMessage(null); }}>Open in order</LinkButton> : null}{newMessage ? <LinkButton href={`/portal/messages`} variant="outline" onClick={() => { markDashboardMessageRead.mutate({ noteId: newMessage.id }); setNewMessage(null); }}>Message center</LinkButton> : null}</>}
+      >
+        {newMessage ? <p className="whitespace-pre-wrap text-sm leading-relaxed text-body">{newMessage.body}</p> : null}
+      </Modal>
+
       {showOnboarding ? (
         <Card className="mb-6 border-teal/30">
           <CardHeader
@@ -183,7 +221,7 @@ export function PortalDashboard() {
 
       {(announcements.data ?? []).length > 0 ? <Card className="mb-6 border-teal/30"><CardHeader title="Announcements" description="Updates from the ReadyPackets team." /> <div className="mt-4 space-y-3">{(announcements.data ?? []).map((announcement) => <div key={announcement.id} className="rounded-lg border border-line bg-surface-soft p-3"><p className="font-medium text-ink">{announcement.title}</p><p className="mt-1 whitespace-pre-wrap text-sm text-body">{announcement.bodyMarkdown}</p></div>)}</div></Card> : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
         {summary.isLoading ? (
           Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-24 w-full" />)
         ) : (
@@ -191,7 +229,8 @@ export function PortalDashboard() {
             <Link href="/portal/orders" className="no-underline"><StatTile label="Active orders" value={summary.data?.active ?? 0} icon={ClipboardList} tone="teal" /></Link>
             <Link href="/portal/files" className="no-underline"><StatTile label="Delivered" value={summary.data?.delivered ?? 0} icon={FileCheck2} tone="success" /></Link>
             <Link href="/portal/orders" className="no-underline"><StatTile label="Awaiting payment" value={summary.data?.awaitingPayment ?? 0} icon={MailCheck} tone="warning" /></Link>
-            <Link href="/portal/tickets" className="no-underline"><StatTile label="Unread replies" value={tickets.data ?? 0} icon={Inbox} tone="navy" /></Link>
+            <Link href="/portal/tickets" className="no-underline"><StatTile label="Support replies" value={tickets.data ?? 0} icon={Inbox} tone="navy" /></Link>
+            <Link href="/portal/messages" className="no-underline"><StatTile label="Order messages" value={orderMessages.data?.count ?? 0} icon={MessageSquare} tone="teal" hint={(orderMessages.data?.count ?? 0) > 0 ? "Open Message center" : "All caught up"} /></Link>
             <Link href="/portal/referrals" className="no-underline"><StatTile label="Referral rewards" value={formatMoney(referralStats.data?.totalRewardCents ?? 0)} icon={Gift} tone="gold" hint={`${referralStats.data?.total ?? 0} referral(s)`} /></Link>
           </>
         )}
@@ -252,6 +291,7 @@ export function PortalDashboard() {
                           Placed {formatDate(order.createdAt)}
                           {order.dueAt ? ` · Due ${formatDate(order.dueAt)}` : ""}
                         </p>
+                        <p className="mt-1 text-xs text-body"><span className="font-medium text-ink">Current phase:</span> {order.currentPhaseLabel ?? "Workflow complete"}</p>
                         <div className="mt-2.5 max-w-xs"><div className="mb-1 flex items-center justify-between text-xs text-muted"><span>Order progress</span><span className="font-semibold tabular-nums text-ink">{order.completionPercent}%</span></div><ProgressBar value={order.completionPercent} label={`${order.completionPercent}% complete`} /></div>
                       </div>
                       <div className="shrink-0 text-right">
@@ -290,6 +330,14 @@ export function PortalDashboard() {
                 leadingIcon={<FileText className="size-4" aria-hidden="true" />}
               >
                 My Business Packets
+              </LinkButton>
+              <LinkButton
+                href="/portal/messages"
+                variant="outline"
+                fullWidth
+                leadingIcon={<MessageSquare className="size-4" aria-hidden="true" />}
+              >
+                Message center
               </LinkButton>
               <LinkButton
                 href="/portal/tickets"

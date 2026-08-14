@@ -70,6 +70,7 @@ import { MfaSetupPage, SecurityPage } from "@/pages/portal/Security";
 import { WorkspacesPage } from "@/pages/portal/Workspaces";
 import { ReferralsPage } from "@/pages/portal/Referrals";
 import { KnowledgeBasePage } from "@/pages/portal/KnowledgeBase";
+import { PortalMessagesPage } from "@/pages/portal/Messages";
 
 import { AdminDashboard } from "@/pages/admin/Dashboard";
 import { AdminOrderDetailPage, AdminOrdersPage, AdminOrderTrashPage } from "@/pages/admin/Orders";
@@ -123,6 +124,7 @@ import { AdminPlatformUpdates } from "@/pages/admin/PlatformUpdates";
 import { AdminPlatformSetupPage } from "@/pages/admin/PlatformSetup";
 import { AdminFaqsPage } from "@/pages/admin/Faqs";
 import { AdminMarketingPage } from "@/pages/admin/Marketing";
+import { AdminMessagesPage } from "@/pages/admin/Messages";
 
 /** Full-page loader shown while the session is being resolved. */
 function BootScreen() {
@@ -238,6 +240,10 @@ function PortalRoutes() {
     enabled: session.authenticated && !session.restricted && !hasPendingRequiredPolicies,
     refetchInterval: 120_000,
   });
+  const unreadOrderMessages = trpc.messages.unread.useQuery(undefined, {
+    enabled: session.authenticated && !session.restricted && !hasPendingRequiredPolicies,
+    refetchInterval: 60_000,
+  });
 
   // Required policies lock customer portal navigation until accepted. The policy
   // page and security controls remain reachable so the customer can accept or sign out.
@@ -270,6 +276,7 @@ function PortalRoutes() {
         { href: "/portal", label: "Dashboard", icon: LayoutDashboard, exact: true },
         { href: "/portal/orders", label: "My orders", icon: ClipboardList },
         { href: "/portal/files", label: "My Business Packets", icon: FileText },
+        { href: "/portal/messages", label: "Message center", icon: MessagesSquare, badgeCount: unreadOrderMessages.data?.count ?? 0 },
         { href: "/portal/workspaces", label: "Packet Collective", icon: UsersRound },
       ],
     },
@@ -312,6 +319,7 @@ function PortalRoutes() {
         {/* Backward-compatible alias for links issued before the route was renamed. */}
         <Route path="/portal/orders/:id/nda" component={MndaPage} />
         <Route path="/portal/files" component={FilesPage} />
+        <Route path="/portal/messages" component={PortalMessagesPage} />
         <Route path="/portal/workspaces" component={WorkspacesPage} />
         {/* Backward-compatible support alias for dashboard links issued before ticket routes were standardized. */}
         <Route path="/portal/support" component={TicketsListPage} />
@@ -372,6 +380,7 @@ function AdminRoutes() {
         <Route path="/admin/customers/trash" component={AdminCustomerTrashPage} />
         <Route path="/admin/customers/:id" component={AdminCustomerDetailPage} />
         <Route path="/admin/tickets" component={AdminTicketsPage} />
+        <Route path="/admin/messages" component={AdminMessagesPage} />
         <Route path="/admin/tickets/:id" component={AdminTicketDetailPage} />
         <Route path="/admin/files" component={AdminFilesPage} />
         <Route path="/admin/catalog" component={AdminCatalogPage} />

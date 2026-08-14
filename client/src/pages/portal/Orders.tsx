@@ -48,6 +48,8 @@ interface OrderRow {
   createdAt: string | Date;
   dueAt: string | Date | null;
   itemCount: number;
+  currentPhaseKey: string | null;
+  currentPhaseLabel: string | null;
 }
 
 export function OrdersListPage() {
@@ -82,7 +84,7 @@ export function OrdersListPage() {
             {order.projectName ?? "Untitled project"}
           </p>
           <p className="mt-0.5 text-xs text-muted sm:hidden">
-            {orderStatusLabel(order)} · {order.completionPercent}% complete · {formatMoney(order.totalCents)}
+            {orderStatusLabel(order)} · {order.currentPhaseLabel ?? "Workflow not assigned"} · {order.completionPercent}% complete · {formatMoney(order.totalCents)}
           </p>
         </div>
       ),
@@ -91,14 +93,19 @@ export function OrdersListPage() {
       key: "status",
       header: "Status",
       hideOnMobile: true,
-      cell: (order) => (
-        <div className="space-y-1.5">
-          <Badge tone={STATUS_TONES[order.status] ?? "neutral"}>
-            {orderStatusLabel(order)}
-          </Badge>
-          <ProgressBar value={order.completionPercent} className="w-32" label={`${order.completionPercent}% complete`} />
-        </div>
-      ),
+      cell: (order) => <Badge tone={STATUS_TONES[order.status] ?? "neutral"}>{orderStatusLabel(order)}</Badge>,
+    },
+    {
+      key: "progress",
+      header: "Progress",
+      hideOnMobile: true,
+      cell: (order) => <div className="w-32 space-y-1.5"><p className="text-sm font-semibold tabular-nums text-ink">{order.completionPercent}%</p><ProgressBar value={order.completionPercent} label={`${order.completionPercent}% complete`} /></div>,
+    },
+    {
+      key: "phase",
+      header: "Current phase",
+      hideOnMobile: true,
+      cell: (order) => <div className="max-w-44"><p className="truncate text-sm font-medium text-ink" title={order.currentPhaseLabel ?? undefined}>{order.currentPhaseLabel ?? "Workflow complete"}</p><p className="mt-0.5 text-xs text-muted">{order.currentPhaseKey ? "Assigned workflow" : "No active phase"}</p></div>,
     },
     {
       key: "payment",

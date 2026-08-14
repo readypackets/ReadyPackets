@@ -992,7 +992,7 @@ export function AdminOrderDetailPage() {
       <TabStrip
         tabs={[
           { id: "overview", label: "Overview" },
-          { id: "intake", label: "Intake" },
+          ...(intakeSubmission || (files.data ?? []).some((file) => file.category === "intake_attachment") ? [{ id: "intake", label: "Phase I record" }] : []),
           { id: "notes", label: `Notes (${notes.length})` },
                     { id: "questions", label: `Questions (${questions.length})` },
           { id: "files", label: `Files (${attachments.length})` },
@@ -1229,7 +1229,7 @@ export function AdminOrderDetailPage() {
         {tab === "intake" ? (
           <Card>
             <CardHeader
-              title="Phase I intake submission"
+              title="Phase I record"
               description={
                 intakeSubmission
                   ? `${intakeSubmission.status === "submitted" ? "Submitted" : "Draft"}${

@@ -37,8 +37,13 @@ import { Modal } from "@/components/ui/Modal";
 import { ProgressBar } from "@/components/ui/DataDisplay";
 import { useToast } from "@/components/ui/Toast";
 import { PageHeader } from "@/components/layout/PortalLayout";
-type WorkflowStage = { key: string; label: string; order: number; capabilities?: ("documents" | "questions" | "recording" | "audio_upload")[] };
-function stageIsCompleted(stageKey: string, phaseKeys: Set<string>) { return phaseKeys.has(stageKey) || (stageKey === "phase_1_intake" && phaseKeys.has("phase_1")) || (stageKey === "phase_2_synthesis" && phaseKeys.has("phase_2")); }
+type WorkflowStage = { key: string; label: string; order: number; capabilities?: ("documents" | "questions" | "recording" | "audio_upload" | "review_space")[] };
+function stageIsCompleted(stageKey: string, phaseKeys: Set<string>, paymentStatus?: string) {
+  return phaseKeys.has(stageKey)
+    || (stageKey === "phase_1_intake" && phaseKeys.has("phase_1"))
+    || (stageKey === "phase_2_synthesis" && phaseKeys.has("phase_2"))
+    || (stageKey === "new" && ["paid", "partially_refunded", "refunded"].includes(paymentStatus ?? ""));
+}
 
 function workflowStages(value: unknown): WorkflowStage[] {
   if (!Array.isArray(value)) return [];
@@ -50,8 +55,8 @@ function workflowStages(value: unknown): WorkflowStage[] {
       label: item.label as string,
       order: typeof item.order === "number" ? item.order : index + 1,
       capabilities: Array.isArray(item.capabilities)
-        ? item.capabilities.filter((capability): capability is "documents" | "questions" | "recording" | "audio_upload" => capability === "documents" || capability === "questions" || capability === "recording" || capability === "audio_upload")
-        : ["documents", "questions", "recording"] as ("documents" | "questions" | "recording" | "audio_upload")[],
+        ? item.capabilities.filter((capability): capability is "documents" | "questions" | "recording" | "audio_upload" | "review_space" => capability === "documents" || capability === "questions" || capability === "recording" || capability === "audio_upload" || capability === "review_space")
+        : ["documents", "questions", "recording"] as ("documents" | "questions" | "recording" | "audio_upload" | "review_space")[],
     }))
     .sort((left, right) => left.order - right.order);
 }
@@ -197,12 +202,20 @@ export function OrderDetailPage() {
   const intakeStatus = intake.data?.status ?? "draft";
   const needsIntake = intakeStatus !== "submitted";
   const canCancel = !terminated && order.status !== "closed" && order.status !== "delivered";
-  const configuredWorkflowStages = workflowStages(detail.data.workflow?.stages).filter((stage) => (stage.capabilities ?? []).length > 0);
+  const configuredWorkflowStages = workflowStages(detail.data.workflow?.stages);
   const completedWorkflowKeys = new Set((detail.data.phaseLocks ?? []).map((lock) => lock.phaseKey));
   const workflowPresentation = detail.data.workflow?.customerPresentation === "wizard" ? "wizard" : "cards";
   const workflowProgress = detail.data.workflowProgress;
-  const nextWorkflowStage = configuredWorkflowStages.find((stage) => !stageIsCompleted(stage.key, completedWorkflowKeys)) ?? configuredWorkflowStages.at(-1);
-  const displayedCompletionPercent = workflowProgress?.completionPercent ?? order.completionPercent;
+  const nextWorkflowStage = configuredWorkflowStages.find((stage) => stage.key === workflowProgress?.currentStageKey)
+    ?? configuredWorkflowStages.find((stage) => !stageIsCompleted(stage.key, completedWorkflowKeys, order.paymentStatus))
+    ?? configuredWorkflowStages.at(-1);
+  const displayedCompletionPercent = order.completionPercent;
+  const phaseLabelByKey = new Map(configuredWorkflowStages.map((stage) => [stage.key, stage.label]));
+  const allOrderFiles = orderFiles.data ?? [];
+  const orderHistory = [
+    ...history.status.map((entry) => ({ kind: "status" as const, id: `status-${entry.id}`, createdAt: entry.createdAt, fromStatus: entry.fromStatus, toStatus: entry.toStatus, reason: entry.reason })),
+    ...history.activity.map((entry) => ({ kind: "activity" as const, id: `activity-${entry.id}`, createdAt: entry.createdAt, summary: entry.summary, actorRole: entry.actorRole })),
+  ].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
 
   return (
     <>
@@ -303,7 +316,7 @@ export function OrderDetailPage() {
       {configuredWorkflowStages.length > 0 ? (
         <Card className="mb-6 border-teal/30 bg-teal/5">
           <CardHeader title={workflowPresentation === "wizard" ? "Guided order workspace" : "Order workspace"} description={workflowPresentation === "wizard" ? "Complete one phase at a time. Submitted phases remain available for review, while the next open phase is highlighted." : "Each workflow phase has its own files, questions, recordings, and customer actions. Final deliverables remain in My Business Packets."} />
-          {workflowPresentation === "wizard" ? <div className="mt-4"><div className="flex flex-wrap items-center gap-2 text-sm"><Badge tone="teal">Step {(nextWorkflowStage?.order ?? configuredWorkflowStages.length)} of {configuredWorkflowStages.length}</Badge>{workflowProgress ? <span className="text-muted">{workflowProgress.completedStages} phase{workflowProgress.completedStages === 1 ? "" : "s"} submitted</span> : null}</div><ol className="mt-4 space-y-3">{configuredWorkflowStages.map((stage) => { const completed = stageIsCompleted(stage.key, completedWorkflowKeys); const current = stage.key === nextWorkflowStage?.key && !completed; return <li key={stage.key} className={`flex items-center justify-between gap-3 rounded-lg border p-4 ${current ? "border-teal bg-white shadow-sm" : completed ? "border-success/30 bg-success/5" : "border-line bg-surface-soft"}`}><div className="min-w-0"><p className="flex items-center gap-2 text-sm font-semibold text-ink"><span className={`flex size-6 items-center justify-center rounded-full text-xs font-bold ${completed ? "bg-success text-white" : current ? "bg-teal text-white" : "bg-surface-sunken text-muted"}`}>{completed ? <CheckCircle2 className="size-3.5" /> : stage.order}</span>{stage.label}</p><p className="mt-1 text-xs text-muted">{completed ? "Submitted and locked — review available" : current ? "Current step" : "Available after the current step is submitted"}</p></div>{completed || current ? <LinkButton size="sm" variant={current ? "primary" : "outline"} href={`/portal/orders/${order.id}/workflow/${stage.key}`}>{completed ? "Review" : `Open ${stage.label}`}</LinkButton> : <Badge tone="neutral">Upcoming</Badge>}</li>; })}</ol></div> : <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {workflowPresentation === "wizard" ? <div className="mt-4"><div className="flex flex-wrap items-center gap-2 text-sm"><Badge tone="teal">Step {(nextWorkflowStage?.order ?? configuredWorkflowStages.length)} of {configuredWorkflowStages.length}</Badge>{workflowProgress ? <span className="text-muted">{workflowProgress.completedStages} of {workflowProgress.totalStages} workflow phases confirmed</span> : null}</div><ol className="mt-4 space-y-3">{configuredWorkflowStages.map((stage) => { const completed = stageIsCompleted(stage.key, completedWorkflowKeys, order.paymentStatus); const current = stage.key === nextWorkflowStage?.key && !completed; const customerActionable = (stage.capabilities ?? []).length > 0 && stage.key !== "new"; return <li key={stage.key} className={`flex items-center justify-between gap-3 rounded-lg border p-4 ${current ? "border-teal bg-white shadow-sm" : completed ? "border-success/30 bg-success/5" : "border-line bg-surface-soft"}`}><div className="min-w-0"><p className="flex items-center gap-2 text-sm font-semibold text-ink"><span className={`flex size-6 items-center justify-center rounded-full text-xs font-bold ${completed ? "bg-success text-white" : current ? "bg-teal text-white" : "bg-surface-sunken text-muted"}`}>{completed ? <CheckCircle2 className="size-3.5" /> : stage.order}</span>{stage.label}</p><p className="mt-1 text-xs text-muted">{completed ? (stage.key === "new" ? "System step confirmed" : "Submitted and locked — review available") : current ? "Current step" : "Available after the current step is submitted"}</p></div>{customerActionable && (completed || current) ? <LinkButton size="sm" variant={current ? "primary" : "outline"} href={`/portal/orders/${order.id}/workflow/${stage.key}`}>{completed ? "Review" : `Open ${stage.label}`}</LinkButton> : completed ? <Badge tone="success">Confirmed</Badge> : <Badge tone="neutral">Upcoming</Badge>}</li>; })}</ol></div> : <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {configuredWorkflowStages.map((stage) => (
               <div key={stage.key} className="rounded-lg border border-line bg-white p-4">
                 <p className="text-sm font-semibold text-ink">{stage.order}. {stage.label}</p>
@@ -343,45 +356,20 @@ export function OrderDetailPage() {
               </Alert>
             ) : (
               <>
-                <div className="mt-4 rounded-lg border border-line bg-surface-soft p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wide text-muted">Current order status</p><p className="mt-1 text-base font-semibold text-ink">{order.statusLabel ?? STATUS_LABELS[order.status] ?? order.status}</p></div><p className="text-2xl font-bold tabular-nums text-teal-dark">{displayedCompletionPercent}%</p></div><ProgressBar className="mt-3" value={displayedCompletionPercent} label={`${displayedCompletionPercent}% complete${workflowProgress ? ` · ${workflowProgress.completedStages}/${workflowProgress.totalStages} workflow phases submitted` : ""}`} /></div>
-                <ol className="mt-6 space-y-4">
+                <div className="mt-4 rounded-lg border border-line bg-surface-soft p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wide text-muted">Current order status</p><p className="mt-1 text-base font-semibold text-ink">{order.statusLabel ?? STATUS_LABELS[order.status] ?? order.status}</p></div><p className="text-2xl font-bold tabular-nums text-teal-dark">{displayedCompletionPercent}%</p></div><ProgressBar className="mt-3" value={displayedCompletionPercent} label={`${displayedCompletionPercent}% complete${workflowProgress ? ` · ${workflowProgress.completedStages}/${workflowProgress.totalStages} workflow phases confirmed` : ""}`} /></div>
+                {configuredWorkflowStages.length > 0 ? <ol className="mt-6 space-y-4">
+                  {configuredWorkflowStages.map((stage) => {
+                    const completed = stageIsCompleted(stage.key, completedWorkflowKeys, order.paymentStatus);
+                    const active = stage.key === nextWorkflowStage?.key && !completed;
+                    return <li key={stage.key} className="flex gap-3.5"><span className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${completed ? "bg-success text-white" : active ? "bg-teal text-white" : "bg-surface-sunken text-muted"}`} aria-hidden="true">{completed ? <CheckCircle2 className="size-3.5" /> : stage.order}</span><div className="min-w-0"><p className={`text-sm font-semibold ${active ? "text-teal-dark" : completed ? "text-ink" : "text-muted"}`}>{stage.label}{active ? <span className="ml-2 inline-flex items-center gap-1 text-xs font-medium text-teal"><Loader2 className="size-3 animate-spin" aria-hidden="true" />current</span> : null}</p><p className="mt-0.5 text-xs leading-relaxed text-body">{completed ? (stage.key === "new" ? "System prerequisite confirmed." : "This workflow phase has been submitted and is available for review.") : active ? "This is the active workflow phase for your order." : "Available after the current phase is submitted."}</p></div></li>;
+                  })}
+                </ol> : <ol className="mt-6 space-y-4">
                   {PHASE_SEQUENCE.map((phase, index) => {
                     const done = index < currentPhase;
                     const active = index === currentPhase;
-                    return (
-                      <li key={phase.status} className="flex gap-3.5">
-                        <span
-                          className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                            done
-                              ? "bg-success text-white"
-                              : active
-                                ? "bg-teal text-white"
-                                : "bg-surface-sunken text-muted"
-                          }`}
-                          aria-hidden="true"
-                        >
-                          {done ? <CheckCircle2 className="size-3.5" /> : index + 1}
-                        </span>
-                        <div className="min-w-0">
-                          <p
-                            className={`text-sm font-semibold ${
-                              active ? "text-teal-dark" : done ? "text-ink" : "text-muted"
-                            }`}
-                          >
-                            {phase.short}
-                            {active ? (
-                              <span className="ml-2 inline-flex items-center gap-1 text-xs font-medium text-teal">
-                                <Loader2 className="size-3 animate-spin" aria-hidden="true" />
-                                current
-                              </span>
-                            ) : null}
-                          </p>
-                          <p className="mt-0.5 text-xs leading-relaxed text-body">{phase.detail}</p>
-                        </div>
-                      </li>
-                    );
+                    return <li key={phase.status} className="flex gap-3.5"><span className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${done ? "bg-success text-white" : active ? "bg-teal text-white" : "bg-surface-sunken text-muted"}`} aria-hidden="true">{done ? <CheckCircle2 className="size-3.5" /> : index + 1}</span><div className="min-w-0"><p className={`text-sm font-semibold ${active ? "text-teal-dark" : done ? "text-ink" : "text-muted"}`}>{phase.short}{active ? <span className="ml-2 inline-flex items-center gap-1 text-xs font-medium text-teal"><Loader2 className="size-3 animate-spin" aria-hidden="true" />current</span> : null}</p><p className="mt-0.5 text-xs leading-relaxed text-body">{phase.detail}</p></div></li>;
                   })}
-                </ol>
+                </ol>}
               </>
             )}
           </Card>
@@ -515,7 +503,7 @@ export function OrderDetailPage() {
             {notes.length > 0 ? (
               <ul className="mt-6 space-y-4 border-t border-line pt-5">
                 {notes.map((entry) => (
-                  <li key={entry.id}>
+                  <li key={entry.id} id={`message-${entry.id}`} className="scroll-mt-24">
                     <p className="whitespace-pre-wrap text-sm leading-relaxed text-body">
                       {entry.body}
                     </p>
@@ -579,55 +567,18 @@ export function OrderDetailPage() {
 
           {/* Documents */}
           <Card>
-            <CardHeader title="Documents" />
+            <CardHeader title="Documents" description="Quick access to every customer-visible order document and file." />
             <ul className="mt-4 space-y-2.5 text-sm">
-              <li className="flex items-center justify-between gap-3">
-                <span className="text-body">Mutual NDA</span>
-                {mnda.data?.accepted ? (
-                  <Link href={`/portal/orders/${order.id}/mnda`} className="text-sm font-medium">
-                    Signed {formatDate(mnda.data.acceptedAt)}
-                  </Link>
-                ) : (
-                  <Link href={`/portal/orders/${order.id}/mnda`} className="text-sm font-medium">
-                    Sign now
-                  </Link>
-                )}
-              </li>
-              <li className="flex items-center justify-between gap-3">
-                <span className="text-body">Phase I intake</span>
-                <Link href={`/portal/orders/${order.id}/intake`} className="text-sm font-medium">
-                  {intakeStatus === "submitted" ? "View submission" : "Continue"}
-                </Link>
-              </li>
+              <li className="flex items-center justify-between gap-3"><span className="text-body">Mutual NDA</span>{mnda.data?.accepted ? <Link href={`/portal/orders/${order.id}/mnda`} className="text-sm font-medium">Signed {formatDate(mnda.data.acceptedAt)}</Link> : <Link href={`/portal/orders/${order.id}/mnda`} className="text-sm font-medium">Sign now</Link>}</li>
+              <li className="flex items-center justify-between gap-3"><span className="text-body">Phase I intake</span><Link href={`/portal/orders/${order.id}/intake`} className="text-sm font-medium">{intakeStatus === "submitted" ? "View submission" : "Continue"}</Link></li>
             </ul>
+            {allOrderFiles.length === 0 ? <p className="mt-4 border-t border-line pt-4 text-xs text-muted">No additional customer-visible files have been added yet.</p> : <ul className="mt-4 divide-y divide-line border-t border-line">{allOrderFiles.map((file) => <li key={file.id} className="flex items-center justify-between gap-3 py-3"><div className="min-w-0"><p className="truncate text-sm font-medium text-ink">{file.originalName}</p><p className="mt-0.5 text-xs text-muted">{phaseLabelByKey.get(file.phase) ?? file.phase.replaceAll("_", " ")} · {formatBytes(file.sizeBytes)}</p></div><Button size="sm" variant="outline" busy={downloading === file.id} onClick={() => { setDownloading(file.id); requestDownload.mutate({ fileId: file.id }); }} leadingIcon={<Download className="size-3.5" aria-hidden="true" />}>Download</Button></li>)}</ul>}
           </Card>
 
-          {/* History */}
+          {/* Full customer-visible history */}
           <Card>
-            <CardHeader title="Status history" />
-            {history.length === 0 ? (
-              <p className="mt-4 text-sm text-body">No status changes recorded yet.</p>
-            ) : (
-              <ol className="mt-4 space-y-3">
-                {history.map((entry) => (
-                  <li key={entry.id} className="text-sm">
-                    <p className="flex flex-wrap items-center gap-1.5 text-ink">
-                      <span className="text-muted">
-                        {entry.fromStatus ? STATUS_LABELS[entry.fromStatus] ?? entry.fromStatus : "Created"}
-                      </span>
-                      <ArrowRight className="size-3.5 text-muted" aria-hidden="true" />
-                      <span className="font-medium">
-                        {STATUS_LABELS[entry.toStatus] ?? entry.toStatus}
-                      </span>
-                    </p>
-                    <p className="mt-0.5 text-xs text-muted">{formatDateTime(entry.createdAt)}</p>
-                    {entry.reason ? (
-                      <p className="mt-1 text-xs italic text-body">{entry.reason}</p>
-                    ) : null}
-                  </li>
-                ))}
-              </ol>
-            )}
+            <CardHeader title="Order history" description="A chronological record of order status changes and customer-visible order activity." />
+            {orderHistory.length === 0 ? <p className="mt-4 text-sm text-body">No order activity has been recorded yet.</p> : <ol className="mt-4 space-y-3">{orderHistory.map((entry) => <li key={entry.id} className="text-sm">{entry.kind === "status" ? <><p className="flex flex-wrap items-center gap-1.5 text-ink"><span className="text-muted">{entry.fromStatus ? STATUS_LABELS[entry.fromStatus] ?? entry.fromStatus : "Created"}</span><ArrowRight className="size-3.5 text-muted" aria-hidden="true" /><span className="font-medium">{STATUS_LABELS[entry.toStatus] ?? entry.toStatus}</span></p>{entry.reason ? <p className="mt-1 text-xs italic text-body">{entry.reason}</p> : null}</> : <><p className="font-medium text-ink">{entry.summary}</p>{entry.actorRole ? <p className="mt-0.5 text-xs text-muted">Recorded by {entry.actorRole}</p> : null}</>}<p className="mt-0.5 text-xs text-muted">{formatDateTime(entry.createdAt)}</p></li>)}</ol>}
           </Card>
         </div>
       </div>

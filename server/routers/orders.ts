@@ -10,6 +10,7 @@ import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import {
+  activityLogs,
   customerWorkspaceMembers,
   customerWorkspaces,
   files,
@@ -40,12 +41,36 @@ import { priceSelection } from "../services/catalog.js";
 import { getOrderStatusOptions } from "../services/orderStatusConfig.js";
 import { protectedProcedure, publicProcedure, router } from "../trpc/trpc.js";
 import { insertedId } from "../db/result.js";
+import { createOrderMessageReceipts } from "../services/orderMessages.js";
 
 function toTrpcError(error: unknown): never {
   if (error instanceof OrderStateError) {
     throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
   }
   throw error;
+}
+
+/** Customer-facing labels intentionally avoid exposing staff-only audit summaries. */
+function customerOrderActivityLabel(action: string): string {
+  const labels: Record<string, string> = {
+    "order.activated_after_payment": "Payment confirmed and order opened",
+    "order.admin_created": "Order created",
+    "order.answer_question": "Clarification answer submitted",
+    "order.automation_applied": "Order automation completed",
+    "order.automation_email_queued": "Order email automation queued",
+    "order.automation_webhook_queued": "Order webhook automation queued",
+    "order.cancellation_requested": "Cancellation requested",
+    "order.create": "Order created",
+    "order.message_sent": "Message sent",
+    "order.phase_kickoff_manual": "Order phase started",
+    "order.phase_submitted": "Workflow phase submitted",
+    "order.phase_unlocked": "Workflow phase reopened",
+    "order.share": "Order sharing updated",
+    "order.transition": "Order status updated",
+    "order.update": "Order details updated",
+    "order.workflow_assigned": "Order workflow updated",
+  };
+  return labels[action] ?? "Order activity recorded";
 }
 
 const selectionSchema = z
@@ -153,6 +178,17 @@ export const ordersRouter = router({
             and(eq(orderNotes.orderId, input.orderId), eq(orderNotes.visibility, "shared")),
           )
           .orderBy(desc(orderNotes.createdAt));
+        const activityHistory = await db
+          .select({
+            id: activityLogs.id,
+            action: activityLogs.action,
+            actorRole: activityLogs.actorRole,
+            createdAt: activityLogs.createdAt,
+          })
+          .from(activityLogs)
+          .where(and(eq(activityLogs.entityType, "order"), eq(activityLogs.entityId, String(input.orderId))))
+          .orderBy(desc(activityLogs.createdAt))
+          .limit(250);
 
         return {
           order: {
@@ -184,13 +220,24 @@ export const ordersRouter = router({
             unitPriceCents: item.unitPriceCents,
             lineTotalCents: item.lineTotalCents,
           })),
-          history: detail.history.map((entry) => ({
-            id: entry.id,
-            fromStatus: entry.fromStatus,
-            toStatus: entry.toStatus,
-            reason: entry.reason,
-            createdAt: entry.createdAt,
-          })),
+          history: {
+            status: detail.history.map((entry) => ({
+              id: entry.id,
+              fromStatus: entry.fromStatus,
+              toStatus: entry.toStatus,
+              reason: entry.reason,
+              createdAt: entry.createdAt,
+            })),
+            activity: activityHistory
+              .filter((entry) => !["order.soft_delete", "order.restore", "order.permanently_purged", "order.bulk_soft_delete", "order.bulk_restore", "order.bulk_permanently_purged"].includes(entry.action))
+              .map((entry) => ({
+                id: entry.id,
+                action: entry.action,
+                actorRole: entry.actorRole,
+                summary: customerOrderActivityLabel(entry.action),
+                createdAt: entry.createdAt,
+              })),
+          },
           deliverables,
           notes: notes.map((note) => ({
             id: note.id,
@@ -518,6 +565,12 @@ export const ordersRouter = router({
             encryptField(`Cancellation requested: ${input.reason}`, `order_note:${noteId}`) ?? "",
         })
         .where(eq(orderNotes.id, noteId));
+      await createOrderMessageReceipts({
+        orderId: input.orderId,
+        orderNoteId: noteId,
+        authorUserId: ctx.session.user.id,
+        visibility: "shared",
+      });
 
       void recordActivity({
         actorUserId: ctx.session.user.id,
@@ -557,6 +610,21 @@ export const ordersRouter = router({
         .update(orderNotes)
         .set({ bodyEnc: encryptField(input.body, `order_note:${noteId}`) ?? "" })
         .where(eq(orderNotes.id, noteId));
+      await createOrderMessageReceipts({
+        orderId: input.orderId,
+        orderNoteId: noteId,
+        authorUserId: ctx.session.user.id,
+        visibility: "shared",
+      });
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: ctx.session.user.role,
+        action: "order.message_sent",
+        entityType: "order",
+        entityId: input.orderId,
+        summary: "Customer sent a shared order message",
+        ipAddress: ctx.clientIp,
+      });
       return { ok: true as const, noteId };
     }),
 

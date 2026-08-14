@@ -173,3 +173,10 @@ Customer workflow steps map legacy `phase_1` and `phase_2` lock records to the c
 ### Guided workflow system steps
 
 Some workflow definitions include prerequisite system steps such as **New Order Payment Confirmed**. When the server has opened a later customer phase, the customer stepper marks earlier non-customer prerequisite steps as **Confirmed** rather than incorrectly displaying them as Upcoming. These system steps do not create a customer upload, question, or submission workspace; customer-authored phases remain controlled by their own submitted phase locks.
+
+### Unified Message center and customer notifications
+Administrators and staff can use **Customers & support → Message center** to review messages from every order in one place. The center displays the related order number and project, sender role, timestamp, visibility, and recipient-specific read state. Select **Open order** to return to the source order workspace; shared messages can be answered from the order’s Notes tab, while internal notes stay staff-only.
+
+Order message contents remain encrypted in the existing order-note store. The message center stores only recipient-specific read receipts, so it does not create a second plaintext copy of a customer conversation. A shared message creates unread state for active order owners, eligible order delegates, and active staff, excluding the sender. Internal notes create unread state for active staff only.
+
+Customers have a corresponding **Message center** in their portal. The dashboard includes an **Order messages** card, a Message center quick action, and a sidebar unread badge. While the dashboard is open, it checks for unread order messages and displays an actionable popup. The customer can open the exact message in its source order or open Message center; either action marks that message read.

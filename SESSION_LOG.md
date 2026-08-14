@@ -2383,3 +2383,31 @@ After deployment, the customer screenshot showed the automatic **New Order Payme
 
 
 **Publication:** The automatic workflow-step confirmation correction was published as `61c62d71f0a328ccd378826ff7a0a3e7e8ac169f`; the production release marker was updated to the same commit after health verification.
+
+
+### Customer order visibility, unified message center, and notification release
+
+The customer order experience was aligned with each order’s assigned workflow. The order detail Progress card now renders the actual ordered workflow stages rather than the generic lifecycle sequence whenever a workflow is assigned. Payment-confirmation system stages are resolved from the verified payment state and display as **Confirmed**, while the active customer phase is distinct from later Upcoming phases. The completion percentage remains the separately managed order completion value, preventing phase confirmation from overwriting an administrator’s percentage.
+
+Customer order lists and dashboard recent-order cards now expose **Status**, **Progress**, and **Current phase** separately. The customer Documents card now includes quick links for the MNDA, Phase I record, and every customer-visible order file, preserving short-lived authorized download tickets. Status history was renamed to **Order history** and now merges lifecycle status transitions with customer-safe order activity entries.
+
+The legacy administrator Intake tab was assessed as a compatibility/reference surface, not the modern workflow workspace. It is now called **Phase I record** and is shown only when historical Phase I intake material exists; current workflow files, questions, locks, and phase actions remain in their dedicated tabs.
+
+A unified Message center is now available at `/portal/messages` and `/admin/messages`. It uses encrypted existing `order_notes` content and a recipient-specific `order_message_receipts` table for read state, without duplicating message bodies. Shared messages are visible to active order owners, delegates, and staff; internal notes remain staff-only. Order workspace messages create recipient receipts automatically, and both message centers offer unread filtering, mark-read controls, and deep links back to the source order.
+
+The customer dashboard now has a distinct **Order messages** count tile, a Message center quick action, a navigation badge, polling while the dashboard is open, and a modal popup for outstanding/new unread order messages. The popup links directly to the source message in its order or to the Message center and marks the message read. The implementation uses normal authenticated browser requests only; no external or platform-specific integration was added.
+
+Validation before deployment: `pnpm run typecheck` passed; `pnpm test` passed 155/155 tests; `pnpm run build:client` and `pnpm run build:server` passed; and `git diff --check` passed. Production migration `0035_order_message_center.sql` created `order_message_receipts`. The validated server and client were deployed with rollback material at `/opt/readypackets/rollback-20260814004710-message-center`; after the service’s normal startup interval, health returned `{"status":"ok"}` and the receipt table was confirmed present.
+
+
+#### Request received
+
+The requested release covered seven connected portal improvements:
+
+1. Update the customer order Progress card so it matches the workflow assigned to that order and updates by phase.
+2. Add quick links to all order documents and files in the customer Documents section.
+3. Rename customer Status history to Order history and track all order actions.
+4. Separate percentage, status, and current order phase in customer order list/dashboard views.
+5. Assess whether the legacy administrator Intake tab is still required.
+6. Add unified customer and administrator Message centers, with order messages appearing in the centers.
+7. Add customer-dashboard message notifications and popups with navigation to the source order message or the Message center.

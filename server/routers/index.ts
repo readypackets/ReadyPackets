@@ -29,6 +29,7 @@ import { faqsRouter } from "./faqs.js";
 import { marketingRouter } from "./marketing.js";
 import { invoicesRouter } from "./invoices.js";
 import { platformSetupRouter } from "./platformSetup.js";
+import { messagesRouter } from "./messages.js";
 
 export const appRouter = router({
   auth: authRouter,
@@ -56,6 +57,7 @@ export const appRouter = router({
   marketing: marketingRouter,
   invoices: invoicesRouter,
   platformSetup: platformSetupRouter,
+  messages: messagesRouter,
 });
 
 export type AppRouter = typeof appRouter;
