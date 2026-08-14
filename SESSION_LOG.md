@@ -2380,3 +2380,6 @@ The SharePoint repair and connection-management implementation was published in 
 ### Follow-up: customer workflow system-step state correction
 
 After deployment, the customer screenshot showed the automatic **New Order Payment Confirmed** prerequisite as Upcoming while the server had already opened the next customer phase. The stepper now treats every prerequisite stage that precedes the server-designated current stage as a system-confirmed step. It displays **Confirmed** rather than Upcoming and does not offer a misleading customer workspace link. Existing locked customer phases still show Review, and the actual active customer phase shows Open. The corrected client was deployed with rollback material at `/opt/readypackets/rollback-20260814001220-payment-stage-wizard-client`.
+
+
+**Publication:** The automatic workflow-step confirmation correction was published as `61c62d71f0a328ccd378826ff7a0a3e7e8ac169f`; the production release marker was updated to the same commit after health verification.
