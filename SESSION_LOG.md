@@ -2579,3 +2579,28 @@ Validation passed before deployment: `pnpm run typecheck`, `pnpm test` (155/155 
 **Safety validation:** The production controlled WebM source was converted non-destructively with the same ffmpeg settings. The source remained untouched; the transient output was 103,176 bytes and verified as codec `mp3`. TypeScript and production client/server builds will be validated before deployment. A single controlled SharePoint audio sync must succeed before any remaining failed audio records are requeued.
 
 **Requested user prompt:** “try option b but I may want to go back to option a if option b does not work”
+
+
+## 2026-08-14 — Delegated Microsoft 365 WebM sync transport (pending first authorization)
+
+### User request
+
+The user selected the WebM-preserving delegated Microsoft 365 sync approach after SharePoint browser uploads succeeded but every Microsoft Graph app-only binary audio request—WebM and the prepared MP3 fallback—returned `HTTP 400 invalidRequest`. The user asked to proceed with Option A and requested setup instructions for a dedicated Microsoft sync service account.
+
+### Evidence-driven design
+
+The platform retains app-only Microsoft Graph credentials for SharePoint discovery, folders, and document synchronization because those operations were already successful. Audio binary uploads now support a separate delegated Microsoft 365 service-account transport. The original WebM remains the only retained and synchronized media artifact; the prior MP3 fallback remains configurable but will only be used when no delegated sync identity is connected.
+
+The implementation uses authorization code flow with S256 PKCE, a random 32-byte state value retained only as a SHA-256 hash, single-use 10-minute authorization attempts, an encrypted PKCE verifier, an exact HTTPS callback URI, and an encrypted refresh token. Refresh tokens are renewed server-side and replaced when Microsoft returns a new one. No token, password, or client secret is returned to the browser. The callback uses state validation rather than a cross-site session cookie because portal sessions correctly use `SameSite=Strict`.
+
+### Delivered components
+
+- Migration `0038_sharepoint_delegated_sync.sql` adds state-hash, encrypted verifier, expiry, and one-time-use storage.
+- `server/services/sharepointDelegatedAuth.ts` implements PKCE authorization construction, authorization-code exchange, encrypted token persistence, safe refresh, status, and disconnect behavior.
+- `server/http/sharepointDelegatedAuth.ts` implements the no-store callback route and safe status redirect.
+- `server/services/sharepoint.ts` routes only audio binary uploads through a connected delegated identity; documents and folders remain app-only.
+- Admin → Integrations now shows delegated sync status, callback URI, start authorization control, and typed `DISCONNECT SYNC` disconnect confirmation.
+
+### Validation and next step
+
+TypeScript validation and client/server production builds passed. The feature requires the Microsoft Entra redirect URI and delegated permissions to be registered, then the user must authorize the dedicated Microsoft 365 account. No failed recordings were requeued during implementation. After authorization, validate one WebM transfer before requeueing remaining failed audio.

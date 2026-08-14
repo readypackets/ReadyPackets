@@ -36,6 +36,7 @@ import { resolveClientIp } from "./security/ipAddress.js";
 import { createDownloadRouter } from "./http/downloads.js";
 import { createUploadRouter } from "./http/uploads.js";
 import { createAvatarRouter } from "./http/avatar.js";
+import { createSharePointDelegatedAuthRouter } from "./http/sharepointDelegatedAuth.js";
 import { logger } from "./observability/logger.js";
 import { getMaintenanceState } from "./services/settings.js";
 import { handleStripeWebhook } from "./services/stripe.js";
@@ -266,6 +267,7 @@ export function createApp(): Express {
   app.get("/api/saml/login", handleLoginRedirect);
   app.post("/api/saml/acs", express.urlencoded({ extended: false }), handleAcs);
   app.get("/api/saml/logout", handleLogout);
+  app.use("/api/integrations/sharepoint", createSharePointDelegatedAuthRouter());
 
   /**
    * A same-origin, authenticated CSRF cookie refresh for multipart uploads.

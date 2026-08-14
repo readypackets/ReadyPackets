@@ -20,6 +20,7 @@ import { TRPCError } from "@trpc/server";
 import { encryptField, decryptField } from "../security/crypto.js";
 import { env } from "../config/env.js";
 import { browseSharePointFolders, discoverSharePointConfig, normalizeSharePointRootFolderPath, runPhaseKickoff, resetGraphTokenCache, testSharePointConnection } from "../services/sharepoint.js";
+import { disconnectDelegatedSharePointIdentity, getDelegatedSharePointStatus, startDelegatedSharePointAuthorization } from "../services/sharepointDelegatedAuth.js";
 import { getSetting, setSetting } from "../services/settings.js";
 import { recordActivity } from "../observability/audit.js";
 
@@ -483,6 +484,7 @@ export const integrationsRouter = router({
     const rootFolderPath = normalizeSharePointRootFolderPath(configuredRootFolderPath);
     const hasSecret = Boolean((await getSetting("sharepoint.client_secret_enc")) || env.graph.clientSecret);
     const audioFallbackMode = (await getSetting("sharepoint.audio_fallback_mode")) === "none" ? "none" : "mp3";
+    const delegatedSync = await getDelegatedSharePointStatus();
     const tenantIdValid = Boolean(tenantId && (/^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(tenantId) || /^[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9][A-Za-z0-9-]*)+$/.test(tenantId)));
     const clientIdValid = Boolean(clientId && /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(clientId));
     return {
@@ -497,8 +499,28 @@ export const integrationsRouter = router({
       rootFolderPath,
       hasSecret,
       audioFallbackMode,
+      delegatedSync,
     };
   }),
+
+  startDelegatedGraphAudioSync: adminProcedure.mutation(async ({ ctx }) => {
+    try {
+      const result = await startDelegatedSharePointAuthorization({ initiatedByUserId: ctx.session.user.id, requestIp: ctx.clientIp });
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "sharepoint.delegated_sync_authorization_started", entityType: "sharepoint", entityId: 0, summary: "Started Microsoft 365 delegated SharePoint sync authorization", ipAddress: ctx.clientIp });
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message.slice(0, 500) : "Could not start Microsoft 365 sync authorization.";
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message });
+    }
+  }),
+
+  disconnectDelegatedGraphAudioSync: adminProcedure
+    .input(z.object({ typedConfirmation: z.literal("DISCONNECT SYNC") }))
+    .mutation(async ({ ctx }) => {
+      await disconnectDelegatedSharePointIdentity(ctx.session.user.id);
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "sharepoint.delegated_sync_disconnected", entityType: "sharepoint", entityId: 0, severity: "warning", summary: "Disconnected the delegated Microsoft 365 SharePoint sync identity", ipAddress: ctx.clientIp });
+      return { ok: true as const };
+    }),
 
   discoverGraphConfig: adminProcedure
     .input(z.object({

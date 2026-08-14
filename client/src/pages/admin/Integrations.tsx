@@ -418,6 +418,8 @@ function SharePointTab() {
   });
   const [discoveredDrives, setDiscoveredDrives] = useState<Array<{ id: string; name: string; webUrl: string | null; isDefault: boolean }>>([]);
   const [browsePath, setBrowsePath] = useState("");
+  const [disconnectOpen, setDisconnectOpen] = useState(false);
+  const [disconnectConfirmation, setDisconnectConfirmation] = useState("");
   const folders = trpc.integrations.browseGraphFolders.useQuery({ path: browsePath }, { enabled: Boolean(data?.enabled) });
 
   useEffect(() => {
@@ -470,6 +472,27 @@ function SharePointTab() {
     },
     onError(error) {
       toast.error("Could not save SharePoint settings", error.message);
+    },
+  });
+
+  const startDelegatedSync = trpc.integrations.startDelegatedGraphAudioSync.useMutation({
+    onSuccess(result) {
+      window.location.assign(result.authorizationUrl);
+    },
+    onError(error) {
+      toast.error("Could not start Microsoft authorization", error.message);
+    },
+  });
+
+  const disconnectDelegatedSync = trpc.integrations.disconnectDelegatedGraphAudioSync.useMutation({
+    async onSuccess() {
+      await refetch();
+      setDisconnectOpen(false);
+      setDisconnectConfirmation("");
+      toast.success("Microsoft 365 sync identity disconnected", "The encrypted refresh token was removed. App-only document synchronization remains unchanged.");
+    },
+    onError(error) {
+      toast.error("Could not disconnect the sync identity", error.message);
     },
   });
 
@@ -550,6 +573,45 @@ function SharePointTab() {
           <p className="basis-full text-xs text-gray-500">Step 1: enter complete Microsoft Entra values only when replacing saved credentials; masked values are display-only and are preserved on partial saves. Step 2: use discovery to populate site and library IDs. Step 3: save a base folder above customers. Step 4: select the audio transfer mode and run Test SharePoint connection. Discovery and testing use credentials only on the server and never display the client secret.</p>
         </div>
       </Card>
+
+      <Card>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="font-semibold text-brand-navy">Microsoft 365 audio sync identity</h3>
+            <p className="mt-1 max-w-3xl text-sm text-gray-600">Use a dedicated Microsoft 365 account to upload original WebM recordings with delegated Microsoft Graph authorization. The encrypted renewable token is used only for audio binary uploads; the existing app-only configuration continues to manage document and folder synchronization.</p>
+          </div>
+          <span className={data?.delegatedSync?.connected ? "rounded-full bg-green-50 px-3 py-1 text-sm font-medium text-green-700" : "rounded-full bg-amber-50 px-3 py-1 text-sm font-medium text-amber-700"}>{data?.delegatedSync?.connected ? "Connected" : "Authorization required"}</span>
+        </div>
+        {data?.delegatedSync?.connected ? (
+          <div className="mt-4 rounded-lg border border-green-200 bg-green-50 p-4 text-sm">
+            <p className="font-semibold text-green-800">Connected sync account</p>
+            <p className="mt-1 text-green-700">{data.delegatedSync.account ?? "Microsoft 365 sync account"}</p>
+            {data.delegatedSync.connectedAt ? <p className="mt-1 text-xs text-green-700">Authorized {new Date(data.delegatedSync.connectedAt).toLocaleString()}.</p> : null}
+            <div className="mt-3"><Button variant="danger" size="sm" onClick={() => setDisconnectOpen(true)}>Disconnect sync account</Button></div>
+          </div>
+        ) : (
+          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <p className="font-semibold">Before connecting</p>
+            <p className="mt-1">Register the exact callback URL shown below as a Web redirect URI in Microsoft Entra, add delegated Microsoft Graph `Files.ReadWrite.All` and `User.Read` permissions, grant consent, and sign in with the dedicated account that has access to this document library.</p>
+            <p className="mt-2 break-all rounded bg-white/70 p-2 font-mono text-xs">{window.location.origin}/api/integrations/sharepoint/delegated/callback</p>
+          </div>
+        )}
+        {data?.delegatedSync?.lastError ? <p className="mt-3 text-sm text-danger">Last delegated authorization issue: {data.delegatedSync.lastError}</p> : null}
+        <div className="mt-4 flex flex-wrap gap-3">
+          <Button variant="primary" busy={startDelegatedSync.isPending} disabled={!data?.enabled} onClick={() => startDelegatedSync.mutate()}>Connect Microsoft 365 sync account</Button>
+          <p className="self-center text-xs text-gray-500">Authorization opens Microsoft sign-in in this browser. The service account password and Microsoft tokens are never shown in ReadyPackets.</p>
+        </div>
+      </Card>
+
+      <Modal
+        open={disconnectOpen}
+        onClose={() => { if (!disconnectDelegatedSync.isPending) { setDisconnectOpen(false); setDisconnectConfirmation(""); } }}
+        title="Disconnect Microsoft 365 sync account"
+        description="This removes the encrypted renewable token from ReadyPackets. It does not change the Microsoft account or the existing SharePoint files."
+        footer={<><Button variant="outline" onClick={() => { setDisconnectOpen(false); setDisconnectConfirmation(""); }} disabled={disconnectDelegatedSync.isPending}>Cancel</Button><Button variant="danger" busy={disconnectDelegatedSync.isPending} disabled={disconnectConfirmation !== "DISCONNECT SYNC"} onClick={() => disconnectDelegatedSync.mutate({ typedConfirmation: "DISCONNECT SYNC" })}>Disconnect</Button></>}
+      >
+        <Input label="Type DISCONNECT SYNC to continue" value={disconnectConfirmation} onChange={(event) => setDisconnectConfirmation(event.target.value)} autoComplete="off" />
+      </Modal>
 
       <Card>
         <h3 className="font-semibold text-brand-navy mb-3">SAML SSO</h3>

@@ -153,6 +153,26 @@ export const userSessions = mysqlTable(
   }),
 );
 
+export const sharepointDelegatedAuthAttempts = mysqlTable(
+  "sharepoint_delegated_auth_attempts",
+  {
+    id: id(),
+    /** SHA-256 of the opaque OAuth state; the browser-visible state is never stored plaintext. */
+    stateHash: char("state_hash", { length: 64 }).notNull(),
+    /** AES-256-GCM protected PKCE verifier; bound to this single authorization attempt. */
+    codeVerifierEnc: text("code_verifier_enc").notNull(),
+    initiatedByUserId: int("initiated_by_user_id").notNull(),
+    requestIp: varchar("request_ip", { length: 64 }),
+    expiresAt: timestamp("expires_at").notNull(),
+    consumedAt: timestamp("consumed_at"),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    stateUnique: uniqueIndex("sharepoint_delegated_auth_state_unique").on(table.stateHash),
+    expiryIdx: index("sharepoint_delegated_auth_expiry_idx").on(table.expiresAt),
+  }),
+);
+
 export const passwordResetTokens = mysqlTable(
   "password_reset_tokens",
   {

@@ -38,6 +38,7 @@ import { getUserById, displayNameOf } from "../db/users.js";
 import { buildOrderFileName } from "./fileNaming.js";
 import { getObjectBuffer } from "./storage.js";
 import { transcodeWebmToMp3ForSharePoint } from "./audioTranscode.js";
+import { getDelegatedSharePointStatus, getDelegatedSharePointToken, recordDelegatedSharePointError } from "./sharepointDelegatedAuth.js";
 import type { OrderStatus } from "../../shared/domain.js";
 
 // ---------------------------------------------------------------------------
@@ -422,12 +423,12 @@ async function uploadPlaceholder(folderId: string, fileName: string, content: st
 type GraphUploadSession = { uploadUrl?: string };
 type GraphUploadResult = { id?: string };
 
-async function uploadBinaryViaSession(folderId: string, fileName: string, content: Buffer, contentType: string): Promise<string> {
+async function uploadBinaryViaSession(folderId: string, fileName: string, content: Buffer, contentType: string, accessToken?: string): Promise<string> {
   const { driveId } = await getGraphRuntimeConfig();
   if (!driveId) throw new Error("GRAPH_SHAREPOINT_DRIVE_ID must be set.");
   if (content.byteLength === 0) throw new Error("The audio recording is empty and cannot be synchronized.");
 
-  const token = await getGraphToken();
+  const token = accessToken ?? await getGraphToken();
   const sessionUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}:/createUploadSession`;
   const sessionResponse = await fetch(sessionUrl, {
     method: "POST",
@@ -496,17 +497,17 @@ async function deleteSharePointFileItem(driveId: string, itemId: string, token: 
   }
 }
 
-async function uploadBinaryFile(folderId: string, fileName: string, content: Buffer, contentType: string): Promise<string> {
+async function uploadBinaryFile(folderId: string, fileName: string, content: Buffer, contentType: string, accessToken?: string): Promise<string> {
   // The app-only Graph library accepts direct content uploads for documents but
   // rejects a direct `.webm` name. Upload the exact bytes through the accepted
   // direct route under a random neutral name, then rename to the original WebM.
   const resolvedContentType = contentType || "application/octet-stream";
   const simpleUploadLimit = 4 * 1024 * 1024;
-  if (content.byteLength > simpleUploadLimit) return uploadBinaryViaSession(folderId, fileName, content, resolvedContentType);
+  if (content.byteLength > simpleUploadLimit) return uploadBinaryViaSession(folderId, fileName, content, resolvedContentType, accessToken);
 
   const { driveId } = await getGraphRuntimeConfig();
   if (!driveId) throw new Error("GRAPH_SHAREPOINT_DRIVE_ID must be set.");
-  const token = await getGraphToken();
+  const token = accessToken ?? await getGraphToken();
   const stageWebm = /\.webm$/i.test(fileName);
   const uploadName = stageWebm ? `rp-upload-${randomUUID()}.bin` : fileName;
   // The intermediate item is intentionally a neutral binary object. The portal
@@ -601,11 +602,15 @@ export async function processPendingFileSyncs(): Promise<void> {
       const { folderPath, orderNumber } = await resolveOrderStageFolder(file.orderId, file.phase, graphConfig, fileKind);
       const folderId = await ensureFolder(folderPath);
       const source = await getObjectBuffer(file.storageKey);
-      const useMp3Fallback = graphConfig.audioFallbackMode === "mp3" && fileKind === "audio" && /\.webm$/i.test(file.originalName);
+      const delegatedStatus = fileKind === "audio" ? await getDelegatedSharePointStatus() : null;
+      const delegatedAudioToken = delegatedStatus?.connected ? await getDelegatedSharePointToken() : undefined;
+      // Delegated Microsoft 365 authorization preserves the original WebM in SharePoint.
+      // The legacy MP3 mode remains only as a reversible setting for historical deployments.
+      const useMp3Fallback = !delegatedAudioToken && graphConfig.audioFallbackMode === "mp3" && fileKind === "audio" && /\.webm$/i.test(file.originalName);
       const transferName = useMp3Fallback ? file.originalName.replace(/\.webm$/i, ".mp3") : file.originalName;
       const transferContent = useMp3Fallback ? await transcodeWebmToMp3ForSharePoint(source) : source;
       const transferMime = useMp3Fallback ? "audio/mpeg" : file.detectedMime;
-      await uploadBinaryFile(folderId, transferName, transferContent, transferMime);
+      await uploadBinaryFile(folderId, transferName, transferContent, transferMime, delegatedAudioToken);
       await db.update(sharepointSyncLog).set({ status: "succeeded", sharepointPath: `${folderPath}/${transferName}`, errorMessage: null }).where(eq(sharepointSyncLog.id, log.id));
       void recordActivity({
         actorUserId: null,
@@ -617,6 +622,9 @@ export async function processPendingFileSyncs(): Promise<void> {
           : `Synchronized ${file.originalName} to SharePoint for ${orderNumber}`,
       });
     } catch (error) {
+      if (error instanceof Error && /delegated Microsoft 365 sync identity|Microsoft delegated SharePoint authorization/i.test(error.message)) {
+        await recordDelegatedSharePointError(error.message);
+      }
       const attempts = log.attempts + 1;
       await db.update(sharepointSyncLog).set({ status: attempts >= 5 ? "failed" : "pending", errorMessage: error instanceof Error ? error.message.slice(0, 800) : String(error).slice(0, 800) }).where(eq(sharepointSyncLog.id, log.id));
       logger.warn("sharepoint.file_sync.failed", { logId: log.id, fileId: log.fileId, attempt: attempts, error });
