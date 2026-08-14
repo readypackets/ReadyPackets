@@ -2466,3 +2466,18 @@ Validation passed before deployment: `pnpm run typecheck`, `pnpm test` (155/155 
 2. Add administrator playback for audio recordings.
 3. Separate system email templates, sent email history, and queued deliveries into separate tabs.
 4. Identify the cause of the SharePoint Microsoft Graph API error.
+
+
+## 2026-08-14 — SharePoint credential persistence and managed root correction
+
+**User report:** The SharePoint integration had previously created customer folders but saved them beneath a duplicate `customers` path. On later configuration saves, masked Tenant ID and Client ID values shown by the administrator interface were submitted back to the server, causing identity values to become invalid/truncated and Microsoft Graph token requests to fail with `invalid_request` HTTP 400.
+
+**Verified cause:** The settings database stores full text values and does not truncate them. The SharePoint configuration query deliberately masks identity values as `...<last 8 characters>` for safe display; the previous client form copied those masked display values into editable state and re-submitted them on partial saves. The existing folder path contract always appended `customers/{customerId}/orders/{orderId}` below the selected root, so choosing an existing `customers` folder as the root intentionally yielded `customers/customers/...`.
+
+**Correction:** The administration UI now keeps masked Tenant and Client IDs out of editable form state, permits root/site/drive updates while preserving valid stored credentials, clearly requires full replacement values only when saved identifiers are invalid, and labels the destination as the ReadyPackets base folder. Selecting a browsed `customers` folder automatically chooses its parent as the base. Server-side save and runtime path handling now normalize any stored managed `customers` selection to the parent base and centralize generated order root construction, eliminating duplicate managed customer folders even for existing stored roots. A focused regression test confirms base, managed-customers, nested-customer, and invalid-root behavior.
+
+**Validation:** TypeScript compilation passed; client and server production bundles passed; focused SharePoint root-path regression tests passed (4/4). The repository-wide suite was also run, but 9 pre-existing catalogue/bundle-pricing assertions failed because the canonical clone did not include the expected product fixture data; SharePoint-focused coverage passed and the failure did not involve the changed integration code.
+
+**Safe operator sequence after deployment:** Enter complete Microsoft Entra Tenant and Application (client) IDs once to replace the currently invalid 11-character values, enter a valid secret value if required, rediscover the site and library, select the ReadyPackets base above `customers`, save, and test the connection. Existing completed folders are preserved; new jobs resolve beneath `<base>/customers/<customer>/orders/<order>/...`.
+
+**Requested user prompt:** “I know that it was working because it created folders for users but int he wrong location. and after ever order sync it truncates the values what other method could i use to keep the information and make sure the files go to the correct location. I selected the customers folder and it created a new customers folder.”

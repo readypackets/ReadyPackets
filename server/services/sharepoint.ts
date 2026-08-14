@@ -60,6 +60,32 @@ interface GraphRuntimeConfig {
   enabled: boolean;
 }
 
+/**
+ * ReadyPackets owns the customer/order hierarchy below the configured root.
+ * Administrators may browse into an existing `customers` folder; normalize that
+ * selection back to its base so a future sync does not create `customers/customers`.
+ */
+export function normalizeSharePointRootFolderPath(value: string): string {
+  const normalized = value.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  if (!normalized || normalized.length > 240 || normalized.includes("..")) {
+    throw new Error("Select a valid SharePoint base folder without dot segments.");
+  }
+  const segments = normalized.split("/");
+  if (segments.some((segment) => !segment || !/^[A-Za-z0-9 _().-]{1,96}$/.test(segment))) {
+    throw new Error("The SharePoint root folder contains unsupported characters.");
+  }
+  const managedCustomersIndex = segments.findIndex((segment) => segment.toLowerCase() === "customers");
+  const baseSegments = managedCustomersIndex >= 0 ? segments.slice(0, managedCustomersIndex) : segments;
+  if (baseSegments.length === 0) {
+    throw new Error("Select a base folder above the ReadyPackets customers folder.");
+  }
+  return baseSegments.join("/");
+}
+
+function buildOrderRootFolderPath(rootFolderPath: string, customerFolder: string, orderNumber: string): string {
+  return `${rootFolderPath}/customers/${customerFolder}/orders/${orderNumber}`;
+}
+
 async function getGraphRuntimeConfig(): Promise<GraphRuntimeConfig> {
   const tenantId = (await getSetting("sharepoint.tenant_id")) || env.graph.tenantId || null;
   const clientId = (await getSetting("sharepoint.client_id")) || env.graph.clientId || null;
@@ -70,7 +96,8 @@ async function getGraphRuntimeConfig(): Promise<GraphRuntimeConfig> {
   const siteId = (await getSetting("sharepoint.site_id")) || env.graph.siteId || null;
   const driveId = (await getSetting("sharepoint.drive_id")) || env.graph.driveId || null;
   const siteUrl = (await getSetting("sharepoint.site_url")) || null;
-  const rootFolderPath = (await getSetting("sharepoint.root_folder_path")) || env.graph.rootFolderPath;
+  const configuredRootFolderPath = (await getSetting("sharepoint.root_folder_path")) || env.graph.rootFolderPath;
+  const rootFolderPath = normalizeSharePointRootFolderPath(configuredRootFolderPath);
   return {
     tenantId,
     clientId,
@@ -448,7 +475,7 @@ async function resolveOrderStageFolder(orderId: number, phase: string, graphConf
     ? templates.find((path) => /\/audio$/i.test(path)) ?? `Workflow/${stageKey}/Audio`
     : templates.find((path) => /\/(Docs|Client_Facing|Context)$/i.test(path)) ?? `Workflow/${stageKey}/Docs`;
   const destination = normalizeSharePointRelativePath(typeof configuredDestination === "string" && configuredDestination.trim() ? configuredDestination : fallback);
-  return { folderPath: `${graphConfig.rootFolderPath}/customers/${customerFolder}/orders/${order.orderNumber}/${destination}`, orderNumber: order.orderNumber };
+  return { folderPath: `${buildOrderRootFolderPath(graphConfig.rootFolderPath, customerFolder, order.orderNumber)}/${destination}`, orderNumber: order.orderNumber };
 }
 
 /** Queue an accepted local order file for asynchronous Graph synchronization when SharePoint is configured. */
@@ -744,7 +771,7 @@ async function jobCreateFolders(orderId: number, phase: string): Promise<void> {
     DEFAULT_FOLDER_TEMPLATES[phase] ??
     [];
 
-  const orderRoot = `${graphConfig.rootFolderPath}/customers/${customerFolder}/orders/${orderNumber}`;
+  const orderRoot = buildOrderRootFolderPath(graphConfig.rootFolderPath, customerFolder, orderNumber);
   const { folderPath: configuredStageFolder } = await resolveOrderStageFolder(orderId, phase, graphConfig);
   const folderPaths = new Set([...folderTemplate.map((subFolder) => `${orderRoot}/${subFolder}`), configuredStageFolder]);
 
@@ -797,7 +824,7 @@ async function jobAttachPlaceholders(orderId: number, phase: string): Promise<vo
     folderId = await ensureFolder(folderPath);
   } catch {
     // Folder may not exist yet if create_folders job hasn't run.
-    folderId = await ensureFolder(`${graphConfig.rootFolderPath}/customers/${customerFolder}/orders/${orderNumber}`);
+    folderId = await ensureFolder(buildOrderRootFolderPath(graphConfig.rootFolderPath, customerFolder, orderNumber));
   }
 
   for (const sourceFileName of placeholders) {

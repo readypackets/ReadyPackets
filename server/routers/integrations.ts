@@ -16,7 +16,7 @@ import { adminProcedure, staffProcedure, router } from "../trpc/trpc.js";
 import { TRPCError } from "@trpc/server";
 import { encryptField, decryptField } from "../security/crypto.js";
 import { env } from "../config/env.js";
-import { browseSharePointFolders, discoverSharePointConfig, runPhaseKickoff, resetGraphTokenCache, testSharePointConnection } from "../services/sharepoint.js";
+import { browseSharePointFolders, discoverSharePointConfig, normalizeSharePointRootFolderPath, runPhaseKickoff, resetGraphTokenCache, testSharePointConnection } from "../services/sharepoint.js";
 import { getSetting, setSetting } from "../services/settings.js";
 import { recordActivity } from "../observability/audit.js";
 import { orders } from "../db/schema.js";
@@ -375,12 +375,17 @@ export const integrationsRouter = router({
     const siteId = (await getSetting("sharepoint.site_id")) || env.graph.siteId || null;
     const driveId = (await getSetting("sharepoint.drive_id")) || env.graph.driveId || null;
     const siteUrl = await getSetting("sharepoint.site_url");
-    const rootFolderPath = (await getSetting("sharepoint.root_folder_path")) || env.graph.rootFolderPath;
+    const configuredRootFolderPath = (await getSetting("sharepoint.root_folder_path")) || env.graph.rootFolderPath;
+    const rootFolderPath = normalizeSharePointRootFolderPath(configuredRootFolderPath);
     const hasSecret = Boolean((await getSetting("sharepoint.client_secret_enc")) || env.graph.clientSecret);
+    const tenantIdValid = Boolean(tenantId && (/^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(tenantId) || /^[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9][A-Za-z0-9-]*)+$/.test(tenantId)));
+    const clientIdValid = Boolean(clientId && /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(clientId));
     return {
-      enabled: Boolean(tenantId && clientId && hasSecret && siteId && driveId),
+      enabled: Boolean(tenantIdValid && clientIdValid && hasSecret && siteId && driveId),
       tenantId: tenantId ? `...${tenantId.slice(-8)}` : null,
       clientId: clientId ? `...${clientId.slice(-8)}` : null,
+      tenantIdValid,
+      clientIdValid,
       siteId,
       driveId,
       siteUrl,
@@ -391,17 +396,21 @@ export const integrationsRouter = router({
 
   discoverGraphConfig: adminProcedure
     .input(z.object({
-      tenantId: z.string().trim().min(3).max(128).refine((value) => /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(value) || /^[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9][A-Za-z0-9-]*)+$/.test(value), "Enter the Microsoft Entra tenant ID GUID or verified tenant domain."),
-      clientId: z.string().trim().uuid("Enter the 36-character Application (client) ID from the Microsoft Entra app registration."),
+      tenantId: z.string().trim().min(3).max(128).refine((value) => /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(value) || /^[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9][A-Za-z0-9-]*)+$/.test(value), "Enter the Microsoft Entra tenant ID GUID or verified tenant domain.").optional(),
+      clientId: z.string().trim().uuid("Enter the 36-character Application (client) ID from the Microsoft Entra app registration.").optional(),
       clientSecret: z.string().max(512).optional(),
       siteUrl: z.string().trim().url().max(1024),
     }))
     .mutation(async ({ ctx, input }) => {
+      const storedTenantId = (await getSetting("sharepoint.tenant_id")) || env.graph.tenantId || null;
+      const storedClientId = (await getSetting("sharepoint.client_id")) || env.graph.clientId || null;
+      const tenantId = input.tenantId || storedTenantId;
+      const clientId = input.clientId || storedClientId;
       const storedSecret = await getSetting("sharepoint.client_secret_enc");
       const clientSecret = input.clientSecret || (storedSecret ? decryptField(storedSecret, "sharepoint.client_secret") : null);
-      if (!clientSecret) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Enter a client secret before discovery, or save one securely first." });
+      if (!tenantId || !clientId || !clientSecret) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Enter the complete tenant ID, application client ID, and client secret before discovery." });
       try {
-        const result = await discoverSharePointConfig({ tenantId: input.tenantId, clientId: input.clientId, clientSecret, siteUrl: input.siteUrl });
+        const result = await discoverSharePointConfig({ tenantId, clientId, clientSecret, siteUrl: input.siteUrl });
         void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "sharepoint.discovery_succeeded", entityType: "sharepoint", entityId: 0, summary: `Discovered SharePoint site ${result.siteName} and ${result.drives.length} document library/libraries`, ipAddress: ctx.clientIp });
         return result;
       } catch (error) {
@@ -438,8 +447,8 @@ export const integrationsRouter = router({
 
   saveGraphConfig: adminProcedure
     .input(z.object({
-      tenantId: z.string().trim().min(3).max(128).refine((value) => /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(value) || /^[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9][A-Za-z0-9-]*)+$/.test(value), "Enter the Microsoft Entra tenant ID GUID or verified tenant domain."),
-      clientId: z.string().trim().uuid("Enter the 36-character Application (client) ID from the Microsoft Entra app registration."),
+      tenantId: z.string().trim().min(3).max(128).refine((value) => /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(value) || /^[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9][A-Za-z0-9-]*)+$/.test(value), "Enter the Microsoft Entra tenant ID GUID or verified tenant domain.").optional(),
+      clientId: z.string().trim().uuid("Enter the 36-character Application (client) ID from the Microsoft Entra app registration.").optional(),
       clientSecret: z.string().max(512).optional(),
       siteId: z.string().trim().min(1).max(512),
       driveId: z.string().trim().min(1).max(512),
@@ -447,12 +456,18 @@ export const integrationsRouter = router({
       rootFolderPath: z.string().trim().min(1).max(512),
     }))
     .mutation(async ({ ctx, input }) => {
-      await setSetting("sharepoint.tenant_id", input.tenantId, { category: "sharepoint", userId: ctx.session.user.id });
-      await setSetting("sharepoint.client_id", input.clientId, { category: "sharepoint", userId: ctx.session.user.id });
+      const storedTenantId = (await getSetting("sharepoint.tenant_id")) || env.graph.tenantId || null;
+      const storedClientId = (await getSetting("sharepoint.client_id")) || env.graph.clientId || null;
+      const tenantId = input.tenantId || storedTenantId;
+      const clientId = input.clientId || storedClientId;
+      if (!tenantId || !clientId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Enter the complete Microsoft Entra tenant ID and application client ID before saving." });
+      const normalizedRootFolderPath = normalizeSharePointRootFolderPath(input.rootFolderPath);
+      if (input.tenantId) await setSetting("sharepoint.tenant_id", tenantId, { category: "sharepoint", userId: ctx.session.user.id });
+      if (input.clientId) await setSetting("sharepoint.client_id", clientId, { category: "sharepoint", userId: ctx.session.user.id });
       await setSetting("sharepoint.site_id", input.siteId, { category: "sharepoint", userId: ctx.session.user.id });
       await setSetting("sharepoint.drive_id", input.driveId, { category: "sharepoint", userId: ctx.session.user.id });
       await setSetting("sharepoint.site_url", input.siteUrl || null, { category: "sharepoint", userId: ctx.session.user.id });
-      await setSetting("sharepoint.root_folder_path", input.rootFolderPath, { category: "sharepoint", userId: ctx.session.user.id });
+      await setSetting("sharepoint.root_folder_path", normalizedRootFolderPath, { category: "sharepoint", userId: ctx.session.user.id });
       if (input.clientSecret) {
         await setSetting(
           "sharepoint.client_secret_enc",

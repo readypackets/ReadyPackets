@@ -423,14 +423,26 @@ function SharePointTab() {
     if (!data) return;
     setForm((current) => ({
       ...current,
-      tenantId: data.tenantId ?? "",
-      clientId: data.clientId ?? "",
+      // The API returns masked identifiers for display only. Never copy them
+      // into editable state, otherwise a partial root-folder save overwrites
+      // the real Entra values with `...suffix`.
+      tenantId: current.tenantId,
+      clientId: current.clientId,
       siteId: data.siteId ?? "",
       driveId: data.driveId ?? "",
       siteUrl: data.siteUrl ?? "",
       rootFolderPath: data.rootFolderPath ?? "ReadyPackets/Orders",
     }));
   }, [data]);
+
+  const tenantReady = Boolean(form.tenantId.trim() || data?.tenantIdValid);
+  const clientReady = Boolean(form.clientId.trim() || data?.clientIdValid);
+  const secretReady = Boolean(form.clientSecret.trim() || data?.hasSecret);
+  const selectedRootPath = (path: string) => {
+    const segments = path.split("/").filter(Boolean);
+    const customersIndex = segments.findIndex((segment) => segment.toLowerCase() === "customers");
+    return (customersIndex >= 0 ? segments.slice(0, customersIndex) : segments).join("/");
+  };
 
   const discover = trpc.integrations.discoverGraphConfig.useMutation({
     onSuccess(result) {
@@ -472,8 +484,8 @@ function SharePointTab() {
           </span>
         </div>
         <div className="grid gap-4 md:grid-cols-2">
-          <Input label="Tenant ID" value={form.tenantId} onChange={(e) => setForm({ ...form, tenantId: e.target.value })} placeholder="Azure AD tenant ID" />
-          <Input label="Client ID" value={form.clientId} onChange={(e) => setForm({ ...form, clientId: e.target.value })} placeholder="App registration client ID" />
+          <Input label={data?.tenantIdValid ? "Tenant ID (saved; enter only to replace)" : "Tenant ID (replacement required)"} value={form.tenantId} onChange={(e) => setForm({ ...form, tenantId: e.target.value })} placeholder={data?.tenantIdValid ? `${data.tenantId ?? "Saved"} — leave blank to preserve` : "Enter the complete Directory (tenant) ID or tenant domain"} help={data?.tenantIdValid ? "Saved value is masked and never copied into this field." : "The currently saved value is incomplete. Enter the full Directory (tenant) ID or a verified tenant domain."} />
+          <Input label={data?.clientIdValid ? "Client ID (saved; enter only to replace)" : "Client ID (replacement required)"} value={form.clientId} onChange={(e) => setForm({ ...form, clientId: e.target.value })} placeholder={data?.clientIdValid ? `${data.clientId ?? "Saved"} — leave blank to preserve` : "Enter the complete 36-character Application (client) ID"} help={data?.clientIdValid ? "Saved value is masked and never copied into this field." : "The currently saved value is incomplete. Enter the full Application (client) ID from Microsoft Entra."} />
           <Input label={data?.hasSecret ? "Client secret (leave blank to keep existing)" : "Client secret"} type="password" value={form.clientSecret} onChange={(e) => setForm({ ...form, clientSecret: e.target.value })} placeholder={data?.hasSecret ? "Saved securely" : "Azure app client secret"} />
           <Input label="SharePoint site ID" value={form.siteId} onChange={(e) => setForm({ ...form, siteId: e.target.value })} placeholder="Filled automatically after discovery" help="Use Discover site & library to obtain this Microsoft Graph identifier." />
           <Input label="Drive ID" value={form.driveId} onChange={(e) => setForm({ ...form, driveId: e.target.value })} placeholder="Filled automatically after discovery" help="The default document library is selected automatically; you may choose another discovered library." />
@@ -489,18 +501,18 @@ function SharePointTab() {
             </div>
           ) : null}
           <div className="md:col-span-2">
-            <Input label="Root folder path" value={form.rootFolderPath} onChange={(e) => setForm({ ...form, rootFolderPath: e.target.value })} placeholder="ReadyPackets/Orders" help="Orders are created beneath customers/{customerId}/orders/{orderId}. Save settings, then browse to select an existing folder without creating one." />
-            {data?.enabled ? <div className="mt-3 rounded-lg border border-teal/20 bg-teal/5 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-semibold text-brand-navy">Select existing root folder</p><p className="text-xs text-gray-600">Browsing is read-only. Choose an existing SharePoint folder as the root; no folders or files are created.</p></div><div className="flex gap-2">{folders.data?.parentPath !== null && folders.data ? <Button size="sm" variant="outline" onClick={() => setBrowsePath(folders.data.parentPath ?? "")}>Up</Button> : null}<Button size="sm" variant="outline" busy={folders.isFetching} onClick={() => void folders.refetch()}>Refresh</Button></div></div><p className="mt-2 font-mono text-xs text-gray-600">/{(folders.data?.currentPath ?? browsePath) || ""}</p>{folders.isError ? <p className="mt-2 text-xs text-danger">{folders.error.message}</p> : null}<div className="mt-3 flex flex-wrap gap-2">{(folders.data?.folders ?? []).length ? folders.data!.folders.map((folder) => <Button key={folder.id} size="sm" variant="outline" onClick={() => setBrowsePath(folder.path)}>{folder.name}</Button>) : <span className="text-xs text-gray-500">No child folders found at this location.</span>}</div><div className="mt-3"><Button size="sm" variant="primary" disabled={!folders.data?.currentPath} onClick={() => setForm((current) => ({ ...current, rootFolderPath: folders.data?.currentPath ?? current.rootFolderPath }))}>Use current folder as root</Button></div></div> : <p className="mt-2 text-xs text-gray-500">Save valid site and document-library settings first, then the read-only folder browser will be available.</p>}
+            <Input label="ReadyPackets base folder" value={form.rootFolderPath} onChange={(e) => setForm({ ...form, rootFolderPath: e.target.value })} placeholder="RP_Intake_Raw/ReadyPackets" help="ReadyPackets creates customers/{customerId}/orders/{orderId} beneath this base. Selecting a folder named customers automatically uses its parent to prevent customers/customers." />
+            {data?.enabled ? <div className="mt-3 rounded-lg border border-teal/20 bg-teal/5 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-semibold text-brand-navy">Select existing ReadyPackets base folder</p><p className="text-xs text-gray-600">Browsing is read-only. Select the folder above customers; if you browse into customers, the parent is automatically used as the base.</p></div><div className="flex gap-2">{folders.data?.parentPath !== null && folders.data ? <Button size="sm" variant="outline" onClick={() => setBrowsePath(folders.data.parentPath ?? "")}>Up</Button> : null}<Button size="sm" variant="outline" busy={folders.isFetching} onClick={() => void folders.refetch()}>Refresh</Button></div></div><p className="mt-2 font-mono text-xs text-gray-600">/{(folders.data?.currentPath ?? browsePath) || ""}</p>{folders.isError ? <p className="mt-2 text-xs text-danger">{folders.error.message}</p> : null}<div className="mt-3 flex flex-wrap gap-2">{(folders.data?.folders ?? []).length ? folders.data!.folders.map((folder) => <Button key={folder.id} size="sm" variant="outline" onClick={() => setBrowsePath(folder.path)}>{folder.name}</Button>) : <span className="text-xs text-gray-500">No child folders found at this location.</span>}</div><div className="mt-3"><Button size="sm" variant="primary" disabled={!folders.data?.currentPath} onClick={() => setForm((current) => ({ ...current, rootFolderPath: selectedRootPath(folders.data?.currentPath ?? current.rootFolderPath) || current.rootFolderPath }))}>Use current folder as base</Button></div></div> : <p className="mt-2 text-xs text-gray-500">Save valid tenant, client, site, and document-library settings first, then the read-only folder browser will be available.</p>}
           </div>
         </div>
         <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-gray-100 pt-4">
           <Button
             variant="outline"
             busy={discover.isPending}
-            disabled={!form.tenantId.trim() || !form.clientId.trim() || !form.siteUrl.trim() || (!form.clientSecret.trim() && !data?.hasSecret)}
+            disabled={!tenantReady || !clientReady || !form.siteUrl.trim() || !secretReady}
             onClick={() => discover.mutate({
-              tenantId: form.tenantId.trim(),
-              clientId: form.clientId.trim(),
+              tenantId: form.tenantId.trim() || undefined,
+              clientId: form.clientId.trim() || undefined,
               clientSecret: form.clientSecret.trim() || undefined,
               siteUrl: form.siteUrl.trim(),
             })}
@@ -510,12 +522,11 @@ function SharePointTab() {
           <Button variant="outline" busy={testConnection.isPending} disabled={!data?.enabled} onClick={() => testConnection.mutate()}>Test SharePoint connection</Button>
           <Button
             busy={save.isPending}
-            disabled={!form.tenantId.trim() || !form.clientId.trim() || !form.siteId.trim() || !form.driveId.trim() || !form.rootFolderPath.trim() || (!form.clientSecret.trim() && !data?.hasSecret)}
+            disabled={!tenantReady || !clientReady || !form.siteId.trim() || !form.driveId.trim() || !form.rootFolderPath.trim() || !secretReady}
             onClick={() => save.mutate({
-              ...form,
-              tenantId: form.tenantId.trim(),
-              clientId: form.clientId.trim(),
-              clientSecret: form.clientSecret.trim(),
+              tenantId: form.tenantId.trim() || undefined,
+              clientId: form.clientId.trim() || undefined,
+              clientSecret: form.clientSecret.trim() || undefined,
               siteId: form.siteId.trim(),
               driveId: form.driveId.trim(),
               siteUrl: form.siteUrl.trim(),
@@ -525,7 +536,7 @@ function SharePointTab() {
             Save SharePoint settings
           </Button>
           {data?.siteUrl ? <a className="text-sm font-medium text-teal-700 hover:underline" href={data.siteUrl} target="_blank" rel="noreferrer">Open SharePoint site</a> : null}
-          <p className="basis-full text-xs text-gray-500">Step 1: enter the tenant, client, secret, and SharePoint URL. Step 2: use discovery to populate the site and document-library IDs. Step 3: save, then use the read-only folder browser to select an existing root folder. Step 4: run Test SharePoint connection. Discovery and testing use credentials only on the server and never display the client secret.</p>
+          <p className="basis-full text-xs text-gray-500">Step 1: enter complete Microsoft Entra values only when replacing saved credentials; masked values are display-only and are preserved on partial saves. Step 2: use discovery to populate site and library IDs. Step 3: save a base folder above customers. Step 4: run Test SharePoint connection. Discovery and testing use credentials only on the server and never display the client secret.</p>
         </div>
       </Card>
 
