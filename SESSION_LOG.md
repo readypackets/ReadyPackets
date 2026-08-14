@@ -2357,3 +2357,21 @@ The SharePoint repair and connection-management implementation was published in 
 
 
 **Publication record:** The release implementation was committed and pushed to GitHub as `4b7bc1c5f96ce8e161f30d03eb22f6ff9033335e` (`feat: add audited refunds, coupon tracking, and admin navigation`). The production `RELEASE_COMMIT` marker was set to the same commit after health verification. The final session-log publication record follows in a separate documentation-only commit.
+
+
+## 2026-08-14 — Order workspace operations release
+
+**User request:** Add searchable account/order refund selection, order-level refund access, an order history tab, an MNDA tab, phase-separated administrator file management, and correct customer workflow steps incorrectly marked as Upcoming.
+
+**Delivered:**
+
+- Added `stripe.refundEligibleOrders`, an administrator-only paid Stripe order lookup that supports selected accounts and public order/customer references.
+- Updated Finance → Refunds with customer search, account selection, paid-order selection, remaining-balance quote, reason, review, and the existing exact `REFUND ORDER` confirmation.
+- Added paid-order Invoice and Refund actions at the top of the administrator order workspace and a Refund tab immediately after Automation; the order action opens Finance with the relevant order selected.
+- Added Order history and MNDA tabs next to Automation. History shows lifecycle transitions and order-scoped audited actions; MNDA shows order acceptance, policy version, signer, source address, acceptance time, and signed-file reference.
+- Reworked the administrator Files tab to group files by their assigned workflow phase, including customer/staff artifact context and publication controls per file.
+- Corrected the customer workflow stepper’s legacy Phase I/Phase II key mapping so the active step is shown as Open and matching completed stages show Review instead of an incorrect Upcoming label.
+
+**Validation:** TypeScript passed with zero errors; `pnpm test` passed 155/155; production server/client deployment completed with timestamped rollback copies; production health returned `{"status":"ok"}` after its normal post-restart startup interval.
+
+**Operational note:** The background SharePoint queue currently reports Microsoft Graph authentication HTTP 400 for pending file transfers, which is separate from this release and requires re-testing the saved Graph tenant/client/secret configuration in Admin → Integrations.

@@ -159,3 +159,12 @@ The administration sidebar is grouped as **Order operations**, **Customers & sup
 ### Searchable activity history
 
 In **Activity Replay**, both **Entity history** when Entity type is User and **User timeline** provide a searchable account selector. Search by customer name, email, or public `RP-U-…` identifier, select the account, and use **Load history** or **Load timeline** to retrieve its recorded activity.
+
+
+### Order workspace refunds, history, MNDA, and phase files
+
+Administrators can initiate a Stripe refund either from **Admin → Finance → Refunds** or from a paid order’s **Refund** button and **Refund** workspace tab. Finance provides a customer search, a matching-account selector, and a paid-order selector; the order workspace link opens Finance with the order preselected. Every refund still requires a reason, review step, exact `REFUND ORDER` typed confirmation, remaining-balance validation, and an idempotent Stripe request.
+
+The administrator order workspace now includes **Order history** and **MNDA** tabs beside Automation. Order history presents lifecycle status transitions and order-scoped activity events. MNDA presents order-specific acceptance status, policy version, signer, acceptance date, captured source address, and whether a signed file was attached. The **Files** tab separates order files into their assigned workflow phases, making customer artifacts, staff documents, and customer publication visibility easier to review by phase.
+
+Customer workflow steps map legacy `phase_1` and `phase_2` lock records to the corresponding guided workflow keys, so the current starting step shows **Open** and completed legacy phases show **Review** instead of incorrectly appearing as Upcoming.

@@ -248,6 +248,26 @@ export const stripeRouter = router({
     };
   }),
 
+  refundEligibleOrders: adminProcedure
+    .input(z.object({ search: z.string().trim().max(190).optional(), userId: z.number().int().positive().optional(), limit: z.number().int().min(1).max(50).default(25) }).optional())
+    .query(async ({ input }) => {
+      const search = input?.search?.trim();
+      const conditions = [sql`${orders.deletedAt} IS NULL`, eq(payments.provider, "stripe"), eq(payments.status, "succeeded")];
+      if (input?.userId) conditions.push(eq(orders.userId, input.userId));
+      if (search) conditions.push(sql`(${orders.orderNumber} LIKE ${`%${search}%`} OR ${users.publicId} LIKE ${`%${search}%`})`);
+      const rows = await db
+        .select({ id: orders.id, orderNumber: orders.orderNumber, userId: orders.userId, customerPublicId: users.publicId, paymentId: payments.id, paidCents: payments.amountCents, receivedAt: payments.receivedAt })
+        .from(orders)
+        .innerJoin(payments, eq(payments.orderId, orders.id))
+        .leftJoin(users, eq(users.id, orders.userId))
+        .where(and(...conditions))
+        .orderBy(desc(payments.receivedAt))
+        .limit(input?.limit ?? 25);
+      const unique = new Map<number, (typeof rows)[number]>();
+      for (const row of rows) if (!unique.has(row.id)) unique.set(row.id, row);
+      return Array.from(unique.values());
+    }),
+
   refundQuote: adminProcedure
     .input(z.object({ orderId: z.number().int().positive() }))
     .query(async ({ input }) => {

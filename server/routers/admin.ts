@@ -23,6 +23,9 @@ import {
   homeContentBlocks,
   intakeAnswers,
   intakeSubmissions,
+  mndaAcceptances,
+  activityLogs,
+  orderStatusHistory,
   orderNotes,
   orderQuestionTemplates,
   orderQuestions,
@@ -505,6 +508,24 @@ export const adminRouter = router({
         .where(and(eq(files.orderId, input.orderId), isNull(files.deletedAt)))
         .orderBy(desc(files.createdAt));
 
+      const statusHistory = await db
+        .select({ id: orderStatusHistory.id, fromStatus: orderStatusHistory.fromStatus, toStatus: orderStatusHistory.toStatus, reason: orderStatusHistory.reason, createdAt: orderStatusHistory.createdAt, actorUserId: orderStatusHistory.actorUserId })
+        .from(orderStatusHistory)
+        .where(eq(orderStatusHistory.orderId, input.orderId))
+        .orderBy(desc(orderStatusHistory.createdAt));
+      const activityHistory = await db
+        .select({ id: activityLogs.id, action: activityLogs.action, severity: activityLogs.severity, summary: activityLogs.summary, actorRole: activityLogs.actorRole, createdAt: activityLogs.createdAt })
+        .from(activityLogs)
+        .where(and(eq(activityLogs.entityType, "order"), eq(activityLogs.entityId, String(input.orderId))))
+        .orderBy(desc(activityLogs.createdAt))
+        .limit(250);
+      const mndaRows = await db
+        .select({ id: mndaAcceptances.id, policyVersionId: mndaAcceptances.policyVersionId, signatureNameEnc: mndaAcceptances.signatureNameEnc, signatureMethod: mndaAcceptances.signatureMethod, uploadedFileId: mndaAcceptances.uploadedFileId, acceptedAt: mndaAcceptances.acceptedAt, ipAddress: mndaAcceptances.ipAddress, userAgent: mndaAcceptances.userAgent, version: policyVersions.version })
+        .from(mndaAcceptances)
+        .leftJoin(policyVersions, eq(mndaAcceptances.policyVersionId, policyVersions.id))
+        .where(eq(mndaAcceptances.orderId, input.orderId))
+        .orderBy(desc(mndaAcceptances.acceptedAt));
+
       const lineItems = await db
         .select({ productId: orderItems.productId, quantity: orderItems.quantity, productName: products.name })
         .from(orderItems)
@@ -559,6 +580,21 @@ export const adminRouter = router({
           status: question.status,
         })),
         attachments,
+        history: {
+          status: statusHistory,
+          activity: activityHistory,
+        },
+        mnda: mndaRows.map((row) => ({
+          id: row.id,
+          policyVersionId: row.policyVersionId,
+          version: row.version ?? "Unknown version",
+          signatureName: decryptField(row.signatureNameEnc, `mnda:${row.id}`) ?? "",
+          signatureMethod: row.signatureMethod,
+          uploadedFileId: row.uploadedFileId,
+          acceptedAt: row.acceptedAt,
+          ipAddress: row.ipAddress,
+          userAgent: row.userAgent,
+        })),
         lineItems,
         intakeSubmission: submission[0]
           ? {

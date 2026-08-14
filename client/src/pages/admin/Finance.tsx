@@ -5,6 +5,7 @@
  * referrals, payouts, and refunds.
  */
 import { useState } from "react";
+import { useSearch } from "wouter";
 import { trpc } from "../../lib/trpc";
 import { Card } from "../../components/ui/Surface";
 import { Button } from "../../components/ui/Button";
@@ -426,6 +427,7 @@ function CouponsTab() {
 // ---------------------------------------------------------------------------
 
 function RefundsTab() {
+  const initialOrderId = new URLSearchParams(useSearch()).get("orderId") ?? "";
   const [page] = useState(1);
   const { data, refetch } = trpc.stripe.refunds.useQuery({ page });
   const initiate = trpc.stripe.initiateRefund.useMutation({ onSuccess: () => void refetch() });
@@ -433,14 +435,18 @@ function RefundsTab() {
   const [open, setOpen] = useState(false);
   const [confirmationOpen, setConfirmationOpen] = useState(false);
   const [typedConfirmation, setTypedConfirmation] = useState("");
-  const [form, setForm] = useState({ orderId: "", amountCents: "", reason: "" });
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [form, setForm] = useState({ orderId: initialOrderId, amountCents: "", reason: "" });
+  const customers = trpc.admin.customers.useQuery({ search: customerSearch || undefined, limit: 25 }, { enabled: open });
+  const eligibleOrders = trpc.stripe.refundEligibleOrders.useQuery({ userId: selectedUserId ? Number(selectedUserId) : undefined, limit: 50 }, { enabled: open });
   const orderId = Number(form.orderId);
   const quote = trpc.stripe.refundQuote.useQuery({ orderId }, { enabled: open && Number.isInteger(orderId) && orderId > 0, retry: false });
 
   function reviewRefund() {
     const amount = Number(form.amountCents);
     if (!orderId || !Number.isInteger(amount) || amount <= 0 || form.reason.trim().length < 10) {
-      toast.error("Enter a valid order, amount, and a reason of at least 10 characters.");
+      toast.error("Select a paid order, amount, and a reason of at least 10 characters.");
       return;
     }
     if (!quote.data || amount > quote.data.remainingCents) {
@@ -458,6 +464,7 @@ function RefundsTab() {
       setConfirmationOpen(false);
       setOpen(false);
       setForm({ orderId: "", amountCents: "", reason: "" });
+      setSelectedUserId("");
     } catch (error: any) {
       toast.error("Refund was not completed", error.message ?? "Stripe rejected the refund request.");
     }
@@ -467,8 +474,8 @@ function RefundsTab() {
     <div>
       <div className="mb-4 flex justify-end"><Button size="sm" onClick={() => setOpen(true)}>Initiate refund</Button></div>
       <div className="overflow-x-auto"><table className="min-w-full text-sm"><thead><tr className="border-b text-left text-gray-500"><th className="py-2 pr-4">Order</th><th className="py-2 pr-4">Amount</th><th className="py-2 pr-4">Reason</th><th className="py-2 pr-4">Status</th><th className="py-2">Date</th></tr></thead><tbody>{data?.rows.map((r) => <tr key={r.id} className="border-b hover:bg-gray-50"><td className="py-2 pr-4">#{r.orderId}</td><td className="py-2 pr-4">{formatCents(r.amountCents)}</td><td className="py-2 pr-4 text-gray-600">{r.reason ?? "—"}</td><td className="py-2 pr-4"><span className={`rounded px-2 py-0.5 text-xs font-medium ${r.status === "completed" ? "bg-green-100 text-green-800" : r.status === "failed" ? "bg-red-100 text-red-800" : "bg-yellow-100 text-yellow-800"}`}>{r.status}</span></td><td className="py-2 text-gray-500">{r.processedAt ? new Date(r.processedAt).toLocaleDateString() : new Date(r.createdAt).toLocaleDateString()}</td></tr>)}{!data?.rows.length && <tr><td colSpan={5} className="py-8 text-center text-gray-400">No refunds yet.</td></tr>}</tbody></table></div>
-      <Modal open={open} onClose={() => setOpen(false)} title="Prepare Stripe refund" description="This first step reviews the request. A second typed confirmation is required before Stripe is called."><div className="space-y-4"><Field label="Order ID"><Input type="number" value={form.orderId} onChange={e => setForm(f => ({ ...f, orderId: e.target.value }))} /></Field>{quote.data && <div className="rounded-lg border border-line bg-surface-soft p-3 text-sm"><p>Successful payment: <strong>{formatCents(quote.data.paidCents)}</strong></p><p className="mt-1">Remaining refundable balance: <strong>{formatCents(quote.data.remainingCents)}</strong></p></div>}{quote.error && <p className="text-sm text-red-700">{quote.error.message}</p>}<Field label="Refund amount (cents)"><Input type="number" value={form.amountCents} onChange={e => setForm(f => ({ ...f, amountCents: e.target.value }))} /></Field><Field label="Reason (required, 10+ characters)"><Input value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} /></Field></div><div className="mt-6 flex justify-end gap-3"><Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={reviewRefund} disabled={quote.isFetching}>Review refund</Button></div></Modal>
-      <Modal open={confirmationOpen} onClose={() => setConfirmationOpen(false)} title="Final refund confirmation" description={`You are about to submit a ${formatCents(Number(form.amountCents) || 0)} refund for order #${form.orderId}. This sends the request to Stripe.`}><div className="space-y-4"><p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900">This action cannot be undone from ReadyPackets. Type the confirmation exactly to continue.</p><Field label="Type REFUND ORDER to confirm"><Input value={typedConfirmation} onChange={e => setTypedConfirmation(e.target.value.toUpperCase())} placeholder="REFUND ORDER" /></Field></div><div className="mt-6 flex justify-end gap-3"><Button variant="ghost" onClick={() => setConfirmationOpen(false)}>Cancel</Button><Button variant="danger" busy={initiate.isPending} disabled={typedConfirmation !== "REFUND ORDER"} onClick={executeRefund}>Submit refund to Stripe</Button></div></Modal>
+      <Modal open={open} onClose={() => setOpen(false)} title="Prepare Stripe refund" description="Search an account, select its paid order, and review the request. A second typed confirmation is required before Stripe is called."><div className="space-y-4"><Field label="Search customer"><Input value={customerSearch} onChange={e => { setCustomerSearch(e.target.value); setSelectedUserId(""); setForm(f => ({ ...f, orderId: "" })); }} placeholder="Name, email, or RP-U public ID" /></Field><Field label="Customer account"><Select value={selectedUserId} onChange={e => { setSelectedUserId(e.target.value); setForm(f => ({ ...f, orderId: "" })); }} options={[{ value: "", label: customerSearch ? "Select a matching account…" : "All paid orders" }, ...(customers.data ?? []).map(customer => ({ value: String(customer.id), label: `${customer.name} · ${customer.publicId ?? customer.email}` }))]} /></Field><Field label="Paid order"><Select value={form.orderId} onChange={e => setForm(f => ({ ...f, orderId: e.target.value }))} options={[{ value: "", label: "Select a paid Stripe order…" }, ...(eligibleOrders.data ?? []).map(order => ({ value: String(order.id), label: `${order.orderNumber} · ${order.customerPublicId ?? "Customer"} · ${formatCents(order.paidCents)}` }))]} /></Field>{quote.data && <div className="rounded-lg border border-line bg-surface-soft p-3 text-sm"><p>Successful payment: <strong>{formatCents(quote.data.paidCents)}</strong></p><p className="mt-1">Remaining refundable balance: <strong>{formatCents(quote.data.remainingCents)}</strong></p></div>}{quote.error && <p className="text-sm text-red-700">{quote.error.message}</p>}<Field label="Refund amount (cents)"><Input type="number" value={form.amountCents} onChange={e => setForm(f => ({ ...f, amountCents: e.target.value }))} /></Field><Field label="Reason (required, 10+ characters)"><Input value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} /></Field></div><div className="mt-6 flex justify-end gap-3"><Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={reviewRefund} disabled={quote.isFetching}>Review refund</Button></div></Modal>
+      <Modal open={confirmationOpen} onClose={() => setConfirmationOpen(false)} title="Final refund confirmation" description={`You are about to submit a ${formatCents(Number(form.amountCents) || 0)} refund for the selected order. This sends the request to Stripe.`}><div className="space-y-4"><p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900">This action cannot be undone from ReadyPackets. Type the confirmation exactly to continue.</p><Field label="Type REFUND ORDER to confirm"><Input value={typedConfirmation} onChange={e => setTypedConfirmation(e.target.value.toUpperCase())} placeholder="REFUND ORDER" /></Field></div><div className="mt-6 flex justify-end gap-3"><Button variant="ghost" onClick={() => setConfirmationOpen(false)}>Cancel</Button><Button variant="danger" busy={initiate.isPending} disabled={typedConfirmation !== "REFUND ORDER"} onClick={executeRefund}>Submit refund to Stripe</Button></div></Modal>
     </div>
   );
 }
@@ -478,7 +485,8 @@ function RefundsTab() {
 // ---------------------------------------------------------------------------
 
 export function AdminFinancePage() {
-  const [tab, setTab] = useState("settings");
+  const financeSearch = useSearch();
+  const [tab, setTab] = useState(() => new URLSearchParams(financeSearch).has("orderId") ? "refunds" : "settings");
   const overview = trpc.stripe.financeOverview.useQuery();
 
   return (

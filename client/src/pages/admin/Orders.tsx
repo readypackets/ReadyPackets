@@ -13,6 +13,8 @@ import {
   ClipboardList,
   Download,
   Grid2X2,
+  History,
+  FileSignature,
   LayoutList,
   Lock,
   MessageSquarePlus,
@@ -958,7 +960,7 @@ export function AdminOrderDetailPage() {
         breadcrumb={{ href: "/admin/orders", label: "Order queue" }}
         actions={
           <div className="flex flex-wrap gap-2">
-            {["paid", "partially_refunded"].includes(order.paymentStatus) ? <LinkButton href={`/admin/orders/${order.id}/invoice`} variant="outline">Invoice</LinkButton> : null}
+            {["paid", "partially_refunded"].includes(order.paymentStatus) ? <><LinkButton href={`/admin/orders/${order.id}/invoice`} variant="outline">Invoice</LinkButton>{session.isAdmin ? <LinkButton href={`/admin/finance?orderId=${order.id}`} variant="danger">Refund</LinkButton> : null}</> : null}
             {session.isAdmin ? (
               <Button
                 variant="ghost"
@@ -996,6 +998,9 @@ export function AdminOrderDetailPage() {
           { id: "files", label: `Files (${attachments.length})` },
           { id: "phase-locks", label: `Phase locks (${(phaseLocks.data ?? []).filter((lock) => !lock.unlockedAt).length})` },
           { id: "automation", label: "Automation" },
+          { id: "refund", label: "Refund" },
+          { id: "history", label: "Order history" },
+          { id: "mnda", label: `MNDA (${detail.data.mnda.length})` },
         ]}
         active={tab}
         onChange={setTab}
@@ -1004,6 +1009,14 @@ export function AdminOrderDetailPage() {
         {tab === "automation" ? (
           <OrderAutomationTab order={order} customer={customer} />
         ) : null}
+        {tab === "refund" ? (
+          <Card>
+            <CardHeader title="Refund this order" description="Refunds are sent to Stripe only after a review and exact typed confirmation." />
+            {["paid", "partially_refunded"].includes(order.paymentStatus) ? <div className="mt-4 space-y-4"><Alert tone="warning">A refund is irreversible in ReadyPackets. The Finance workspace verifies the remaining refundable balance, requires a reason, and requires the exact phrase <code>REFUND ORDER</code> before Stripe is called.</Alert><LinkButton href={`/admin/finance?orderId=${order.id}`} variant="danger">Prepare refund for {order.orderNumber}</LinkButton></div> : <Alert tone="info" className="mt-4">This order has no confirmed Stripe payment available for a portal refund.</Alert>}
+          </Card>
+        ) : null}
+        {tab === "history" ? <OrderHistoryTab statusHistory={detail.data.history.status} activityHistory={detail.data.history.activity} /> : null}
+        {tab === "mnda" ? <OrderMndaTab acceptances={detail.data.mnda} /> : null}
         {tab === "overview" ? (
           <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr] lg:items-start">
             <div className="space-y-6">
@@ -1442,38 +1455,19 @@ export function AdminOrderDetailPage() {
             {(files.data ?? []).length === 0 ? (
               <p className="mt-4 text-sm text-body">No files have been uploaded to this order.</p>
             ) : (
-              <ul className="mt-4 divide-y divide-line">
-                {(files.data ?? []).map((file) => (
-                  <li key={file.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-ink">{file.originalName}</p>
-                      <p className="mt-0.5 text-xs text-muted">
-                        {file.phase === "phase_1" ? (file.category === "intake_attachment" ? "Phase 1 intake" : "Phase 1 staff document") : file.phase === "phase_2" ? (file.category === "intake_attachment" ? "Phase 2 customer artifact" : "Phase 2 staff document") : "General / delivery"} · {formatBytes(file.sizeBytes)} · v{file.version} · {formatDate(file.createdAt)}
-                      </p>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant={file.visibleToCustomer ? "outline" : "primary"}
-                      busy={setVisibility.isPending}
-                      onClick={() =>
-                        setVisibility.mutate({
-                          fileId: file.id,
-                          visibleToCustomer: !file.visibleToCustomer,
-                        })
-                      }
-                      leadingIcon={
-                        file.visibleToCustomer ? (
-                          <Unlock className="size-4" aria-hidden="true" />
-                        ) : (
-                          <Lock className="size-4" aria-hidden="true" />
-                        )
-                      }
-                    >
-                      {file.visibleToCustomer ? "Visible to customer" : "Publish"}
-                    </Button>
-                  </li>
-                ))}
-              </ul>
+              <div className="mt-4 space-y-6">
+                {(() => {
+                  const grouped = new Map<string, any[]>();
+                  for (const file of files.data ?? []) {
+                    const key = file.phase || "general";
+                    grouped.set(key, [...(grouped.get(key) ?? []), file]);
+                  }
+                  return Array.from(grouped.entries()).map(([phase, phaseFiles]) => {
+                    const phaseLabel = phaseUploadOptions.find((option) => option.value === phase)?.label ?? (phase === "general" ? "General / delivery" : phase.replaceAll("_", " "));
+                    return <section key={phase} className="overflow-hidden rounded-lg border border-line"><div className="flex items-center justify-between border-b border-line bg-surface-soft px-4 py-3"><div><p className="font-medium text-ink">{phaseLabel}</p><p className="mt-0.5 text-xs text-muted">{phaseFiles.length} file{phaseFiles.length === 1 ? "" : "s"} assigned to this phase</p></div><Badge tone="neutral">{phase}</Badge></div><ul className="divide-y divide-line">{phaseFiles.map((file) => <li key={file.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"><div className="min-w-0"><p className="truncate text-sm font-medium text-ink">{file.originalName}</p><p className="mt-0.5 text-xs text-muted">{file.category === "intake_attachment" ? "Customer artifact" : "Staff document"} · {formatBytes(file.sizeBytes)} · v{file.version} · {formatDate(file.createdAt)}</p></div><Button size="sm" variant={file.visibleToCustomer ? "outline" : "primary"} busy={setVisibility.isPending} onClick={() => setVisibility.mutate({ fileId: file.id, visibleToCustomer: !file.visibleToCustomer })} leadingIcon={file.visibleToCustomer ? <Unlock className="size-4" aria-hidden="true" /> : <Lock className="size-4" aria-hidden="true" />}>{file.visibleToCustomer ? "Visible to customer" : "Publish"}</Button></li>)}</ul></section>;
+                  });
+                })()}
+              </div>
             )}
           </Card>
         ) : null}
@@ -1515,6 +1509,17 @@ export function AdminOrderDetailPage() {
       />
     </>
   );
+}
+
+function OrderHistoryTab({ statusHistory, activityHistory }: { statusHistory: any[]; activityHistory: any[] }) {
+  return <div className="grid gap-6 lg:grid-cols-2">
+    <Card><CardHeader title="Status history" description="Every lifecycle transition recorded for this order." />{statusHistory.length ? <ol className="mt-4 space-y-3">{statusHistory.map((entry) => <li key={entry.id} className="rounded-lg border border-line bg-surface-soft p-3"><div className="flex flex-wrap items-center gap-2"><Badge tone="neutral">{entry.fromStatus ?? "Created"}</Badge><ArrowRight className="size-4 text-muted" /><Badge tone="teal">{entry.toStatus}</Badge></div>{entry.reason ? <p className="mt-2 text-sm text-body">{entry.reason}</p> : null}<p className="mt-2 text-xs text-muted">{formatDateTime(entry.createdAt)}{entry.actorUserId ? ` · actor #${entry.actorUserId}` : ""}</p></li>)}</ol> : <p className="mt-4 text-sm text-muted">No lifecycle transitions have been recorded yet.</p>}</Card>
+    <Card><CardHeader title="Order activity" description="Order-scoped actions and automation events retained for audit." />{activityHistory.length ? <ol className="mt-4 space-y-3">{activityHistory.map((entry) => <li key={entry.id} className="rounded-lg border border-line p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-mono text-xs font-semibold text-ink">{entry.action}</p><Badge tone={entry.severity === "critical" || entry.severity === "error" ? "danger" : entry.severity === "warning" ? "warning" : "neutral"}>{entry.severity}</Badge></div><p className="mt-2 text-sm text-body">{entry.summary}</p><p className="mt-2 text-xs text-muted">{formatDateTime(entry.createdAt)}{entry.actorRole ? ` · ${entry.actorRole}` : ""}</p></li>)}</ol> : <p className="mt-4 text-sm text-muted">No order-scoped activity has been recorded yet.</p>}</Card>
+  </div>;
+}
+
+function OrderMndaTab({ acceptances }: { acceptances: any[] }) {
+  return <Card><CardHeader title="MNDA acceptance" description="Order-specific Mutual Non-Disclosure Agreement acceptance and signature records." />{acceptances.length ? <div className="mt-4 space-y-4">{acceptances.map((acceptance) => <div key={acceptance.id} className="rounded-lg border border-line bg-surface-soft p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-medium text-ink">MNDA {acceptance.version}</p><p className="mt-1 text-sm text-body">Signed by {acceptance.signatureName || "Customer"} using {acceptance.signatureMethod} signature.</p></div><Badge tone="success">Accepted</Badge></div><dl className="mt-4 grid gap-3 text-sm md:grid-cols-3"><div><dt className="text-xs uppercase tracking-wide text-muted">Accepted</dt><dd className="mt-1 text-ink">{formatDateTime(acceptance.acceptedAt)}</dd></div><div><dt className="text-xs uppercase tracking-wide text-muted">Source address</dt><dd className="mt-1 font-mono text-xs text-ink">{acceptance.ipAddress || "Not captured"}</dd></div><div><dt className="text-xs uppercase tracking-wide text-muted">Signed file</dt><dd className="mt-1 text-ink">{acceptance.uploadedFileId ? `Order file #${acceptance.uploadedFileId}` : "Typed acceptance"}</dd></div></dl></div>)}</div> : <Alert tone="info" className="mt-4">The customer has not yet accepted an MNDA for this order. Phase I intake remains unavailable until the required MNDA is accepted.</Alert>}</Card>;
 }
 
 function OrderAutomationTab({ order, customer }: { order: any; customer: any }) {
