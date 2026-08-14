@@ -2568,3 +2568,14 @@ Validation passed before deployment: `pnpm run typecheck`, `pnpm test` (155/155 
 **Validation:** TypeScript and server bundle generation passed. Production validation will retry one failed WebM first; successful completion is required before the remaining audio-sync records are requeued.
 
 **Requested user prompt:** “I was successfully able to manually upload the file.”
+
+
+## 2026-08-14 — Reversible SharePoint-only MP3 audio fallback
+
+**Decision:** The administrator selected Option B after a controlled comparison established that the SharePoint browser accepts the original WebM file but the current Microsoft Graph app-only context rejects its binary transfer across direct and resumable request forms. The fallback is deliberately scoped to SharePoint synchronization only and preserves the possibility of a future delegated Microsoft 365 upload transport (Option A).
+
+**Implementation:** A configurable SharePoint audio transfer mode is now stored as `sharepoint.audio_fallback_mode`. The default is `mp3`; administrators can later choose `none` in Admin → Integrations to disable the fallback when a WebM-compatible Microsoft identity transport is configured. For audio files with a `.webm` source, the background worker reads the existing encrypted local source, uses server-side `/usr/bin/ffmpeg` without a shell to create a private transient 96 kbps mono MP3 transfer copy, uploads only that MP3 to SharePoint, and removes every temporary file in `finally`. The original WebM, original filename, MIME metadata, storage object, customer/admin playback, phase lock, and portal audit evidence remain unchanged. Sync logs show the actual `.mp3` SharePoint destination and activity records identify the fallback explicitly.
+
+**Safety validation:** The production controlled WebM source was converted non-destructively with the same ffmpeg settings. The source remained untouched; the transient output was 103,176 bytes and verified as codec `mp3`. TypeScript and production client/server builds will be validated before deployment. A single controlled SharePoint audio sync must succeed before any remaining failed audio records are requeued.
+
+**Requested user prompt:** “try option b but I may want to go back to option a if option b does not work”

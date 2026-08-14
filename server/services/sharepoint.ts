@@ -37,6 +37,7 @@ import { getSetting } from "./settings.js";
 import { getUserById, displayNameOf } from "../db/users.js";
 import { buildOrderFileName } from "./fileNaming.js";
 import { getObjectBuffer } from "./storage.js";
+import { transcodeWebmToMp3ForSharePoint } from "./audioTranscode.js";
 import type { OrderStatus } from "../../shared/domain.js";
 
 // ---------------------------------------------------------------------------
@@ -58,6 +59,7 @@ interface GraphRuntimeConfig {
   driveId: string | null;
   siteUrl: string | null;
   rootFolderPath: string;
+  audioFallbackMode: "none" | "mp3";
   enabled: boolean;
 }
 
@@ -99,6 +101,7 @@ async function getGraphRuntimeConfig(): Promise<GraphRuntimeConfig> {
   const siteUrl = (await getSetting("sharepoint.site_url")) || null;
   const configuredRootFolderPath = (await getSetting("sharepoint.root_folder_path")) || env.graph.rootFolderPath;
   const rootFolderPath = normalizeSharePointRootFolderPath(configuredRootFolderPath);
+  const audioFallbackMode = (await getSetting("sharepoint.audio_fallback_mode")) === "none" ? "none" : "mp3";
   return {
     tenantId,
     clientId,
@@ -107,6 +110,7 @@ async function getGraphRuntimeConfig(): Promise<GraphRuntimeConfig> {
     driveId,
     siteUrl,
     rootFolderPath,
+    audioFallbackMode,
     enabled: Boolean(tenantId && clientId && clientSecret && siteId && driveId),
   };
 }
@@ -593,11 +597,25 @@ export async function processPendingFileSyncs(): Promise<void> {
       const fileRows = await db.select({ id: files.id, orderId: files.orderId, phase: files.phase, originalName: files.originalName, storageKey: files.storageKey, detectedMime: files.detectedMime, deletedAt: files.deletedAt }).from(files).where(eq(files.id, log.fileId!)).limit(1);
       const file = fileRows[0];
       if (!file?.orderId || file.deletedAt) throw new Error("The queued order file is no longer available for synchronization.");
-      const { folderPath, orderNumber } = await resolveOrderStageFolder(file.orderId, file.phase, graphConfig, resolveSharePointFileKind(file));
+      const fileKind = resolveSharePointFileKind(file);
+      const { folderPath, orderNumber } = await resolveOrderStageFolder(file.orderId, file.phase, graphConfig, fileKind);
       const folderId = await ensureFolder(folderPath);
-      await uploadBinaryFile(folderId, file.originalName, await getObjectBuffer(file.storageKey), file.detectedMime);
-      await db.update(sharepointSyncLog).set({ status: "succeeded", sharepointPath: `${folderPath}/${file.originalName}`, errorMessage: null }).where(eq(sharepointSyncLog.id, log.id));
-      void recordActivity({ actorUserId: null, action: "sharepoint.file_synced", entityType: "file", entityId: file.id, summary: `Synchronized ${file.originalName} to SharePoint for ${orderNumber}` });
+      const source = await getObjectBuffer(file.storageKey);
+      const useMp3Fallback = graphConfig.audioFallbackMode === "mp3" && fileKind === "audio" && /\.webm$/i.test(file.originalName);
+      const transferName = useMp3Fallback ? file.originalName.replace(/\.webm$/i, ".mp3") : file.originalName;
+      const transferContent = useMp3Fallback ? await transcodeWebmToMp3ForSharePoint(source) : source;
+      const transferMime = useMp3Fallback ? "audio/mpeg" : file.detectedMime;
+      await uploadBinaryFile(folderId, transferName, transferContent, transferMime);
+      await db.update(sharepointSyncLog).set({ status: "succeeded", sharepointPath: `${folderPath}/${transferName}`, errorMessage: null }).where(eq(sharepointSyncLog.id, log.id));
+      void recordActivity({
+        actorUserId: null,
+        action: useMp3Fallback ? "sharepoint.audio_mp3_fallback_synced" : "sharepoint.file_synced",
+        entityType: "file",
+        entityId: file.id,
+        summary: useMp3Fallback
+          ? `Synchronized a SharePoint-only MP3 copy of ${file.originalName} for ${orderNumber}; the original WebM remains in ReadyPackets.`
+          : `Synchronized ${file.originalName} to SharePoint for ${orderNumber}`,
+      });
     } catch (error) {
       const attempts = log.attempts + 1;
       await db.update(sharepointSyncLog).set({ status: attempts >= 5 ? "failed" : "pending", errorMessage: error instanceof Error ? error.message.slice(0, 800) : String(error).slice(0, 800) }).where(eq(sharepointSyncLog.id, log.id));

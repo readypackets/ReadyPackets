@@ -414,6 +414,7 @@ function SharePointTab() {
     driveId: "",
     siteUrl: "",
     rootFolderPath: "ReadyPackets/Orders",
+    audioFallbackMode: "mp3" as "none" | "mp3",
   });
   const [discoveredDrives, setDiscoveredDrives] = useState<Array<{ id: string; name: string; webUrl: string | null; isDefault: boolean }>>([]);
   const [browsePath, setBrowsePath] = useState("");
@@ -432,6 +433,7 @@ function SharePointTab() {
       driveId: data.driveId ?? "",
       siteUrl: data.siteUrl ?? "",
       rootFolderPath: data.rootFolderPath ?? "ReadyPackets/Orders",
+      audioFallbackMode: data.audioFallbackMode === "none" ? "none" : "mp3",
     }));
   }, [data]);
 
@@ -501,6 +503,14 @@ function SharePointTab() {
             </div>
           ) : null}
           <div className="md:col-span-2">
+            <Field label="SharePoint audio transfer mode" help="MP3 fallback preserves the original WebM only in ReadyPackets and creates an MP3 copy solely for SharePoint. Original WebM only is reserved for a future delegated Microsoft 365 sync identity.">
+              <Select value={form.audioFallbackMode} onChange={(event) => setForm({ ...form, audioFallbackMode: event.target.value as "none" | "mp3" })}>
+                <option value="mp3">MP3 fallback copy for SharePoint (recommended now)</option>
+                <option value="none">Original WebM only (requires compatible Microsoft 365 sync identity)</option>
+              </Select>
+            </Field>
+          </div>
+          <div className="md:col-span-2">
             <Input label="ReadyPackets base folder" value={form.rootFolderPath} onChange={(e) => setForm({ ...form, rootFolderPath: e.target.value })} placeholder="RP_Intake_Raw/ReadyPackets" help="ReadyPackets creates customers/{customerId}/orders/{orderId} beneath this base. Selecting a folder named customers automatically uses its parent to prevent customers/customers." />
             {data?.enabled ? <div className="mt-3 rounded-lg border border-teal/20 bg-teal/5 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-semibold text-brand-navy">Select existing ReadyPackets base folder</p><p className="text-xs text-gray-600">Browsing is read-only. Select the folder above customers; if you browse into customers, the parent is automatically used as the base.</p></div><div className="flex gap-2">{folders.data?.parentPath !== null && folders.data ? <Button size="sm" variant="outline" onClick={() => setBrowsePath(folders.data.parentPath ?? "")}>Up</Button> : null}<Button size="sm" variant="outline" busy={folders.isFetching} onClick={() => void folders.refetch()}>Refresh</Button></div></div><p className="mt-2 font-mono text-xs text-gray-600">/{(folders.data?.currentPath ?? browsePath) || ""}</p>{folders.isError ? <p className="mt-2 text-xs text-danger">{folders.error.message}</p> : null}<div className="mt-3 flex flex-wrap gap-2">{(folders.data?.folders ?? []).length ? folders.data!.folders.map((folder) => <Button key={folder.id} size="sm" variant="outline" onClick={() => setBrowsePath(folder.path)}>{folder.name}</Button>) : <span className="text-xs text-gray-500">No child folders found at this location.</span>}</div><div className="mt-3"><Button size="sm" variant="primary" disabled={!folders.data?.currentPath} onClick={() => setForm((current) => ({ ...current, rootFolderPath: selectedRootPath(folders.data?.currentPath ?? current.rootFolderPath) || current.rootFolderPath }))}>Use current folder as base</Button></div></div> : <p className="mt-2 text-xs text-gray-500">Save valid tenant, client, site, and document-library settings first, then the read-only folder browser will be available.</p>}
           </div>
@@ -531,12 +541,13 @@ function SharePointTab() {
               driveId: form.driveId.trim(),
               siteUrl: form.siteUrl.trim(),
               rootFolderPath: form.rootFolderPath.trim(),
+              audioFallbackMode: form.audioFallbackMode,
             })}
           >
             Save SharePoint settings
           </Button>
           {data?.siteUrl ? <a className="text-sm font-medium text-teal-700 hover:underline" href={data.siteUrl} target="_blank" rel="noreferrer">Open SharePoint site</a> : null}
-          <p className="basis-full text-xs text-gray-500">Step 1: enter complete Microsoft Entra values only when replacing saved credentials; masked values are display-only and are preserved on partial saves. Step 2: use discovery to populate site and library IDs. Step 3: save a base folder above customers. Step 4: run Test SharePoint connection. Discovery and testing use credentials only on the server and never display the client secret.</p>
+          <p className="basis-full text-xs text-gray-500">Step 1: enter complete Microsoft Entra values only when replacing saved credentials; masked values are display-only and are preserved on partial saves. Step 2: use discovery to populate site and library IDs. Step 3: save a base folder above customers. Step 4: select the audio transfer mode and run Test SharePoint connection. Discovery and testing use credentials only on the server and never display the client secret.</p>
         </div>
       </Card>
 

@@ -482,6 +482,7 @@ export const integrationsRouter = router({
     const configuredRootFolderPath = (await getSetting("sharepoint.root_folder_path")) || env.graph.rootFolderPath;
     const rootFolderPath = normalizeSharePointRootFolderPath(configuredRootFolderPath);
     const hasSecret = Boolean((await getSetting("sharepoint.client_secret_enc")) || env.graph.clientSecret);
+    const audioFallbackMode = (await getSetting("sharepoint.audio_fallback_mode")) === "none" ? "none" : "mp3";
     const tenantIdValid = Boolean(tenantId && (/^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(tenantId) || /^[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9][A-Za-z0-9-]*)+$/.test(tenantId)));
     const clientIdValid = Boolean(clientId && /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(clientId));
     return {
@@ -495,6 +496,7 @@ export const integrationsRouter = router({
       siteUrl,
       rootFolderPath,
       hasSecret,
+      audioFallbackMode,
     };
   }),
 
@@ -558,6 +560,7 @@ export const integrationsRouter = router({
       driveId: z.string().trim().min(1).max(512),
       siteUrl: z.string().trim().url().max(1024).optional().or(z.literal("")),
       rootFolderPath: z.string().trim().min(1).max(512),
+      audioFallbackMode: z.enum(["none", "mp3"]).default("mp3"),
     }))
     .mutation(async ({ ctx, input }) => {
       const storedTenantId = (await getSetting("sharepoint.tenant_id")) || env.graph.tenantId || null;
@@ -572,6 +575,7 @@ export const integrationsRouter = router({
       await setSetting("sharepoint.drive_id", input.driveId, { category: "sharepoint", userId: ctx.session.user.id });
       await setSetting("sharepoint.site_url", input.siteUrl || null, { category: "sharepoint", userId: ctx.session.user.id });
       await setSetting("sharepoint.root_folder_path", normalizedRootFolderPath, { category: "sharepoint", userId: ctx.session.user.id });
+      await setSetting("sharepoint.audio_fallback_mode", input.audioFallbackMode, { category: "sharepoint", userId: ctx.session.user.id });
       if (input.clientSecret) {
         await setSetting(
           "sharepoint.client_secret_enc",
@@ -580,6 +584,15 @@ export const integrationsRouter = router({
         );
       }
       resetGraphTokenCache();
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: "admin",
+        action: "sharepoint.audio_fallback_saved",
+        entityType: "sharepoint",
+        entityId: 0,
+        summary: `SharePoint audio fallback set to ${input.audioFallbackMode === "mp3" ? "MP3 transfer copy" : "original WebM only"}`,
+        ipAddress: ctx.clientIp,
+      });
       return { ok: true };
     }),
 
