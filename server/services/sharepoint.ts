@@ -145,7 +145,14 @@ async function requestGraphToken(credentials: GraphCredentials): Promise<GraphTo
   });
 
   if (!response.ok) {
-    throw new Error(`Microsoft Graph authentication failed (HTTP ${response.status}). Check the tenant ID, client ID, client secret, and application permissions.`);
+    let code = "unavailable";
+    try {
+      const payload = await response.json() as { error?: unknown };
+      if (typeof payload.error === "string" && /^[A-Za-z0-9_.-]{1,80}$/.test(payload.error)) code = payload.error;
+    } catch {
+      /* The identity service did not return a parseable error payload. */
+    }
+    throw new Error(`Microsoft Graph authentication failed (${code}, HTTP ${response.status}). Check the tenant ID, client ID, client secret, and application permissions.`);
   }
 
   const data = (await response.json()) as { access_token: string; expires_in: number };

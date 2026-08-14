@@ -217,11 +217,11 @@ export async function getObjectBuffer(storageKey: string): Promise<Buffer> {
   return readFile(localPathFor(storageKey));
 }
 
-export function getObjectStream(storageKey: string) {
+export function getObjectStream(storageKey: string, range?: { start: number; end: number }) {
   if (env.storage.driver !== "local") {
     throw new Error("S3 storage driver is not configured.");
   }
-  return createReadStream(localPathFor(storageKey));
+  return range ? createReadStream(localPathFor(storageKey), range) : createReadStream(localPathFor(storageKey));
 }
 
 export async function objectExists(storageKey: string): Promise<boolean> {

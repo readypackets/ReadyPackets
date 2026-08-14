@@ -2448,3 +2448,21 @@ Validation passed before deployment: `pnpm run typecheck`, `pnpm test` (155/155 
 #### Request received
 
 Add an option to the Order Workflow designer to set a static completion percentage or a dynamic percentage using a configurable range, with a configurable timed delay that uses a random number within that range.
+
+
+### Audio playback, Email Template Center tabs, and SharePoint credential diagnosis release
+
+Customer and administrator order workspaces now include protected in-browser audio playback. Customer playback is available in both the assigned workflow-stage workspace and the legacy Phase 2 materials page. Administrator playback is available beside recognised audio artifacts in each phase group of the order Files tab. The browser player is not a direct storage URL: a protected procedure confirms current order/file access and recognised audio MIME type, then issues a random, session-bound five-minute playback URL. The streaming route validates the authenticated session and current file access again, supports byte-range requests needed for media playback, uses `audio/*` content types and inline disposition only for validated audio, disables caching, sets `nosniff`, and records access. Generic files remain attachment-only downloads.
+
+The Email Template Center now has dedicated **System templates**, **Sent email history**, and **Queued deliveries** tabs. Existing template editing, previewing, cloning, audit-BCC/retention policy, retained delivery-copy viewing, stop/retry/resend controls, and retention purge behavior were preserved. The tab change makes the sent history and delivery operational queue independently accessible without duplicating delivery data.
+
+The SharePoint error was investigated without reading or exposing any secret. The saved `sharepoint.client_id` and `sharepoint.tenant_id` values are both 11 characters and fail the expected non-secret identifier-format validation. A Microsoft Entra application (client) ID must be the full 36-character GUID; the tenant must be a full tenant GUID or a verified tenant domain. This truncated/malformed credential configuration causes the OAuth client-credentials token request to fail before the portal can query the SharePoint site or document library, producing the observed HTTP 400. The existing encrypted client secret was not read. The integration save/discovery API now rejects malformed tenant/client identifiers, and the Graph token error is enhanced to surface only the safe Microsoft identity error code on future failures, without disclosing the returned error description or credentials.
+
+Validation passed before deployment: `pnpm run typecheck`, `pnpm test` (155/155 tests), `pnpm run build:client`, `pnpm run build:server`, and `git diff --check`. Live health returned `{"status":"ok"}`. Rollback material is retained at `/opt/readypackets/rollback-20260814030752-audio-email-graph`.
+
+#### Request received
+
+1. Add customer playback for audio recordings in an order.
+2. Add administrator playback for audio recordings.
+3. Separate system email templates, sent email history, and queued deliveries into separate tabs.
+4. Identify the cause of the SharePoint Microsoft Graph API error.

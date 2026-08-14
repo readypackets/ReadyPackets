@@ -391,8 +391,8 @@ export const integrationsRouter = router({
 
   discoverGraphConfig: adminProcedure
     .input(z.object({
-      tenantId: z.string().trim().min(1).max(128),
-      clientId: z.string().trim().min(1).max(128),
+      tenantId: z.string().trim().min(3).max(128).refine((value) => /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(value) || /^[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9][A-Za-z0-9-]*)+$/.test(value), "Enter the Microsoft Entra tenant ID GUID or verified tenant domain."),
+      clientId: z.string().trim().uuid("Enter the 36-character Application (client) ID from the Microsoft Entra app registration."),
       clientSecret: z.string().max(512).optional(),
       siteUrl: z.string().trim().url().max(1024),
     }))
@@ -438,8 +438,8 @@ export const integrationsRouter = router({
 
   saveGraphConfig: adminProcedure
     .input(z.object({
-      tenantId: z.string().trim().min(1).max(128),
-      clientId: z.string().trim().min(1).max(128),
+      tenantId: z.string().trim().min(3).max(128).refine((value) => /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(value) || /^[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9][A-Za-z0-9-]*)+$/.test(value), "Enter the Microsoft Entra tenant ID GUID or verified tenant domain."),
+      clientId: z.string().trim().uuid("Enter the 36-character Application (client) ID from the Microsoft Entra app registration."),
       clientSecret: z.string().max(512).optional(),
       siteId: z.string().trim().min(1).max(512),
       driveId: z.string().trim().min(1).max(512),

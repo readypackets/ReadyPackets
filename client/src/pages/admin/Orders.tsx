@@ -15,6 +15,7 @@ import {
   Grid2X2,
   History,
   FileSignature,
+  FileAudio,
   LayoutList,
   Lock,
   MessageSquarePlus,
@@ -31,6 +32,7 @@ import { trpc, errorMessage, csrfToken, refreshCsrfToken } from "@/lib/trpc";
 import { useSession } from "@/lib/session";
 import { formatBytes, formatDate, formatDateTime, formatMoney, humanizeKey } from "@/lib/utils";
 import { Button, LinkButton } from "@/components/ui/Button";
+import { AudioPlayback } from "@/components/ui/AudioPlayback";
 import { Checkbox, FieldShell, Input, Select, Textarea } from "@/components/ui/Field";
 import {
   Alert,
@@ -1472,7 +1474,7 @@ export function AdminOrderDetailPage() {
                   }
                   return Array.from(grouped.entries()).map(([phase, phaseFiles]) => {
                     const phaseLabel = phaseUploadOptions.find((option) => option.value === phase)?.label ?? (phase === "general" ? "General / delivery" : phase.replaceAll("_", " "));
-                    return <section key={phase} className="overflow-hidden rounded-lg border border-line"><div className="flex items-center justify-between border-b border-line bg-surface-soft px-4 py-3"><div><p className="font-medium text-ink">{phaseLabel}</p><p className="mt-0.5 text-xs text-muted">{phaseFiles.length} file{phaseFiles.length === 1 ? "" : "s"} assigned to this phase</p></div><Badge tone="neutral">{phase}</Badge></div><ul className="divide-y divide-line">{phaseFiles.map((file) => <li key={file.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"><div className="min-w-0"><p className="truncate text-sm font-medium text-ink">{file.originalName}</p><p className="mt-0.5 text-xs text-muted">{file.category === "intake_attachment" ? "Customer artifact" : "Staff document"} · {formatBytes(file.sizeBytes)} · v{file.version} · {formatDate(file.createdAt)}</p></div><Button size="sm" variant={file.visibleToCustomer ? "outline" : "primary"} busy={setVisibility.isPending} onClick={() => setVisibility.mutate({ fileId: file.id, visibleToCustomer: !file.visibleToCustomer })} leadingIcon={file.visibleToCustomer ? <Unlock className="size-4" aria-hidden="true" /> : <Lock className="size-4" aria-hidden="true" />}>{file.visibleToCustomer ? "Visible to customer" : "Publish"}</Button></li>)}</ul></section>;
+                    return <section key={phase} className="overflow-hidden rounded-lg border border-line"><div className="flex items-center justify-between border-b border-line bg-surface-soft px-4 py-3"><div><p className="font-medium text-ink">{phaseLabel}</p><p className="mt-0.5 text-xs text-muted">{phaseFiles.length} file{phaseFiles.length === 1 ? "" : "s"} assigned to this phase</p></div><Badge tone="neutral">{phase}</Badge></div><ul className="divide-y divide-line">{phaseFiles.map((file) => { const isAudio = ["webm", "wav", "mp3", "m4a", "ogg"].includes((file.extension ?? "").toLowerCase()); return <li key={file.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"><div className="min-w-0"><p className="truncate text-sm font-medium text-ink">{isAudio ? <FileAudio className="mr-1 inline size-4 text-teal" /> : null}{file.originalName}</p><p className="mt-0.5 text-xs text-muted">{file.category === "intake_attachment" ? "Customer artifact" : "Staff document"} · {formatBytes(file.sizeBytes)} · v{file.version} · {formatDate(file.createdAt)}</p></div><div className="flex flex-wrap items-center justify-end gap-2">{isAudio ? <AudioPlayback fileId={file.id} label="Play" /> : null}<Button size="sm" variant={file.visibleToCustomer ? "outline" : "primary"} busy={setVisibility.isPending} onClick={() => setVisibility.mutate({ fileId: file.id, visibleToCustomer: !file.visibleToCustomer })} leadingIcon={file.visibleToCustomer ? <Unlock className="size-4" aria-hidden="true" /> : <Lock className="size-4" aria-hidden="true" />}>{file.visibleToCustomer ? "Visible to customer" : "Publish"}</Button></div></li>; })}</ul></section>;
                   });
                 })()}
               </div>

@@ -18,6 +18,7 @@ import { allowedExtensions } from "../services/storage.js";
 import { protectedProcedure, router } from "../trpc/trpc.js";
 
 const TICKET_TTL_MS = 60_000;
+const AUDIO_PLAYBACK_TTL_MS = 5 * 60_000;
 
 interface DownloadTicket {
   fileIds: number[];
@@ -30,10 +31,21 @@ interface DownloadTicket {
 
 const tickets = new Map<string, DownloadTicket>();
 
+interface AudioPlaybackTicket {
+  fileId: number;
+  userId: number;
+  expiresAt: number;
+}
+
+const audioPlaybackTickets = new Map<string, AudioPlaybackTicket>();
+
 const ticketSweeper = setInterval(() => {
   const now = Date.now();
   for (const [key, ticket] of tickets) {
     if (ticket.expiresAt < now) tickets.delete(key);
+  }
+  for (const [key, ticket] of audioPlaybackTickets) {
+    if (ticket.expiresAt < now) audioPlaybackTickets.delete(key);
   }
 }, 30_000);
 ticketSweeper.unref();
@@ -52,6 +64,22 @@ export function issueDownloadTicket(
     archiveName,
   });
   return token;
+}
+
+export function issueAudioPlaybackTicket(userId: number, fileId: number): string {
+  const token = randomBytes(24).toString("base64url");
+  audioPlaybackTickets.set(token, { fileId, userId, expiresAt: Date.now() + AUDIO_PLAYBACK_TTL_MS });
+  return token;
+}
+
+/** Playback tickets remain usable for range requests during their short lifetime. */
+export function getAudioPlaybackTicket(token: string): AudioPlaybackTicket | null {
+  const ticket = audioPlaybackTickets.get(token);
+  if (!ticket || ticket.expiresAt < Date.now()) {
+    audioPlaybackTickets.delete(token);
+    return null;
+  }
+  return ticket;
 }
 
 export function consumeDownloadTicket(token: string): DownloadTicket | null {
@@ -319,6 +347,20 @@ export const filesRouter = router({
         url: `/api/files/download/${token}`,
         expiresInSeconds: TICKET_TTL_MS / 1000,
       };
+    }),
+
+  /** Prepare a short-lived, session-bound inline stream for recognised audio only. */
+  requestAudioPlayback: protectedProcedure
+    .input(z.object({ fileId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const authorised = await authoriseFileAccess([input.fileId], ctx.session.user.id, ctx.session.user.role);
+      const file = authorised[0];
+      if (!file || !file.detectedMime.startsWith("audio/")) {
+        await logFileAccess(input.fileId, ctx.session.user.id, "audio_playback", ctx.clientIp, "denied");
+        throw new TRPCError({ code: "NOT_FOUND", message: "This audio recording is unavailable." });
+      }
+      const token = issueAudioPlaybackTicket(ctx.session.user.id, input.fileId);
+      return { url: `/api/files/audio/${token}`, expiresInSeconds: AUDIO_PLAYBACK_TTL_MS / 1_000 };
     }),
 
   /** Bulk download as a ZIP archive; classified as an expensive operation. */

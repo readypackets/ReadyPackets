@@ -14,13 +14,84 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { files } from "../db/schema.js";
 import { resolveSession } from "../auth/session.js";
-import { consumeDownloadTicket, logFileAccess } from "../routers/files.js";
+import { authoriseFileAccess, consumeDownloadTicket, getAudioPlaybackTicket, logFileAccess } from "../routers/files.js";
 import { contentDisposition, getObjectStream, objectExists } from "../services/storage.js";
 import { logger } from "../observability/logger.js";
 import { recordSecurityEvent } from "../observability/audit.js";
 
 export function createDownloadRouter(): Router {
   const router = express.Router();
+
+  router.get("/audio/:token", async (req: Request, res: Response) => {
+    const token = req.params.token ?? "";
+    if (!/^[A-Za-z0-9_-]{16,64}$/.test(token)) {
+      res.status(400).type("text/plain").send("Invalid audio token");
+      return;
+    }
+    const session = await resolveSession(req);
+    if (!session || session.mfaPending || session.restricted) {
+      res.status(401).type("text/plain").send("Authentication required");
+      return;
+    }
+    const ticket = getAudioPlaybackTicket(token);
+    if (!ticket) {
+      res.status(410).type("text/plain").send("This audio link has expired");
+      return;
+    }
+    if (ticket.userId !== session.user.id) {
+      void recordSecurityEvent({ eventType: "file.access_denied", outcome: "blocked", severity: "critical", message: "Audio playback ticket presented by a different account", userId: session.user.id, ipAddress: (res.locals.clientIp as string | undefined) ?? null });
+      res.status(403).type("text/plain").send("Forbidden");
+      return;
+    }
+    const authorised = await authoriseFileAccess([ticket.fileId], session.user.id, session.user.role);
+    const file = authorised[0];
+    if (!file || !file.detectedMime.startsWith("audio/") || !(await objectExists(file.storageKey))) {
+      await logFileAccess(ticket.fileId, session.user.id, "audio_playback", (res.locals.clientIp as string | undefined) ?? null, "denied");
+      res.status(404).type("text/plain").send("Audio recording not found");
+      return;
+    }
+    const sizeRow = await db.select({ sizeBytes: files.sizeBytes }).from(files).where(and(eq(files.id, file.id), isNull(files.deletedAt))).limit(1);
+    const size = sizeRow[0]?.sizeBytes ?? 0;
+    if (size <= 0) {
+      res.status(404).type("text/plain").send("Audio recording not found");
+      return;
+    }
+    const range = req.headers.range;
+    let start = 0;
+    let end = size - 1;
+    if (range) {
+      const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+      if (!match) {
+        res.status(416).setHeader("Content-Range", `bytes */${size}`).end();
+        return;
+      }
+      start = match[1] ? Number(match[1]) : 0;
+      end = match[2] ? Number(match[2]) : size - 1;
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start >= size || end < start) {
+        res.status(416).setHeader("Content-Range", `bytes */${size}`).end();
+        return;
+      }
+      end = Math.min(end, size - 1);
+    }
+    const contentLength = end - start + 1;
+    res.status(range ? 206 : 200);
+    res.setHeader("Content-Type", file.detectedMime);
+    res.setHeader("Content-Disposition", `inline; filename=\"audio-${file.id}\"`);
+    res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("Content-Length", String(contentLength));
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "private, no-store, max-age=0");
+    res.setHeader("Pragma", "no-cache");
+    if (range) res.setHeader("Content-Range", `bytes ${start}-${end}/${size}`);
+    void logFileAccess(ticket.fileId, session.user.id, "audio_playback", (res.locals.clientIp as string | undefined) ?? null);
+    const stream = getObjectStream(file.storageKey, { start, end });
+    stream.on("error", (error) => {
+      logger.error("Audio playback stream failed", { error, fileId: file.id });
+      if (!res.headersSent) res.status(500).end();
+      else res.destroy();
+    });
+    stream.pipe(res);
+  });
 
   router.get("/download/:token", async (req: Request, res: Response) => {
     const token = req.params.token ?? "";
