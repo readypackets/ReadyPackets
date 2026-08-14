@@ -414,15 +414,71 @@ async function uploadPlaceholder(folderId: string, fileName: string, content: st
   return uploadTextFile(folderId, fileName, content);
 }
 
-async function uploadBinaryFile(folderId: string, fileName: string, content: Buffer, _contentType: string): Promise<string> {
+type GraphUploadSession = { uploadUrl?: string };
+type GraphUploadResult = { id?: string };
+
+function isMediaUpload(fileName: string, contentType: string): boolean {
+  return /^(audio|video)\//i.test(contentType) || /\.(webm|wav|mp3|m4a|ogg|aac|flac)$/i.test(fileName);
+}
+
+async function uploadBinaryViaSession(folderId: string, fileName: string, content: Buffer): Promise<string> {
+  const { driveId } = await getGraphRuntimeConfig();
+  if (!driveId) throw new Error("GRAPH_SHAREPOINT_DRIVE_ID must be set.");
+  if (content.byteLength === 0) throw new Error("The audio recording is empty and cannot be synchronized.");
+
+  const token = await getGraphToken();
+  const sessionUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}:/createUploadSession`;
+  const sessionResponse = await fetch(sessionUrl, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": "replace", name: fileName } }),
+  });
+  if (!sessionResponse.ok) {
+    const text = await sessionResponse.text();
+    const policyHint = sessionResponse.status === 400 ? ` The selected SharePoint library rejected the ${fileName.split(".").pop()?.toLowerCase() || "file"} filename or extension before bytes were transferred; review its file-type, retention-label, and Purview/DLP policies.` : "";
+    throw new Error(`SharePoint audio upload-session creation failed (${sessionResponse.status}): ${text.slice(0, 500)}${policyHint}`);
+  }
+  const session = (await sessionResponse.json()) as GraphUploadSession;
+  if (!session.uploadUrl || !session.uploadUrl.startsWith("https://")) throw new Error("Microsoft Graph did not return a valid SharePoint upload-session URL.");
+
+  // Microsoft requires non-final upload-session fragments to be multiples of 320 KiB.
+  const chunkSize = 10 * 1024 * 1024;
+  let offset = 0;
+  let finalResult: GraphUploadResult | undefined;
+  while (offset < content.byteLength) {
+    const end = Math.min(offset + chunkSize, content.byteLength) - 1;
+    const chunk = content.subarray(offset, end + 1);
+    const uploadResponse = await fetch(session.uploadUrl, {
+      method: "PUT",
+      headers: {
+        "Content-Length": String(chunk.byteLength),
+        "Content-Range": `bytes ${offset}-${end}/${content.byteLength}`,
+      },
+      body: chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer,
+    });
+    if (!uploadResponse.ok) {
+      const text = await uploadResponse.text();
+      const policyHint = uploadResponse.status === 400 ? ` The upload session was accepted but SharePoint rejected the ${fileName.split(".").pop()?.toLowerCase() || "file"} payload; review its file-type, retention-label, and Purview/DLP policies.` : "";
+      throw new Error(`SharePoint audio upload-session transfer failed (${uploadResponse.status}): ${text.slice(0, 500)}${policyHint}`);
+    }
+    if (end === content.byteLength - 1) finalResult = (await uploadResponse.json()) as GraphUploadResult;
+    offset = end + 1;
+  }
+  if (!finalResult?.id) throw new Error("Microsoft Graph completed the audio upload without returning a SharePoint item ID.");
+  return finalResult.id;
+}
+
+async function uploadBinaryFile(folderId: string, fileName: string, content: Buffer, contentType: string): Promise<string> {
+  // Recorded audio is routed through Graph's upload-session protocol. This avoids
+  // the direct-content endpoint that the affected SharePoint library rejects for
+  // WebM recordings, and gives a precise error phase if tenant policy still blocks it.
+  if (isMediaUpload(fileName, contentType)) return uploadBinaryViaSession(folderId, fileName, content);
+
   const { driveId } = await getGraphRuntimeConfig();
   if (!driveId) throw new Error("GRAPH_SHAREPOINT_DRIVE_ID must be set.");
   if (content.byteLength > 250 * 1024 * 1024) throw new Error("This file exceeds the 250 MB Microsoft Graph direct-upload limit.");
   const token = await getGraphToken();
   const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}:/content`;
-  // Send the verified local bytes as an opaque stream. This avoids browser media
-  // MIME negotiation, while any remaining 400 response can be diagnosed as a
-  // SharePoint library or tenant file-policy decision rather than a portal MIME error.
   const response = await fetch(url, {
     method: "PUT",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/octet-stream", "Content-Length": String(content.byteLength) },
@@ -430,10 +486,9 @@ async function uploadBinaryFile(folderId: string, fileName: string, content: Buf
   });
   if (!response.ok) {
     const text = await response.text();
-    const policyHint = response.status === 400 ? ` The selected SharePoint library may block the ${fileName.split(".").pop()?.toLowerCase() || "file"} extension or media type; review its file-type and Purview/DLP policies.` : "";
-    throw new Error(`SharePoint binary upload failed (${response.status}): ${text.slice(0, 300)}${policyHint}`);
+    throw new Error(`SharePoint binary upload failed (${response.status}): ${text.slice(0, 300)}`);
   }
-  const data = (await response.json()) as { id?: string };
+  const data = (await response.json()) as GraphUploadResult;
   if (!data.id) throw new Error("Microsoft Graph did not return a SharePoint item ID after upload.");
   return data.id;
 }

@@ -2494,3 +2494,16 @@ Validation passed before deployment: `pnpm run typecheck`, `pnpm test` (155/155 
 **Validation:** TypeScript validation passed. Client and server production bundles passed. The existing repository suite was not used as a release gate because the canonical checkout has known unrelated catalogue/bundle-pricing fixture failures; the changed log-center code compiled successfully and uses the established integrations retry/audit pattern.
 
 **Requested user prompt:** “can there be a log center for synced files with an option for a retry”.
+
+
+## 2026-08-14 — SharePoint WebM resumable-upload correction
+
+**User report:** SharePoint Sync Log Center showed Phase I WebM recordings as failed after five attempts while Phase I DOCX documents in the same order and destination hierarchy succeeded. The retained Microsoft Graph response was `invalidRequest` HTTP 400 from the direct binary content endpoint.
+
+**Diagnosis:** ReadyPackets stored the WebM recordings successfully and resolved them to the intended `Phase I/Audio` destination. The failure occurred only when the server used Graph’s direct `PUT ...:/content` binary upload route for media files. This proved that order authorization, phase locks, local object storage, Graph token acquisition, selected drive, folder creation, and document uploads were operational. A new upload-session path provides an independent, Microsoft-documented compatible transport for audio and returns a precise error phase if a library policy still rejects the file.
+
+**Implementation:** Audio and video files, including `.webm`, now create a Graph upload session with an explicit replace conflict policy and upload bytes in sequential 10 MiB ranges. The session URL is verified as HTTPS, receives no bearer token on fragment upload, and all error messages remain sanitized before entering the sync log. Documents retain the existing successful direct binary upload route. The upload-session path is resilient to larger future recordings and reports whether rejection occurs at session creation or during the payload transfer.
+
+**Validation:** TypeScript and server bundle generation passed. Production validation will requeue one affected failed WebM record first; remaining failed recordings will only be requeued after that transfer succeeds.
+
+**Requested user prompt:** “The audio isnt syncing and this is the error.”
