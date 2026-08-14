@@ -1559,6 +1559,33 @@ export const workflowStageRuns = mysqlTable(
   }),
 );
 
+export const workflowCompletionJobs = mysqlTable(
+  "workflow_completion_jobs",
+  {
+    id: id(),
+    orderId: int("order_id").notNull(),
+    workflowId: int("workflow_id").notNull(),
+    stageKey: varchar("stage_key", { length: 64 }).notNull(),
+    mode: varchar("mode", { length: 16 }).notNull(),
+    minPercent: int("min_percent").notNull(),
+    maxPercent: int("max_percent").notNull(),
+    targetPercent: int("target_percent").notNull(),
+    delayMinutes: int("delay_minutes").notNull().default(0),
+    runAfter: timestamp("run_after").notNull().defaultNow(),
+    status: varchar("status", { length: 16 }).notNull().default("pending"),
+    claimedAt: timestamp("claimed_at"),
+    attempts: int("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    scheduledByUserId: int("scheduled_by_user_id"),
+    completedAt: timestamp("completed_at"),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    statusRunIdx: index("workflow_completion_jobs_status_run_idx").on(table.status, table.runAfter),
+    orderIdx: index("workflow_completion_jobs_order_idx").on(table.orderId, table.createdAt),
+  }),
+);
+
 export const webhookEndpoints = mysqlTable(
   "webhook_endpoints",
   {

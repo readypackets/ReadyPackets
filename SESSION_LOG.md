@@ -2433,3 +2433,18 @@ Validation passed before deployment: `pnpm run typecheck`, `pnpm test` (155/155 
 1. Administrators should see customer submissions awaiting a response in order lists and dashboards, while customers should see the corresponding state on their dashboard and order list.
 2. Assess whether the administrator Advance the order control remains needed.
 3. Assess whether the administrator Phase 1 Intake tab remains needed.
+
+
+### Workflow fixed and randomized completion-percentage policy release
+
+The Order Workflow designer now supports a per-stage **Completion update policy**. Administrators may choose **Set a fixed percentage** or **Choose a random percentage from a range**, with bounds from 0% to 100% and a configurable delay of up to 43,200 minutes (30 days). A zero-minute delay preserves the immediate action behavior. When a randomized delayed policy is run, the platform selects one cryptographically generated integer within the inclusive configured range at queue time and stores the exact target for auditing; it does not re-roll after a restart.
+
+Delayed updates use new durable `workflow_completion_jobs` storage created by migration `0037_workflow_completion_jobs.sql`. The self-hosted application scheduler checks due jobs every 15 seconds. It records claim time, recovers stale claims after restart, retries transient failures with bounded backoff, raises an operational alert after five failed attempts, and does not lower an order’s completion percentage if a later action has already advanced it. Terminal/deleted orders cause a delayed job to be safely cancelled rather than updated.
+
+Workflow validation rejects invalid random ranges, missing targets, negative delays, and delays above 30 days. The canvas and guided workflow designer both expose the same policy controls. The saved action summary identifies fixed or random behavior and delay. In each order’s Automation tab, the **Completion update schedule** displays the policy, selected random target, run time, state, and final outcome. Existing completion-percentage workflow actions remain compatible and are treated as immediate fixed policies unless a delay is newly configured.
+
+Validation passed before deployment: `pnpm run typecheck`, `pnpm test` (155/155 tests), `pnpm run build:client`, `pnpm run build:server`, and `git diff --check`. The production migration was applied and `workflow_completion_jobs.claimed_at` verified; live health returned `{"status":"ok"}`. Rollback material is retained at `/opt/readypackets/rollback-20260814014503-workflow-completion-policy`.
+
+#### Request received
+
+Add an option to the Order Workflow designer to set a static completion percentage or a dynamic percentage using a configurable range, with a configurable timed delay that uses a random number within that range.

@@ -6,6 +6,7 @@
  * submission and the MNDA acceptance exist, and it cannot be delivered until at
  * least one customer-visible deliverable is attached.
  */
+import { randomInt } from "node:crypto";
 import { and, count, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
@@ -17,6 +18,7 @@ import {
   orderQuestions,
   orderWorkflows,
   workflowStageRuns,
+  workflowCompletionJobs,
   orderAutomationRules,
   orders,
   orderStatusHistory,
@@ -397,9 +399,40 @@ export type WorkflowStageActionConfig = {
   emailTemplateKey?: string;
   adminAlert?: { enabled?: boolean; message?: string; severity?: "warning" | "error" | "critical" };
   orderStatus?: string;
+  /** Legacy/static completion target. A missing completionMode is treated as fixed. */
   completionPercent?: number;
+  completionMode?: "fixed" | "random";
+  completionRangeMin?: number;
+  completionRangeMax?: number;
+  completionDelayMinutes?: number;
   webhookEndpointId?: number;
 };
+
+type ResolvedCompletionPolicy = {
+  mode: "fixed" | "random";
+  minPercent: number;
+  maxPercent: number;
+  delayMinutes: number;
+};
+
+function resolveCompletionPolicy(actions: WorkflowStageActionConfig): ResolvedCompletionPolicy | null {
+  const mode = actions.completionMode ?? (actions.completionPercent !== undefined ? "fixed" : undefined);
+  if (!mode) return null;
+  const delayMinutes = Math.max(0, Math.min(43_200, Math.round(actions.completionDelayMinutes ?? 0)));
+  if (mode === "fixed") {
+    if (!Number.isInteger(actions.completionPercent) || actions.completionPercent! < 0 || actions.completionPercent! > 100) return null;
+    return { mode, minPercent: actions.completionPercent!, maxPercent: actions.completionPercent!, delayMinutes };
+  }
+  if (!Number.isInteger(actions.completionRangeMin) || !Number.isInteger(actions.completionRangeMax)) return null;
+  const minPercent = actions.completionRangeMin!;
+  const maxPercent = actions.completionRangeMax!;
+  if (minPercent < 0 || maxPercent > 100 || minPercent > maxPercent) return null;
+  return { mode, minPercent, maxPercent, delayMinutes };
+}
+
+function chooseCompletionTarget(policy: ResolvedCompletionPolicy): number {
+  return policy.mode === "random" ? randomInt(policy.minPercent, policy.maxPercent + 1) : policy.minPercent;
+}
 
 /** Execute the configured actions for an assigned workflow stage. Every request is recorded. */
 export async function runWorkflowStageActions(input: {
@@ -445,10 +478,29 @@ export async function runWorkflowStageActions(input: {
       await transitionOrder({ orderId: order.id, to: actions.orderStatus, actorUserId: input.actorUserId, actorRole: input.actorRole, reason: `Workflow stage ${stage.label ?? input.stageKey} action`, ipAddress: input.ipAddress });
       executed.push(`status:${actions.orderStatus}`);
     }
-    if (actions.completionPercent !== undefined) {
-      const completionPercent = Math.max(0, Math.min(100, Math.round(actions.completionPercent)));
-      await db.update(orders).set({ completionPercent }).where(eq(orders.id, order.id));
-      executed.push(`completion:${completionPercent}`);
+    const completionPolicy = resolveCompletionPolicy(actions);
+    if (completionPolicy) {
+      const targetPercent = chooseCompletionTarget(completionPolicy);
+      if (completionPolicy.delayMinutes === 0) {
+        await db.update(orders).set({ completionPercent: targetPercent }).where(eq(orders.id, order.id));
+        executed.push(`completion:${completionPolicy.mode}:${targetPercent}:immediate`);
+      } else {
+        const runAfter = new Date(Date.now() + completionPolicy.delayMinutes * 60_000);
+        const result = await db.insert(workflowCompletionJobs).values({
+          orderId: order.id,
+          workflowId: workflow.id,
+          stageKey: input.stageKey,
+          mode: completionPolicy.mode,
+          minPercent: completionPolicy.minPercent,
+          maxPercent: completionPolicy.maxPercent,
+          targetPercent,
+          delayMinutes: completionPolicy.delayMinutes,
+          runAfter,
+          status: "pending",
+          scheduledByUserId: input.actorUserId,
+        });
+        executed.push(`completion:${completionPolicy.mode}:${targetPercent}:delayed:${completionPolicy.delayMinutes}m:job:${insertedId(result)}`);
+      }
     }
     if (actions.emailTemplateKey && customer?.email) {
       await queueTemplatedEmail({ to: customer.email, templateKey: actions.emailTemplateKey, variables });
@@ -486,6 +538,76 @@ export async function runWorkflowStageActions(input: {
     const errorDetail = error instanceof Error ? error.message : "Workflow stage actions failed.";
     await db.update(workflowStageRuns).set({ status: "failed", errorDetail: errorDetail.slice(0, 1000), completedAt: new Date() }).where(eq(workflowStageRuns.id, runId));
     throw error;
+  }
+}
+
+/** Apply due delayed completion policies. The stored target makes random selection auditable and restart-safe. */
+export async function processWorkflowCompletionJobs(limit = 25): Promise<void> {
+  const now = new Date();
+  const staleBefore = new Date(Date.now() - 5 * 60_000);
+  await db
+    .update(workflowCompletionJobs)
+    .set({ status: "pending", claimedAt: null, runAfter: now })
+    .where(and(eq(workflowCompletionJobs.status, "running"), lte(workflowCompletionJobs.claimedAt, staleBefore)));
+  const jobs = await db
+    .select()
+    .from(workflowCompletionJobs)
+    .where(and(eq(workflowCompletionJobs.status, "pending"), lte(workflowCompletionJobs.runAfter, now)))
+    .orderBy(workflowCompletionJobs.runAfter)
+    .limit(Math.max(1, Math.min(100, limit)));
+
+  for (const job of jobs) {
+    const claim = await db
+      .update(workflowCompletionJobs)
+      .set({ status: "running", claimedAt: now, attempts: job.attempts + 1 })
+      .where(and(eq(workflowCompletionJobs.id, job.id), eq(workflowCompletionJobs.status, "pending")));
+    if (Number((claim as { affectedRows?: number }).affectedRows ?? 0) === 0) continue;
+
+    try {
+      const [order] = await db
+        .select({ id: orders.id, orderNumber: orders.orderNumber, status: orders.status, completionPercent: orders.completionPercent })
+        .from(orders)
+        .where(and(eq(orders.id, job.orderId), isNull(orders.deletedAt)))
+        .limit(1);
+      if (!order || isTerminalOrderStatus(order.status)) {
+        await db.update(workflowCompletionJobs).set({ status: "cancelled", claimedAt: null, completedAt: new Date(), lastError: order ? `Order is in terminal status ${order.status}.` : "Order is unavailable." }).where(eq(workflowCompletionJobs.id, job.id));
+        continue;
+      }
+
+      const appliedPercent = Math.max(order.completionPercent, job.targetPercent);
+      if (appliedPercent !== order.completionPercent) {
+        await db.update(orders).set({ completionPercent: appliedPercent }).where(eq(orders.id, order.id));
+      }
+      await db.update(workflowCompletionJobs).set({ status: "completed", claimedAt: null, completedAt: new Date(), lastError: null }).where(eq(workflowCompletionJobs.id, job.id));
+      void recordActivity({
+        actorUserId: null,
+        actorRole: "system",
+        action: "workflow.completion_policy_applied",
+        entityType: "order",
+        entityId: order.id,
+        summary: `Applied delayed ${job.mode} workflow completion policy to ${order.orderNumber}: ${appliedPercent}%`,
+        changes: { jobId: job.id, workflowId: job.workflowId, stageKey: job.stageKey, mode: job.mode, minPercent: job.minPercent, maxPercent: job.maxPercent, targetPercent: job.targetPercent, priorPercent: order.completionPercent, appliedPercent, delayMinutes: job.delayMinutes },
+      });
+    } catch (error) {
+      const errorDetail = error instanceof Error ? error.message : String(error);
+      const permanentlyFailed = job.attempts + 1 >= 5;
+      await db.update(workflowCompletionJobs).set({
+        status: permanentlyFailed ? "failed" : "pending",
+        claimedAt: null,
+        lastError: errorDetail.slice(0, 1_000),
+        runAfter: permanentlyFailed ? job.runAfter : new Date(Date.now() + Math.min(60, (job.attempts + 1) * 5) * 60_000),
+        completedAt: permanentlyFailed ? new Date() : null,
+      }).where(eq(workflowCompletionJobs.id, job.id));
+      if (permanentlyFailed) {
+        void raiseAlert({
+          alertKey: `workflow-completion-job-${job.id}`,
+          severity: "error",
+          source: "workflow",
+          message: `Workflow completion update for order ${job.orderId} failed permanently`,
+          detail: errorDetail.slice(0, 1_000),
+        });
+      }
+    }
   }
 }
 

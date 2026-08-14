@@ -35,6 +35,7 @@ import {
   orderPhaseLocks,
   orderWorkflows,
   workflowStageRuns,
+  workflowCompletionJobs,
   orderAutomationRules,
   orders,
   packetGroups,
@@ -93,7 +94,29 @@ const workflowStageActionsSchema = z.object({
   }).optional(),
   orderStatus: z.string().trim().min(2).max(32).optional(),
   completionPercent: z.number().int().min(0).max(100).optional(),
+  completionMode: z.enum(["fixed", "random"]).optional(),
+  completionRangeMin: z.number().int().min(0).max(100).optional(),
+  completionRangeMax: z.number().int().min(0).max(100).optional(),
+  completionDelayMinutes: z.number().int().min(0).max(43_200).optional(),
   webhookEndpointId: z.number().int().positive().optional(),
+}).superRefine((actions, ctx) => {
+  const mode = actions.completionMode ?? (actions.completionPercent !== undefined ? "fixed" : undefined);
+  if (!mode) {
+    if (actions.completionRangeMin !== undefined || actions.completionRangeMax !== undefined || actions.completionDelayMinutes !== undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Choose a completion policy mode before configuring a range or delay.", path: ["completionMode"] });
+    }
+    return;
+  }
+  if (mode === "fixed" && actions.completionPercent === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Choose a fixed completion percentage.", path: ["completionPercent"] });
+  }
+  if (mode === "random") {
+    if (actions.completionRangeMin === undefined || actions.completionRangeMax === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Enter both ends of the randomized completion range.", path: ["completionRangeMin"] });
+    } else if (actions.completionRangeMin > actions.completionRangeMax) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "The randomized completion minimum cannot exceed the maximum.", path: ["completionRangeMin"] });
+    }
+  }
 }).default({});
 
 async function purgeOrdersFromTrash(orderIds: number[]) {
@@ -104,6 +127,7 @@ async function purgeOrdersFromTrash(orderIds: number[]) {
     await tx.execute(sql`DELETE FROM order_answers WHERE order_id IN (${ids})`);
     await tx.execute(sql`DELETE ia FROM intake_answers ia INNER JOIN intake_submissions s ON s.id = ia.submission_id WHERE s.order_id IN (${ids})`);
     await tx.execute(sql`DELETE FROM intake_submissions WHERE order_id IN (${ids})`);
+    await tx.execute(sql`DELETE FROM workflow_completion_jobs WHERE order_id IN (${ids})`);
     await tx.execute(sql`DELETE FROM workflow_stage_runs WHERE order_id IN (${ids})`);
     await tx.execute(sql`DELETE FROM webhook_deliveries WHERE order_id IN (${ids})`);
     await tx.execute(sql`DELETE FROM phase_jobs WHERE order_id IN (${ids})`);
@@ -1440,6 +1464,12 @@ export const adminRouter = router({
     .input(z.object({ orderId: z.number().int().positive() }))
     .query(async ({ input }) =>
       db.select().from(workflowStageRuns).where(eq(workflowStageRuns.orderId, input.orderId)).orderBy(desc(workflowStageRuns.startedAt), desc(workflowStageRuns.id)),
+    ),
+
+  workflowCompletionJobs: staffProcedure
+    .input(z.object({ orderId: z.number().int().positive() }))
+    .query(async ({ input }) =>
+      db.select().from(workflowCompletionJobs).where(eq(workflowCompletionJobs.orderId, input.orderId)).orderBy(desc(workflowCompletionJobs.createdAt), desc(workflowCompletionJobs.id)),
     ),
 
   runWorkflowStageActions: adminProcedure

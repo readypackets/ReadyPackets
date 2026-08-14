@@ -24,6 +24,7 @@ import { processEmailQueue } from "./email.js";
 import { invalidateIpCaches, purgeExpiredBlacklistEntries } from "../security/ipBlacklist.js";
 import { getSettingNumber, invalidateSettingsCache } from "./settings.js";
 import { processPhaseJobs, processPendingFileSyncs, deliverWebhooks } from "./sharepoint.js";
+import { processWorkflowCompletionJobs } from "./orders.js";
 
 interface Job {
   name: string;
@@ -168,6 +169,14 @@ const JOBS: Job[] = [
     intervalMs: 30 * 60_000,
     initialDelayMs: 180_000,
     run: reapDeadEmails,
+  },
+  {
+    name: "workflow_completion_jobs",
+    intervalMs: 15_000,
+    initialDelayMs: 12_000,
+    run: async () => {
+      await processWorkflowCompletionJobs(25);
+    },
   },
   {
     name: "phase_jobs",
