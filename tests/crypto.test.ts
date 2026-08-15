@@ -15,7 +15,9 @@ import {
   emailIndex,
   encryptField,
   generateBackupCode,
+  generatePublicUserId,
   generateOrderNumber,
+  isPublicUserId,
   generateStorageKey,
   hashPassword,
   hashToken,
@@ -153,6 +155,18 @@ describe("token and identifier generation", () => {
     // Different lengths must not throw.
     expect(constantTimeEqual("abc", "abcdef")).toBe(false);
     expect(constantTimeEqual("", "")).toBe(true);
+  });
+
+  it("generates unique year-prefixed opaque customer IDs", () => {
+    const createdAt = new Date("2026-08-15T00:00:00.000Z");
+    const ids = new Set(Array.from({ length: 500 }, () => generatePublicUserId(createdAt)));
+    expect(ids.size).toBe(500);
+    for (const id of ids) {
+      expect(id).toMatch(/^RP26-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/);
+      expect(isPublicUserId(id)).toBe(true);
+    }
+    expect(isPublicUserId("RP-U-7F3A9D2C8B1E")).toBe(false);
+    expect(isPublicUserId("RP26-2UH4D3OT")).toBe(true);
   });
 
   it("generates readable, unique backup codes", () => {

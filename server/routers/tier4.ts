@@ -21,7 +21,7 @@ import {
   siteSettings,
   users,
 } from "../db/schema.js";
-import { decryptField, randomToken } from "../security/crypto.js";
+import { decryptField, isPublicUserId, randomToken } from "../security/crypto.js";
 import { putObject, getObjectStream, objectExists, deleteObject, validateUpload } from "../services/storage.js";
 import { recordActivity } from "../observability/audit.js";
 import { adminProcedure, protectedProcedure, publicProcedure, staffProcedure, router } from "../trpc/trpc.js";
@@ -30,13 +30,13 @@ import { getUserById, displayNameOf } from "../db/users.js";
 
 async function resolveActivityUserReference(reference: string): Promise<number> {
   const value = reference.trim();
-  if (/^RP-U-[A-F0-9]{12}$/i.test(value)) {
+  if (isPublicUserId(value)) {
     const row = (await db.select({ id: users.id }).from(users).where(eq(users.publicId, value.toUpperCase())).limit(1))[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "No account matches that public customer ID." });
     return row.id;
   }
   if (/^\d{1,10}$/.test(value)) return Number(value);
-  throw new TRPCError({ code: "BAD_REQUEST", message: "Enter a public customer ID in the form RP-U-XXXXXXXXXXXX." });
+  throw new TRPCError({ code: "BAD_REQUEST", message: "Enter a public customer ID in the form RPYY-XXXXXXXX, for example RP26-2UH4D3OT." });
 }
 
 // ── Newsletter management ─────────────────────────────────────────────────────

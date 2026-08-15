@@ -135,9 +135,26 @@ export function randomToken(bytes = 32): string {
   return randomBytes(bytes).toString("base64url");
 }
 
-/** Opaque, non-sequential customer-facing account reference, e.g. RP-U-7F3A9D2C8B1E. */
-export function generatePublicUserId(): string {
-  return `RP-U-${randomBytes(6).toString("hex").toUpperCase()}`;
+/**
+ * Opaque, non-sequential customer-facing account reference, e.g. RP26-2UH4D3OT.
+ * The two-digit UTC creation year provides an operational cohort marker; the
+ * eight-character Crockford-style suffix is generated from cryptographically
+ * secure randomness and excludes visually ambiguous characters.
+ */
+const PUBLIC_USER_ID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+export const PUBLIC_USER_ID_PATTERN = /^RP\d{2}-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/i;
+
+export function generatePublicUserId(date = new Date()): string {
+  const year = String(date.getUTCFullYear()).slice(-2);
+  let suffix = "";
+  for (let index = 0; index < 8; index += 1) {
+    suffix += PUBLIC_USER_ID_ALPHABET[randomInt(0, PUBLIC_USER_ID_ALPHABET.length)];
+  }
+  return `RP${year}-${suffix}`;
+}
+
+export function isPublicUserId(value: string): boolean {
+  return PUBLIC_USER_ID_PATTERN.test(value.trim());
 }
 
 /** Tokens are persisted only as SHA-256 digests so a database leak is inert. */

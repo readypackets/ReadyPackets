@@ -131,25 +131,38 @@ export async function createUser(input: CreateUserInput): Promise<DecryptedUser>
   const userId = insertedId(inserted);
   const aad = `user:${userId}`;
   const customerNumber = `RP-CUST-${String(userId).padStart(6, '0')}`;
-  const publicId = generatePublicUserId();
+  const basePatch = {
+    emailEnc: encryptField(email, aad) ?? "",
+    firstNameEnc: encryptField(input.firstName ?? null, aad),
+    middleNameEnc: encryptField(input.middleName ?? null, aad),
+    lastNameEnc: encryptField(input.lastName ?? null, aad),
+    preferredNameEnc: encryptField(input.preferredName ?? null, aad),
+    suffixEnc: encryptField(input.suffix ?? null, aad),
+    companyEnc: encryptField(input.company ?? null, aad),
+    phoneEnc: encryptField(input.phone ?? null, aad),
+    addressEnc: encryptField(input.address ?? null, aad),
+    notesEnc: encryptField(input.notes ?? null, aad),
+    customerNumber,
+  };
 
-  await db
-    .update(users)
-    .set({
-      emailEnc: encryptField(email, aad) ?? "",
-      firstNameEnc: encryptField(input.firstName ?? null, aad),
-      middleNameEnc: encryptField(input.middleName ?? null, aad),
-      lastNameEnc: encryptField(input.lastName ?? null, aad),
-      preferredNameEnc: encryptField(input.preferredName ?? null, aad),
-      suffixEnc: encryptField(input.suffix ?? null, aad),
-      companyEnc: encryptField(input.company ?? null, aad),
-      phoneEnc: encryptField(input.phone ?? null, aad),
-      addressEnc: encryptField(input.address ?? null, aad),
-      notesEnc: encryptField(input.notes ?? null, aad),
-      customerNumber,
-      publicId,
-    })
-    .where(eq(users.id, userId));
+  // The database unique index is authoritative. Retrying a collision keeps the
+  // opaque ID non-sequential without ever exposing the internal user primary key.
+  let persisted = false;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 5 && !persisted; attempt += 1) {
+    try {
+      await db
+        .update(users)
+        .set({ ...basePatch, publicId: generatePublicUserId() })
+        .where(eq(users.id, userId));
+      persisted = true;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (!persisted) {
+    throw lastError instanceof Error ? lastError : new Error("Unable to allocate a unique customer ID.");
+  }
 
   const created = await getUserById(userId);
   if (!created) throw new Error("User creation failed to persist");

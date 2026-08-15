@@ -2673,3 +2673,14 @@ The integration controls now explain that the MP3 fallback mode is used only whe
 
 
 **Production validation and publication:** Release `b7721c6a78dacbea66516e7d9188b660c5903b07` was deployed with server and client rollback copies. Live health returned `{"status":"ok"}`. Data integrity after deployment confirmed 9 active users, 3 orders, and 21 SharePoint sync records, including 4 successful completed records. An anonymous order API request correctly returned the tRPC `UNAUTHORIZED` response while maintenance mode was disabled. A controlled unsafe request without a CSRF token returned a valid tRPC `error.json` envelope with the explicit message `Your security token expired. Reload the page and try again.`; it no longer produces the client-side transformer error. No maintenance setting was toggled during validation to avoid disrupting customer traffic.
+
+
+## 2026-08-15 — Customer ID standard and profile visibility
+
+**User request:** Display each customer’s customer ID and join date on the administrator customer profile. Replace the legacy public account reference with a unique, opaque `RPYY-XXXXXXXX` format such as `RP26-2UH4D3OT` for existing and future accounts.
+
+**Implementation:** Replaced the public-ID generator with a year-prefixed, eight-character random uppercase identifier using an ambiguity-reduced alphabet. Future account creation retries database-enforced public-ID collisions without exposing an internal user key. Added a one-time migration utility that regenerates public IDs for every existing user, verifies no missing or duplicate values, and remaps any configured login-whitelist public IDs. Customer profile headers and Account panels now display the customer ID and join date. Activity Replay and Platform Setup accept and explain the new format.
+
+**Safety controls:** Internal numeric user IDs, legacy customer numbers, encrypted profile fields, orders, files, and relational links are unchanged. A timestamped pre-migration database snapshot is retained before applying the data-only public-ID update. The database unique index remains the authoritative uniqueness control.
+
+**Validation:** TypeScript compilation and client/server builds passed. The focused customer-ID generator assertions verify the required `RPYY-XXXXXXXX` shape, omission of ambiguous characters, and uniqueness across generated samples. The normal crypto test process encountered an existing Argon2 runner termination during its password-hashing section, after its encryption and blind-index assertions had passed; this did not involve the customer-ID implementation.

@@ -1001,7 +1001,7 @@ export function AdminCustomerDetailPage() {
     <>
       <PageHeader
         title={user.name}
-        description={`${user.email} · joined ${formatDate(user.createdAt)}`}
+        description={`${user.email} · Customer ID ${user.publicId ?? "Pending"} · Joined ${formatDate(user.createdAt)}`}
         breadcrumb={{ href: "/admin/customers", label: "Customers" }}
         actions={
           session.isAdmin ? (
@@ -1134,6 +1134,14 @@ export function AdminCustomerDetailPage() {
           <Card>
             <CardHeader title="Account" />
             <dl className="mt-4 space-y-3 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-body">Customer ID</dt>
+                <dd className="font-mono text-xs font-semibold text-ink">{user.publicId ?? "Pending"}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-body">Joined</dt>
+                <dd className="text-ink">{formatDate(user.createdAt)}</dd>
+              </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-body">Role</dt>
                 <dd><Badge tone={ROLE_TONES[user.role] ?? "neutral"}>{user.role}</Badge></dd>

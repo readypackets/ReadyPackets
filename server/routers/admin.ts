@@ -1076,6 +1076,7 @@ export const adminRouter = router({
       return {
         user: {
           id: user.id,
+          publicId: user.publicId,
           name: displayNameOf(user),
           email: user.email,
           firstName: user.firstName,
