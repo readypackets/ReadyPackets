@@ -34,6 +34,27 @@ interface OAuthConfig {
 }
 
 let delegatedTokenCache: DelegatedTokenCache | null = null;
+let delegatedSharePointRestTokenCache: DelegatedTokenCache | null = null;
+
+async function delegatedSharePointRestScope(): Promise<string> {
+  const siteUrl = (await getSetting("sharepoint.site_url"))?.trim();
+  if (!siteUrl) throw new Error("Save the SharePoint site URL before authorizing the Microsoft 365 sync identity.");
+  let parsed: URL;
+  try {
+    parsed = new URL(siteUrl);
+  } catch {
+    throw new Error("The saved SharePoint site URL is invalid for delegated synchronization.");
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  if (parsed.protocol !== "https:" || !hostname.endsWith(".sharepoint.com") || parsed.username || parsed.password || parsed.port) {
+    throw new Error("The saved SharePoint site URL must be a secure *.sharepoint.com address.");
+  }
+  return `https://${hostname}/AllSites.Write`;
+}
+
+async function authorizationScopes(): Promise<string> {
+  return `${GRAPH_SCOPES} ${await delegatedSharePointRestScope()}`;
+}
 
 export function delegatedSharePointCallbackUrl(): string {
   return new URL("/api/integrations/sharepoint/delegated/callback", env.appUrl).toString();
@@ -71,7 +92,7 @@ async function tokenRequest(config: OAuthConfig, body: URLSearchParams): Promise
 }
 
 export async function startDelegatedSharePointAuthorization(options: { initiatedByUserId: number; requestIp?: string | null }): Promise<{ authorizationUrl: string; expiresAt: Date }> {
-  const config = await getOAuthConfig();
+  const [config, scope] = await Promise.all([getOAuthConfig(), authorizationScopes()]);
   const state = randomToken(32);
   const stateHash = hashToken(state);
   const codeVerifier = randomToken(64);
@@ -89,7 +110,7 @@ export async function startDelegatedSharePointAuthorization(options: { initiated
   authorizeUrl.searchParams.set("response_type", "code");
   authorizeUrl.searchParams.set("redirect_uri", delegatedSharePointCallbackUrl());
   authorizeUrl.searchParams.set("response_mode", "query");
-  authorizeUrl.searchParams.set("scope", GRAPH_SCOPES);
+  authorizeUrl.searchParams.set("scope", scope);
   authorizeUrl.searchParams.set("state", state);
   authorizeUrl.searchParams.set("code_challenge", pkceChallenge(codeVerifier));
   authorizeUrl.searchParams.set("code_challenge_method", "S256");
@@ -113,7 +134,7 @@ export async function completeDelegatedSharePointAuthorization(input: { state: s
 
   const verifier = decryptField(attempt.codeVerifierEnc, `sharepoint.delegated_attempt:${stateHash}`);
   if (!verifier) throw new Error("The protected Microsoft authorization verifier could not be recovered.");
-  const config = await getOAuthConfig();
+  const [config, scope] = await Promise.all([getOAuthConfig(), authorizationScopes()]);
   const tokens = await tokenRequest(config, new URLSearchParams({
     grant_type: "authorization_code",
     client_id: config.clientId,
@@ -121,7 +142,7 @@ export async function completeDelegatedSharePointAuthorization(input: { state: s
     redirect_uri: delegatedSharePointCallbackUrl(),
     code: input.code,
     code_verifier: verifier,
-    scope: GRAPH_SCOPES,
+    scope,
   }));
   if (!tokens.refresh_token) throw new Error("Microsoft did not provide a renewable sync authorization. Ensure offline access was granted.");
 
@@ -162,6 +183,27 @@ export async function getDelegatedSharePointToken(): Promise<string> {
   return delegatedTokenCache.token;
 }
 
+/** Request a refresh-token-derived access token whose audience is SharePoint REST rather than Microsoft Graph. */
+export async function getDelegatedSharePointRestToken(): Promise<string> {
+  if (delegatedSharePointRestTokenCache && Date.now() < delegatedSharePointRestTokenCache.expiresAt - 60_000) return delegatedSharePointRestTokenCache.token;
+  const storedRefreshToken = await getSetting("sharepoint.delegated_refresh_token_enc");
+  const refreshToken = decryptField(storedRefreshToken, "sharepoint.delegated_refresh_token");
+  if (!refreshToken) throw new Error("A delegated Microsoft 365 sync identity has not been authorized. Connect the sync account in SharePoint settings.");
+  const [config, scope] = await Promise.all([getOAuthConfig(), delegatedSharePointRestScope()]);
+  const tokens = await tokenRequest(config, new URLSearchParams({
+    grant_type: "refresh_token",
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    refresh_token: refreshToken,
+    scope,
+  }));
+  if (tokens.refresh_token) {
+    await setSetting("sharepoint.delegated_refresh_token_enc", encryptField(tokens.refresh_token, "sharepoint.delegated_refresh_token"), { category: "sharepoint", isSecret: true });
+  }
+  delegatedSharePointRestTokenCache = { token: tokens.access_token!, expiresAt: Date.now() + Math.max(60, tokens.expires_in ?? 3600) * 1000 };
+  return delegatedSharePointRestTokenCache.token;
+}
+
 export async function getDelegatedSharePointStatus(): Promise<{ connected: boolean; account: string | null; connectedAt: string | null; lastError: string | null }> {
   const [refreshStored, accountStored, connectedAt, lastError] = await Promise.all([
     getSetting("sharepoint.delegated_refresh_token_enc"),
@@ -179,6 +221,7 @@ export async function getDelegatedSharePointStatus(): Promise<{ connected: boole
 
 export async function disconnectDelegatedSharePointIdentity(userId: number): Promise<void> {
   delegatedTokenCache = null;
+  delegatedSharePointRestTokenCache = null;
   await Promise.all([
     setSetting("sharepoint.delegated_refresh_token_enc", null, { category: "sharepoint", isSecret: true, userId }),
     setSetting("sharepoint.delegated_account_enc", null, { category: "sharepoint", isSecret: true, userId }),

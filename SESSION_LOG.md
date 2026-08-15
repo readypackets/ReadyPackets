@@ -2611,3 +2611,10 @@ TypeScript validation and client/server production builds passed. The feature re
 After the Microsoft 365 delegated sync account connected successfully, live WebM audio syncs continued to return Microsoft Graph `400 invalidRequest` during the binary content PUT even though authentication, token refresh, folder resolution, the source recording, and manual SharePoint browser upload all succeeded. The worker already selected the delegated token for audio transfers; the remaining difference was the runtime binary request construction.
 
 The SharePoint binary-content worker now sends direct binary PUTs through Node's native HTTPS client with an explicit `Content-Length`, `Content-Type`, `Accept`, and one raw byte stream. JSON, discovery, app-only document sync, original WebM storage, customer/admin playback, and the reversible MP3 setting remain unchanged. A controlled delegated WebM retry will validate this correction before any bulk requeue.
+
+
+## 2026-08-15 — Delegated SharePoint REST audio transport
+
+Delegated Microsoft Graph authorization and browser-level WebM upload both succeeded, but all Graph binary audio transfer request shapes still returned `400 invalidRequest`. The source comparison and controlled retries showed a resource-audience distinction: the authorization succeeds for Microsoft Graph, while the selected SharePoint environment rejects the Graph binary write path.
+
+ReadyPackets now has a separate delegated SharePoint REST transport for audio only. It obtains a refresh-token-derived access token for the validated tenant SharePoint hostname and `AllSites.Write` scope, then writes the original WebM to the already-resolved audio folder through SharePoint REST. Graph app-only credentials continue to create folders and synchronize documents. The Microsoft 365 sync account must be reauthorized after SharePoint delegated `AllSites.Write` consent is granted; no original recording is modified or transcoded by this path.

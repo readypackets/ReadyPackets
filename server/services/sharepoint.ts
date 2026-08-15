@@ -39,7 +39,7 @@ import { getUserById, displayNameOf } from "../db/users.js";
 import { buildOrderFileName } from "./fileNaming.js";
 import { getObjectBuffer } from "./storage.js";
 import { transcodeWebmToMp3ForSharePoint } from "./audioTranscode.js";
-import { getDelegatedSharePointStatus, getDelegatedSharePointToken, recordDelegatedSharePointError } from "./sharepointDelegatedAuth.js";
+import { getDelegatedSharePointStatus, getDelegatedSharePointRestToken, recordDelegatedSharePointError } from "./sharepointDelegatedAuth.js";
 import type { OrderStatus } from "../../shared/domain.js";
 
 // ---------------------------------------------------------------------------
@@ -527,6 +527,39 @@ async function deleteSharePointFileItem(driveId: string, itemId: string, token: 
   }
 }
 
+/**
+ * Upload a delegated audio copy through the SharePoint REST audience. This is
+ * deliberately isolated from the existing Graph app-only transport so documents,
+ * folder management, and current Graph controls are not changed.
+ */
+async function uploadAudioViaSharePointRest(folderPath: string, fileName: string, content: Buffer): Promise<void> {
+  const { siteUrl } = await getGraphRuntimeConfig();
+  if (!siteUrl) throw new Error("Save the SharePoint site URL before synchronizing delegated audio.");
+  let site: URL;
+  try {
+    site = new URL(siteUrl);
+  } catch {
+    throw new Error("The saved SharePoint site URL is invalid for delegated audio synchronization.");
+  }
+  const hostname = site.hostname.toLowerCase();
+  if (site.protocol !== "https:" || !hostname.endsWith(".sharepoint.com") || site.username || site.password || site.port) {
+    throw new Error("The saved SharePoint site URL must be a secure *.sharepoint.com address.");
+  }
+  const normalizedSitePath = site.pathname.replace(/\/+$/, "");
+  const serverRelativeFolder = `${normalizedSitePath}/${folderPath}`.replace(/\/+/g, "/");
+  if (serverRelativeFolder.includes("..") || /['\r\n]/.test(serverRelativeFolder) || /['\r\n]/.test(fileName)) {
+    throw new Error("The resolved SharePoint audio destination contains unsupported path characters.");
+  }
+  const escapedFolder = serverRelativeFolder.replace(/'/g, "''");
+  const escapedName = fileName.replace(/'/g, "''");
+  const endpoint = `${site.origin}${normalizedSitePath}/_api/web/GetFolderByServerRelativeUrl('${escapedFolder}')/Files/add(url='${escapedName}',overwrite=true)`;
+  const token = await getDelegatedSharePointRestToken();
+  const response = await putGraphBinaryContent(endpoint, token, content, "application/octet-stream");
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`SharePoint REST audio upload failed (${response.status}): ${response.body.slice(0, 500)}`);
+  }
+}
+
 async function uploadBinaryFile(folderId: string, fileName: string, content: Buffer, contentType: string, accessToken?: string): Promise<string> {
   // The app-only Graph library accepts direct content uploads for documents but
   // rejects a direct `.webm` name. Upload the exact bytes through the accepted
@@ -633,23 +666,29 @@ export async function processPendingFileSyncs(): Promise<void> {
       const folderId = await ensureFolder(folderPath);
       const source = await getObjectBuffer(file.storageKey);
       const delegatedStatus = fileKind === "audio" ? await getDelegatedSharePointStatus() : null;
-      const delegatedAudioToken = delegatedStatus?.connected ? await getDelegatedSharePointToken() : undefined;
-      // Delegated Microsoft 365 authorization preserves the original WebM in SharePoint.
-      // The legacy MP3 mode remains only as a reversible setting for historical deployments.
-      const useMp3Fallback = !delegatedAudioToken && graphConfig.audioFallbackMode === "mp3" && fileKind === "audio" && /\.webm$/i.test(file.originalName);
+      const useDelegatedSharePointRest = fileKind === "audio" && Boolean(delegatedStatus?.connected);
+      // The MP3 fallback remains only for legacy deployments that have not yet
+      // connected a delegated Microsoft 365 account.
+      const useMp3Fallback = !useDelegatedSharePointRest && graphConfig.audioFallbackMode === "mp3" && fileKind === "audio" && /\.webm$/i.test(file.originalName);
       const transferName = useMp3Fallback ? file.originalName.replace(/\.webm$/i, ".mp3") : file.originalName;
       const transferContent = useMp3Fallback ? await transcodeWebmToMp3ForSharePoint(source) : source;
       const transferMime = useMp3Fallback ? "audio/mpeg" : file.detectedMime;
-      await uploadBinaryFile(folderId, transferName, transferContent, transferMime, delegatedAudioToken);
+      if (useDelegatedSharePointRest) {
+        await uploadAudioViaSharePointRest(folderPath, transferName, transferContent);
+      } else {
+        await uploadBinaryFile(folderId, transferName, transferContent, transferMime);
+      }
       await db.update(sharepointSyncLog).set({ status: "succeeded", sharepointPath: `${folderPath}/${transferName}`, errorMessage: null }).where(eq(sharepointSyncLog.id, log.id));
       void recordActivity({
         actorUserId: null,
-        action: useMp3Fallback ? "sharepoint.audio_mp3_fallback_synced" : "sharepoint.file_synced",
+        action: useDelegatedSharePointRest ? "sharepoint.audio_delegated_rest_synced" : useMp3Fallback ? "sharepoint.audio_mp3_fallback_synced" : "sharepoint.file_synced",
         entityType: "file",
         entityId: file.id,
-        summary: useMp3Fallback
-          ? `Synchronized a SharePoint-only MP3 copy of ${file.originalName} for ${orderNumber}; the original WebM remains in ReadyPackets.`
-          : `Synchronized ${file.originalName} to SharePoint for ${orderNumber}`,
+        summary: useDelegatedSharePointRest
+          ? `Synchronized original audio ${file.originalName} to SharePoint using the dedicated Microsoft 365 sync identity for ${orderNumber}.`
+          : useMp3Fallback
+            ? `Synchronized a SharePoint-only MP3 copy of ${file.originalName} for ${orderNumber}; the original WebM remains in ReadyPackets.`
+            : `Synchronized ${file.originalName} to SharePoint for ${orderNumber}`,
       });
     } catch (error) {
       if (error instanceof Error && /delegated Microsoft 365 sync identity|Microsoft delegated SharePoint authorization/i.test(error.message)) {
