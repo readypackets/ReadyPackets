@@ -532,9 +532,25 @@ async function deleteSharePointFileItem(driveId: string, itemId: string, token: 
  * deliberately isolated from the existing Graph app-only transport so documents,
  * folder management, and current Graph controls are not changed.
  */
+async function resolveDocumentLibraryRootServerPath(driveId: string): Promise<string> {
+  const drive = await graphRequest("GET", `/drives/${encodeURIComponent(driveId)}?$select=id,webUrl`) as { webUrl?: string };
+  if (!drive.webUrl) throw new Error("Microsoft Graph did not return a web URL for the selected SharePoint document library.");
+  let driveWebUrl: URL;
+  try {
+    driveWebUrl = new URL(drive.webUrl);
+  } catch {
+    throw new Error("Microsoft Graph returned an invalid web URL for the selected SharePoint document library.");
+  }
+  const rootPath = decodeURIComponent(driveWebUrl.pathname).replace(/\/+$/, "");
+  if (!rootPath || rootPath.includes("..") || /['\r\n]/.test(rootPath)) {
+    throw new Error("The selected SharePoint document-library path is invalid for delegated audio synchronization.");
+  }
+  return rootPath;
+}
+
 async function uploadAudioViaSharePointRest(folderPath: string, fileName: string, content: Buffer): Promise<void> {
-  const { siteUrl } = await getGraphRuntimeConfig();
-  if (!siteUrl) throw new Error("Save the SharePoint site URL before synchronizing delegated audio.");
+  const { siteUrl, driveId } = await getGraphRuntimeConfig();
+  if (!siteUrl || !driveId) throw new Error("Save the SharePoint site URL and selected document library before synchronizing delegated audio.");
   let site: URL;
   try {
     site = new URL(siteUrl);
@@ -546,7 +562,11 @@ async function uploadAudioViaSharePointRest(folderPath: string, fileName: string
     throw new Error("The saved SharePoint site URL must be a secure *.sharepoint.com address.");
   }
   const normalizedSitePath = site.pathname.replace(/\/+$/, "");
-  const serverRelativeFolder = `${normalizedSitePath}/${folderPath}`.replace(/\/+/g, "/");
+  const documentLibraryRoot = await resolveDocumentLibraryRootServerPath(driveId);
+  if (!documentLibraryRoot.startsWith(`${normalizedSitePath}/`) && documentLibraryRoot !== normalizedSitePath) {
+    throw new Error("The selected document library does not belong to the configured SharePoint site.");
+  }
+  const serverRelativeFolder = `${documentLibraryRoot}/${folderPath}`.replace(/\/+/g, "/");
   if (serverRelativeFolder.includes("..") || /['\r\n]/.test(serverRelativeFolder) || /['\r\n]/.test(fileName)) {
     throw new Error("The resolved SharePoint audio destination contains unsupported path characters.");
   }

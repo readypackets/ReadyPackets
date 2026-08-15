@@ -2625,3 +2625,10 @@ ReadyPackets now has a separate delegated SharePoint REST transport for audio on
 The delegated Microsoft 365 sync account redirected back to ReadyPackets but did not connect. Sanitized callback logs showed Microsoft identity `invalid_request` during authorization-code redemption, while the single-use state was consumed and no encrypted refresh token was stored. The cause was requesting Microsoft Graph and SharePoint REST resource scopes together in one authorization-code exchange.
 
 The callback now requests only the Microsoft Graph delegated audience during interactive authorization, which restores profile verification and renewable refresh-token storage. The separate SharePoint REST `AllSites.Write` audience is requested only later through the encrypted refresh token when the audio worker runs. This preserves the delegated SharePoint REST transport and avoids mixing API resource audiences in the interactive token exchange.
+
+
+## 2026-08-15 — Delegated SharePoint REST document-library root correction
+
+The first controlled delegated SharePoint REST audio upload reached the SharePoint REST service but returned `404 DirectoryNotFound`. This confirmed that delegated authorization and the REST endpoint were functioning, while the constructed server-relative path omitted the selected document library root. Microsoft Graph folder resolution works relative to a drive root; SharePoint REST requires the full server-relative library path.
+
+The audio worker now reads the selected drive's Graph `webUrl`, derives and validates the document-library server-relative root, confirms it belongs to the configured site, and prefixes that root to the existing ReadyPackets stage path before issuing the delegated REST write. Folder creation, document synchronization, original WebM retention, and customer/admin playback remain unchanged.
