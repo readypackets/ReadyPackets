@@ -2604,3 +2604,10 @@ The implementation uses authorization code flow with S256 PKCE, a random 32-byte
 ### Validation and next step
 
 TypeScript validation and client/server production builds passed. The feature requires the Microsoft Entra redirect URI and delegated permissions to be registered, then the user must authorize the dedicated Microsoft 365 account. No failed recordings were requeued during implementation. After authorization, validate one WebM transfer before requeueing remaining failed audio.
+
+
+## 2026-08-15 — Delegated SharePoint audio upload framing correction
+
+After the Microsoft 365 delegated sync account connected successfully, live WebM audio syncs continued to return Microsoft Graph `400 invalidRequest` during the binary content PUT even though authentication, token refresh, folder resolution, the source recording, and manual SharePoint browser upload all succeeded. The worker already selected the delegated token for audio transfers; the remaining difference was the runtime binary request construction.
+
+The SharePoint binary-content worker now sends direct binary PUTs through Node's native HTTPS client with an explicit `Content-Length`, `Content-Type`, `Accept`, and one raw byte stream. JSON, discovery, app-only document sync, original WebM storage, customer/admin playback, and the reversible MP3 setting remain unchanged. A controlled delegated WebM retry will validate this correction before any bulk requeue.

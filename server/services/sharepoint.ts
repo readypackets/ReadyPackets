@@ -16,6 +16,7 @@
  * rather than on behalf of an individual user.
  */
 import { randomUUID } from "node:crypto";
+import { request as httpsRequest } from "node:https";
 import { and, eq, isNull, lte, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
@@ -423,6 +424,35 @@ async function uploadPlaceholder(folderId: string, fileName: string, content: st
 type GraphUploadSession = { uploadUrl?: string };
 type GraphUploadResult = { id?: string };
 
+/**
+ * Send Graph binary file content through Node's native HTTPS client. This gives
+ * the Microsoft endpoint a fixed Content-Length and a single raw byte stream,
+ * avoiding any runtime-specific fetch body framing. It is used only for binary
+ * file-content PUT requests; Graph JSON and discovery requests continue using
+ * the regular fetch client.
+ */
+async function putGraphBinaryContent(url: string, token: string, content: Buffer, contentType: string): Promise<{ status: number; body: string }> {
+  const target = new URL(url);
+  return new Promise((resolve, reject) => {
+    const request = httpsRequest(target, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        "Content-Type": contentType,
+        "Content-Length": String(content.byteLength),
+      },
+    }, (response) => {
+      const parts: Buffer[] = [];
+      response.on("data", (chunk: Buffer | Uint8Array | string) => parts.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+      response.once("error", reject);
+      response.once("end", () => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(parts).toString("utf8") }));
+    });
+    request.once("error", reject);
+    request.end(content);
+  });
+}
+
 async function uploadBinaryViaSession(folderId: string, fileName: string, content: Buffer, contentType: string, accessToken?: string): Promise<string> {
   const { driveId } = await getGraphRuntimeConfig();
   if (!driveId) throw new Error("GRAPH_SHAREPOINT_DRIVE_ID must be set.");
@@ -517,16 +547,16 @@ async function uploadBinaryFile(folderId: string, fileName: string, content: Buf
   const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(uploadName)}:/content`;
   let uploadedId: string | null = null;
   try {
-    const response = await fetch(url, {
-      method: "PUT",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": uploadContentType, "Content-Length": String(content.byteLength) },
-      body: content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength) as ArrayBuffer,
-    });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`SharePoint file-content upload failed (${response.status}): ${text.slice(0, 500)}`);
+    const response = await putGraphBinaryContent(url, token, content, uploadContentType);
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`SharePoint file-content upload failed (${response.status}): ${response.body.slice(0, 500)}`);
     }
-    const uploaded = (await response.json()) as GraphUploadResult;
+    let uploaded: GraphUploadResult;
+    try {
+      uploaded = JSON.parse(response.body) as GraphUploadResult;
+    } catch {
+      throw new Error("Microsoft Graph completed the binary upload without a valid item response.");
+    }
     if (!uploaded.id) throw new Error("Microsoft Graph did not return a SharePoint item ID after upload.");
     uploadedId = uploaded.id;
     return stageWebm ? await renameSharePointFileItem(driveId, uploadedId, fileName, token) : uploadedId;
