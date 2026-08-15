@@ -2639,3 +2639,10 @@ The audio worker now reads the selected drive's Graph `webUrl`, derives and vali
 After resolving the document-library root, the controlled delegated SharePoint REST audio transfer reached the correct folder and returned SharePoint’s explicit `SP.File does not support HTTP PUT method` response. The REST `Files/add` endpoint requires an HTTP POST with the binary request body; the worker had reused a Graph PUT helper.
 
 The native binary request helper now accepts the required method explicitly. Delegated SharePoint REST audio creation uses POST, while existing Microsoft Graph binary content transfers retain PUT. Authorization, fixed content length, original WebM bytes, selected library-root resolution, and error redaction remain unchanged.
+
+
+## 2026-08-15 — Delegated SharePoint REST audio synchronization verified
+
+After the dedicated Microsoft 365 sync account was connected with delegated SharePoint consent, the controlled original WebM transfer completed successfully through the delegated SharePoint REST path. The synchronized destination was the expected `Phase I/Audio` folder beneath the selected document library, and the source WebM remained unchanged in ReadyPackets.
+
+Following the controlled success, the remaining 13 historical failed WebM transfer records were requeued. Final production verification reported 14 WebM sync records in `succeeded` status, with zero pending and zero failed WebM records. The final correction used the selected drive's full document-library root and SharePoint REST's required POST method for `Files/add`.
