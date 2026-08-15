@@ -526,7 +526,7 @@ function SharePointTab() {
             </div>
           ) : null}
           <div className="md:col-span-2">
-            <Field label="SharePoint audio transfer mode" help="MP3 fallback preserves the original WebM only in ReadyPackets and creates an MP3 copy solely for SharePoint. Original WebM only is reserved for a future delegated Microsoft 365 sync identity.">
+            <Field label="SharePoint audio transfer mode" help="MP3 fallback preserves the original WebM only in ReadyPackets and creates an MP3 copy solely for SharePoint. Original WebM only uses the connected delegated Microsoft 365 SharePoint sync identity.">
               <Select value={form.audioFallbackMode} onChange={(event) => setForm({ ...form, audioFallbackMode: event.target.value as "none" | "mp3" })}>
                 <option value="mp3">MP3 fallback copy for SharePoint (recommended now)</option>
                 <option value="none">Original WebM only (requires compatible Microsoft 365 sync identity)</option>
@@ -578,7 +578,7 @@ function SharePointTab() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h3 className="font-semibold text-brand-navy">Microsoft 365 audio sync identity</h3>
-            <p className="mt-1 max-w-3xl text-sm text-gray-600">Use a dedicated Microsoft 365 account to upload original WebM recordings with delegated Microsoft Graph authorization. The encrypted renewable token is used only for audio binary uploads; the existing app-only configuration continues to manage document and folder synchronization.</p>
+            <p className="mt-1 max-w-3xl text-sm text-gray-600">Use a dedicated Microsoft 365 account to upload original WebM recordings with delegated Microsoft 365 SharePoint authorization. The encrypted renewable token is used only for audio binary uploads; the existing app-only configuration continues to manage document and folder synchronization.</p>
           </div>
           <span className={data?.delegatedSync?.connected ? "rounded-full bg-green-50 px-3 py-1 text-sm font-medium text-green-700" : "rounded-full bg-amber-50 px-3 py-1 text-sm font-medium text-amber-700"}>{data?.delegatedSync?.connected ? "Connected" : "Authorization required"}</span>
         </div>
@@ -592,7 +592,7 @@ function SharePointTab() {
         ) : (
           <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             <p className="font-semibold">Before connecting</p>
-            <p className="mt-1">Register the exact callback URL shown below as a Web redirect URI in Microsoft Entra, add delegated Microsoft Graph `Files.ReadWrite.All` and `User.Read` permissions, grant consent, and sign in with the dedicated account that has access to this document library.</p>
+            <p className="mt-1">Register the exact callback URL shown below as a Web redirect URI in Microsoft Entra, add delegated Microsoft Graph `Files.ReadWrite.All` and `User.Read` plus SharePoint `AllSites.Write`, grant consent, and sign in with the dedicated account that has access to this document library.</p>
             <p className="mt-2 break-all rounded bg-white/70 p-2 font-mono text-xs">{window.location.origin}/api/integrations/sharepoint/delegated/callback</p>
           </div>
         )}

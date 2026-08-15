@@ -2646,3 +2646,8 @@ The native binary request helper now accepts the required method explicitly. Del
 After the dedicated Microsoft 365 sync account was connected with delegated SharePoint consent, the controlled original WebM transfer completed successfully through the delegated SharePoint REST path. The synchronized destination was the expected `Phase I/Audio` folder beneath the selected document library, and the source WebM remained unchanged in ReadyPackets.
 
 Following the controlled success, the remaining 13 historical failed WebM transfer records were requeued. Final production verification reported 14 WebM sync records in `succeeded` status, with zero pending and zero failed WebM records. The final correction used the selected drive's full document-library root and SharePoint REST's required POST method for `Files/add`.
+
+
+## 2026-08-15 — SharePoint integration guidance alignment
+
+The Integrations page now accurately states that original WebM transfers use a connected delegated Microsoft 365 SharePoint identity, while existing app-only configuration continues to handle document and folder operations. The displayed prerequisite guidance now includes SharePoint delegated `AllSites.Write` alongside Microsoft Graph delegated permissions. This UI-only correction follows the verified recovery in which all 14 tracked historical WebM transfers completed successfully.
