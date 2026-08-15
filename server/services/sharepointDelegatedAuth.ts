@@ -52,8 +52,12 @@ async function delegatedSharePointRestScope(): Promise<string> {
   return `https://${hostname}/AllSites.Write`;
 }
 
-async function authorizationScopes(): Promise<string> {
-  return `${GRAPH_SCOPES} ${await delegatedSharePointRestScope()}`;
+// Microsoft’s authorization-code exchange issues an access token for one
+// resource audience. Keep initial authorization on Graph (used for profile
+// verification); the renewable refresh token obtains the separately consented
+// SharePoint REST audience only when audio synchronization runs.
+function authorizationScopes(): string {
+  return GRAPH_SCOPES;
 }
 
 export function delegatedSharePointCallbackUrl(): string {
@@ -92,7 +96,7 @@ async function tokenRequest(config: OAuthConfig, body: URLSearchParams): Promise
 }
 
 export async function startDelegatedSharePointAuthorization(options: { initiatedByUserId: number; requestIp?: string | null }): Promise<{ authorizationUrl: string; expiresAt: Date }> {
-  const [config, scope] = await Promise.all([getOAuthConfig(), authorizationScopes()]);
+  const [config, scope] = await Promise.all([getOAuthConfig(), Promise.resolve(authorizationScopes())]);
   const state = randomToken(32);
   const stateHash = hashToken(state);
   const codeVerifier = randomToken(64);
@@ -134,7 +138,7 @@ export async function completeDelegatedSharePointAuthorization(input: { state: s
 
   const verifier = decryptField(attempt.codeVerifierEnc, `sharepoint.delegated_attempt:${stateHash}`);
   if (!verifier) throw new Error("The protected Microsoft authorization verifier could not be recovered.");
-  const [config, scope] = await Promise.all([getOAuthConfig(), authorizationScopes()]);
+  const [config, scope] = await Promise.all([getOAuthConfig(), Promise.resolve(authorizationScopes())]);
   const tokens = await tokenRequest(config, new URLSearchParams({
     grant_type: "authorization_code",
     client_id: config.clientId,
