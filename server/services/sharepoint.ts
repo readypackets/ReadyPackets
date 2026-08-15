@@ -40,6 +40,7 @@ import { buildOrderFileName } from "./fileNaming.js";
 import { getObjectBuffer } from "./storage.js";
 import { transcodeWebmToMp3ForSharePoint } from "./audioTranscode.js";
 import { getDelegatedSharePointStatus, getDelegatedSharePointRestToken, recordDelegatedSharePointError } from "./sharepointDelegatedAuth.js";
+import { backfillBundleScopeManifest } from "./orderScope.js";
 import type { OrderStatus } from "../../shared/domain.js";
 
 // ---------------------------------------------------------------------------
@@ -1088,6 +1089,9 @@ export async function jobNotifyWebhooks(orderId: number, phase: string): Promise
   if (!isP101 && !isP201) return;
 
   const phaseCode = isP101 ? "P101" : "P201";
+  // Older orders did not persist a manifest. Derive it from immutable order items
+  // and persist a non-empty result before P101 is previewed or delivered.
+  const bundleScopeManifest = await backfillBundleScopeManifest(order.id, order.bundleScopeManifest);
   const p101Payload = {
     customer_id: customerId,
     order_id: order.orderNumber,
@@ -1100,7 +1104,7 @@ export async function jobNotifyWebhooks(orderId: number, phase: string): Promise
     release_status: order.releaseStatus ?? "",
     order_scope_mode: order.orderScopeMode ?? "multi_packet_partial",
     // Intentionally remains an escaped JSON string, per the receiving scenario contract.
-    bundle_scope_manifest: order.bundleScopeManifest ?? "{}",
+    bundle_scope_manifest: bundleScopeManifest,
   };
   const payload = isP101
     ? p101Payload

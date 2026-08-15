@@ -40,6 +40,7 @@ import { displayNameOf, getUserById } from "../db/users.js";
 import { ORDER_TRANSITIONS, type OrderStatus } from "../../shared/domain.js";
 import { assertActiveOrderStatus, isSystemOrderStatus, isTerminalOrderStatus } from "./orderStatusConfig.js";
 import { insertedId } from "../db/result.js";
+import { defaultOrderScopeMode, getPacketGroupNumbers, resolveBundleScopeManifest } from "./orderScope.js";
 
 export class OrderStateError extends Error {}
 
@@ -120,6 +121,8 @@ export async function createOrder(input: CreateOrderInput) {
   const customerNumber = customerRow[0]?.customerNumber ?? null;
   const orderNumber = generateOrderNumber(new Date(), customerNumber);
   const defaultWorkflow = await db.select({ id: orderWorkflows.id }).from(orderWorkflows).where(and(eq(orderWorkflows.isDefault, true), eq(orderWorkflows.active, true))).limit(1);
+  const packetGroupNumbers = await getPacketGroupNumbers(quote.lines.map((line) => line.packetGroupId));
+  const bundleScopeManifest = resolveBundleScopeManifest(input.bundleScopeManifest, quote.lines, packetGroupNumbers);
   const inserted = await db.insert(orders).values({
     orderNumber,
     userId: input.userId,
@@ -138,8 +141,8 @@ export async function createOrder(input: CreateOrderInput) {
     canonVersion: input.canonVersion ?? null,
     runMode: input.runMode ?? null,
     releaseStatus: input.releaseStatus ?? null,
-    orderScopeMode: input.orderScopeMode ?? null,
-    bundleScopeManifest: input.bundleScopeManifest ?? null,
+    orderScopeMode: input.orderScopeMode?.trim() || defaultOrderScopeMode(quote.lines),
+    bundleScopeManifest,
     workflowId: defaultWorkflow[0]?.id ?? null,
   });
 

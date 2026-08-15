@@ -84,6 +84,7 @@ import { queueTemplatedEmail, wrapHtmlBody } from "../services/email.js";
 import { adminProcedure, staffProcedure, router } from "../trpc/trpc.js";
 import { ORDER_STATUSES, PRODUCT_TIERS, USER_ROLES } from "../../shared/domain.js";
 import { insertedId } from "../db/result.js";
+import { deriveBundleScopeManifestForOrder } from "../services/orderScope.js";
 
 const workflowStageActionsSchema = z.object({
   emailTemplateKey: z.string().trim().min(1).max(64).optional(),
@@ -570,6 +571,7 @@ export const adminRouter = router({
         .from(orderItems)
         .leftJoin(products, eq(orderItems.productId, products.id))
         .where(eq(orderItems.orderId, input.orderId));
+      const derivedBundleScopeManifest = await deriveBundleScopeManifestForOrder(order.id, order.bundleScopeManifest);
 
       const submission = await db
         .select()
@@ -595,6 +597,7 @@ export const adminRouter = router({
           ...order,
           projectName: decryptField(order.projectNameEnc, `order:${order.id}`),
           internalNotesText: decryptField(order.internalNotesEnc, `order_internal:${order.id}`),
+          bundleScopeManifest: derivedBundleScopeManifest,
         },
         customer: customer
           ? {
