@@ -2632,3 +2632,10 @@ The callback now requests only the Microsoft Graph delegated audience during int
 The first controlled delegated SharePoint REST audio upload reached the SharePoint REST service but returned `404 DirectoryNotFound`. This confirmed that delegated authorization and the REST endpoint were functioning, while the constructed server-relative path omitted the selected document library root. Microsoft Graph folder resolution works relative to a drive root; SharePoint REST requires the full server-relative library path.
 
 The audio worker now reads the selected drive's Graph `webUrl`, derives and validates the document-library server-relative root, confirms it belongs to the configured site, and prefixes that root to the existing ReadyPackets stage path before issuing the delegated REST write. Folder creation, document synchronization, original WebM retention, and customer/admin playback remain unchanged.
+
+
+## 2026-08-15 — Delegated SharePoint REST POST upload correction
+
+After resolving the document-library root, the controlled delegated SharePoint REST audio transfer reached the correct folder and returned SharePoint’s explicit `SP.File does not support HTTP PUT method` response. The REST `Files/add` endpoint requires an HTTP POST with the binary request body; the worker had reused a Graph PUT helper.
+
+The native binary request helper now accepts the required method explicitly. Delegated SharePoint REST audio creation uses POST, while existing Microsoft Graph binary content transfers retain PUT. Authorization, fixed content length, original WebM bytes, selected library-root resolution, and error redaction remain unchanged.

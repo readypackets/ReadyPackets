@@ -431,11 +431,11 @@ type GraphUploadResult = { id?: string };
  * file-content PUT requests; Graph JSON and discovery requests continue using
  * the regular fetch client.
  */
-async function putGraphBinaryContent(url: string, token: string, content: Buffer, contentType: string): Promise<{ status: number; body: string }> {
+async function putGraphBinaryContent(url: string, token: string, content: Buffer, contentType: string, method: "PUT" | "POST" = "PUT"): Promise<{ status: number; body: string }> {
   const target = new URL(url);
   return new Promise((resolve, reject) => {
     const request = httpsRequest(target, {
-      method: "PUT",
+      method,
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
@@ -574,7 +574,7 @@ async function uploadAudioViaSharePointRest(folderPath: string, fileName: string
   const escapedName = fileName.replace(/'/g, "''");
   const endpoint = `${site.origin}${normalizedSitePath}/_api/web/GetFolderByServerRelativeUrl('${escapedFolder}')/Files/add(url='${escapedName}',overwrite=true)`;
   const token = await getDelegatedSharePointRestToken();
-  const response = await putGraphBinaryContent(endpoint, token, content, "application/octet-stream");
+  const response = await putGraphBinaryContent(endpoint, token, content, "application/octet-stream", "POST");
   if (response.status < 200 || response.status >= 300) {
     throw new Error(`SharePoint REST audio upload failed (${response.status}): ${response.body.slice(0, 500)}`);
   }
