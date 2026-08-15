@@ -528,8 +528,8 @@ function SharePointTab() {
           <div className="md:col-span-2">
             <Field label="SharePoint audio transfer mode" help="MP3 fallback preserves the original WebM only in ReadyPackets and creates an MP3 copy solely for SharePoint. Original WebM only uses the connected delegated Microsoft 365 SharePoint sync identity.">
               <Select value={form.audioFallbackMode} onChange={(event) => setForm({ ...form, audioFallbackMode: event.target.value as "none" | "mp3" })}>
-                <option value="mp3">MP3 fallback copy for SharePoint (recommended now)</option>
-                <option value="none">Original WebM only (requires compatible Microsoft 365 sync identity)</option>
+                <option value="mp3">MP3 fallback copy for SharePoint (used only when no delegated sync identity is connected)</option>
+                <option value="none">Original WebM only (uses the connected delegated SharePoint sync identity)</option>
               </Select>
             </Field>
           </div>

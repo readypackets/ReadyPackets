@@ -2651,3 +2651,8 @@ Following the controlled success, the remaining 13 historical failed WebM transf
 ## 2026-08-15 — SharePoint integration guidance alignment
 
 The Integrations page now accurately states that original WebM transfers use a connected delegated Microsoft 365 SharePoint identity, while existing app-only configuration continues to handle document and folder operations. The displayed prerequisite guidance now includes SharePoint delegated `AllSites.Write` alongside Microsoft Graph delegated permissions. This UI-only correction follows the verified recovery in which all 14 tracked historical WebM transfers completed successfully.
+
+
+## 2026-08-15 — SharePoint audio-mode label clarification
+
+The integration controls now explain that the MP3 fallback mode is used only when no delegated Microsoft 365 SharePoint sync identity is connected. The Original WebM mode is labeled as using the connected delegated SharePoint identity. This is a client-only guidance clarification; the verified production behavior remains original WebM synchronization through the delegated SharePoint REST transport.
