@@ -104,7 +104,21 @@ log "Installing ReadyPackets Portal for https://${DOMAIN}"
 if [[ "$SKIP_PACKAGES" == "false" ]]; then
   log "Installing system packages"
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq
+  # A stale NodeSource key can make apt refuse every package operation before
+  # Node.js setup runs. Remove only the NodeSource source/keyring on that
+  # specific failure, then retry the signed base-package refresh.
+  if ! apt-get update -qq; then
+    if [[ -f /etc/apt/sources.list.d/nodesource.list ]] && grep -q 'deb.nodesource.com' /etc/apt/sources.list.d/nodesource.list; then
+      warn "Refreshing stale NodeSource apt source before installing Node.js ${NODE_MAJOR}."
+      rm -f /etc/apt/sources.list.d/nodesource.list \
+        /etc/apt/keyrings/nodesource.gpg \
+        /usr/share/keyrings/nodesource.gpg \
+        /etc/apt/trusted.gpg.d/nodesource.gpg
+      apt-get update -qq
+    else
+      die "apt-get update failed before package installation; resolve the failing configured repository and retry."
+    fi
+  fi
   apt-get install -y --no-install-recommends \
     ca-certificates curl gnupg git build-essential python3 \
     mysql-server nginx nginx-extras ufw fail2ban unzip ffmpeg
@@ -112,12 +126,13 @@ if [[ "$SKIP_PACKAGES" == "false" ]]; then
   if ! command -v node >/dev/null 2>&1 || \
      [[ "$(node --version | sed 's/v\([0-9]*\).*/\1/')" -lt "$NODE_MAJOR" ]]; then
     log "Installing Node.js ${NODE_MAJOR}"
-    mkdir -p /etc/apt/keyrings
-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-      | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
-      > /etc/apt/sources.list.d/nodesource.list
-    apt-get update -qq
+    # NodeSource rotated its repository signing keys for current Ubuntu releases.
+    # Its versioned setup script refreshes the signed source and its keyring before
+    # apt is allowed to install Node.js; this avoids retaining a stale key locally.
+    nodesource_setup="$(mktemp)"
+    curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" -o "$nodesource_setup"
+    bash "$nodesource_setup"
+    rm -f "$nodesource_setup"
     apt-get install -y nodejs
   fi
 

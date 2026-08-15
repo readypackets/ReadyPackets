@@ -15,6 +15,22 @@ import { env } from "../server/config/env.js";
 
 const MIGRATIONS_DIR = path.resolve(process.cwd(), "drizzle", "migrations");
 
+/**
+ * Legacy migration files may contain their own schema_migrations INSERT. The
+ * runner owns the ledger transactionally, so executing that statement would
+ * make the runner's authoritative INSERT fail with a duplicate key. Keep the
+ * original file bytes for checksum compatibility and skip only that statement.
+ */
+const legacyMigrationLedgerInsert = /^INSERT\s+(?:IGNORE\s+)?INTO\s+`?schema_migrations`?\b/i;
+
+/**
+ * One historic migration supplied its own fixed ledger checksum. Accept that
+ * known, immutable value without relaxing checksum checks for any other file.
+ */
+const acceptedLegacyMigrationChecksums = new Map<string, string>([
+  ["0005_tier4_tier5.sql", "tier4_tier5_v1"],
+]);
+
 /** Split a SQL file on semicolons that are not inside quotes or comments. */
 function splitStatements(sql: string): string[] {
   const statements: string[] = [];
@@ -115,15 +131,21 @@ async function main(): Promise<void> {
 
     if (previous) {
       if (previous !== checksum) {
-        throw new Error(
-          `Migration ${filename} has changed after being applied. ` +
-            "Create a new migration instead of editing an applied one.",
-        );
+        const acceptedLegacyChecksum = acceptedLegacyMigrationChecksums.get(filename);
+        if (acceptedLegacyChecksum !== previous) {
+          throw new Error(
+            `Migration ${filename} has changed after being applied. ` +
+              "Create a new migration instead of editing an applied one.",
+          );
+        }
+        process.stdout.write(`Using accepted legacy checksum for ${filename}.\n`);
       }
       continue;
     }
 
-    const statements = splitStatements(sql);
+    const statements = splitStatements(sql).filter(
+      (statement) => !legacyMigrationLedgerInsert.test(statement),
+    );
     process.stdout.write(`Applying ${filename} (${statements.length} statements)... `);
     await connection.beginTransaction();
     try {

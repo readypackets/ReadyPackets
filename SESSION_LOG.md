@@ -2703,3 +2703,47 @@ The integration controls now explain that the MP3 fallback mode is used only whe
 **User request:** “how do i get the installer from a fresh VPS bare metal server?”
 
 **Response prepared:** The approved bootstrap starts from a current Ubuntu LTS host with only SSH access. It installs only `git` and `curl`, clones the private `readypackets/ReadyPackets` repository into `/srv/readypackets` using a short-lived GitHub authentication method, removes any temporary Git credential afterward, then runs `sudo bash deploy/unified-install.sh --domain <host> --email <contact>`. The interactive installer selects native, existing Docker, or Docker-bootstrap mode and then selects TLS. The instructions explicitly keep repository credentials out of `.env`, application settings, shell history, and service configuration; retain only ports 22, 80, and 443; and do not expose MySQL or the application port.
+
+## 2026-08-15 — Native VPS deployment: demo1.readypackets.com
+
+**User request:** “perform a install on this server” followed by the target root account details, the deployment hostname `demo1.readypackets.com`, the selection of **Let’s Encrypt**, and the requirement to “keep a full detailed session log.” Credentials were used only for the requested remote administration and are intentionally omitted from this record.
+
+**Target assessment:** The server at `167.99.224.116` was confirmed as a clean Ubuntu 24.04.4 LTS host with two vCPUs, 3.8 GiB RAM, approximately 75 GiB free root storage, and no existing ReadyPackets paths, nginx, MySQL, Docker, or ReadyPackets service. Public DNS for `demo1.readypackets.com` resolved to `167.99.224.116` before certificate issuance. No pre-existing `AGENTS.md` existed on the server.
+
+| Deployment decision | Applied configuration |
+|---|---|
+| Hosting model | Native Ubuntu VPS, not Docker |
+| Public hostname | `demo1.readypackets.com` |
+| TLS | Let’s Encrypt public certificate with automatic renewal |
+| Application listener | `127.0.0.1:3000` only |
+| Database listener | `127.0.0.1:3306` only |
+| Public ports | SSH, HTTP, and HTTPS only |
+| Source origin | Verified local archive of private ReadyPackets commit `84e31a42ce2a248fa0d1d3a3912ee2738509b2c1` |
+
+**Source-transfer safeguard:** A temporary repository-authentication attempt was stopped after a credential-handling error in the terminal workflow. No repository clone was performed with that credential. The user directed work to continue, so the approved local source tree was packaged without dependencies/build output, SHA-256 verified, and securely copied to the server over the authenticated SSH channel. The source archive was unpacked under `/srv/readypackets`, set to root ownership, and verified against the approved commit before installation. No GitHub credential was retained on the target host.
+
+**Installer remediation 1 — NodeSource key rotation:** The initial native installer run reached the Node.js step but a stale NodeSource apt source used an untrusted legacy signing key. `deploy/install.sh` was improved in two layers. It now detects an apt-update failure specifically attributable to a NodeSource source, removes only the stale NodeSource list/keyring, retries the normal signed package refresh, and then uses NodeSource’s versioned Node 22 setup process to install the current signing configuration. The corrected installation installed Node.js `v22.23.2` successfully.
+
+**Installer remediation 2 — pnpm workspace compatibility:** The initial build found a malformed `pnpm-workspace.yaml` whose missing `packages` field was rejected by the pinned pnpm 9 installer. The workspace manifest now explicitly declares the repository root package and continues to allow only the native build scripts required by `argon2` and `esbuild`. The corrected manifest was validated with the installation dependency command, then the target build completed successfully.
+
+**Installer remediation 3 — migration ledger compatibility:** A historic migration (`0005_tier4_tier5.sql`) contains a legacy self-recording `schema_migrations` insert. MySQL DDL implicit commits allowed that legacy record to persist, which caused the runner’s authoritative transaction-managed record insert to see a duplicate key. The migration file itself was preserved byte-for-byte to avoid checksum divergence. The migration runner now skips only legacy self-recording ledger statements and recognizes only the documented historic checksum `tier4_tier5_v1` for that one migration; all other checksum mismatches still fail closed. The repaired migration runner compiled and type-checked before deployment. The target completed all remaining migrations through `0038_sharepoint_delegated_sync.sql`.
+
+**Installation result:** The installer generated and protected the local environment secrets, configured MySQL loopback binding, built the client and server bundles, seeded packet groups, policies, email templates, application settings, file governance rules, content blocks, forum categories, and registration fields, installed the hardened systemd service and nginx configuration, enabled UFW and fail2ban, issued a Let’s Encrypt certificate, enabled certificate and nightly backup timers, and performed an initial successful encrypted backup. A new root-owned `AGENTS.md` was created on the target to preserve the host-specific operational record.
+
+| Post-install verification | Result |
+|---|---|
+| `readypackets`, nginx, MySQL, and fail2ban services | Active |
+| Local app health endpoint | `{"status":"ok"}` |
+| Public HTTPS health endpoint | `{"status":"ok"}` |
+| Certificate subject | `demo1.readypackets.com` |
+| Certificate expiry | 2026-11-13 11:05:14 UTC |
+| Certificate and backup timers | Active |
+| Migration ledger rows | 34 |
+| Initial backup | `/var/backups/readypackets/readypackets-20260815T120357Z.tar.gz` (root-only) |
+| Open external listeners | 22, 80, and 443 only |
+| Application/database listeners | Loopback only: 3000 and 3306 |
+| Service error journal after install | No error entries |
+
+**Security verification:** Public HTTPS responses include the nonce-based strict Content-Security-Policy, HSTS with a two-year lifetime and preload directive, `X-Content-Type-Options: nosniff`, strict origin referrer policy, and a restrictive Permissions-Policy. UFW permits only OpenSSH, TCP 80, and TCP 443 on IPv4 and IPv6. The backup, encryption-key, MFA, service-boundary, and update-path notes were recorded locally in `/root/AGENTS.md` without exposing any secret.
+
+**Operational next steps prepared for the user:** Create the first administrator with the root-console command printed by the installer, enroll MFA immediately, configure outbound email in the administrative setup, configure Stripe, Entra ID, webhooks, external backup destinations, and other integrations from the portal administration area, and retain encrypted offline copies of `/etc/readypackets/portal.env` and the protected backup archives. The source fixes, detailed session record, and committed deployment record will be published to the private GitHub repository.
