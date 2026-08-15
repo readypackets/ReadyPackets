@@ -11,6 +11,7 @@ import { Link, useParams, useSearchParams } from "wouter";
 import {
   ArrowRight,
   ClipboardList,
+  Cloud,
   Download,
   Grid2X2,
   History,
@@ -20,6 +21,7 @@ import {
   Lock,
   MessageSquarePlus,
   Plus,
+  RefreshCw,
   Save,
   Search,
   Send,
@@ -742,6 +744,10 @@ export function AdminOrderDetailPage() {
   const workflows = trpc.admin.orderWorkflows.useQuery();
   const configuredStatuses = trpc.admin.orderStatusOptions.useQuery();
   const phaseLocks = trpc.admin.phaseLocks.useQuery({ orderId, includeUnlocked: true }, { enabled: Number.isFinite(orderId) });
+  const sharePointSync = trpc.integrations.sharepointSyncLogs.useQuery(
+    { orderId, page: 1 },
+    { enabled: Number.isFinite(orderId) },
+  );
 
   const [tab, setTab] = useState("overview");
   const [note, setNote] = useState("");
@@ -783,8 +789,18 @@ export function AdminOrderDetailPage() {
   const phaseAllowsPreRecordedAudio = selectedPhaseOption?.capabilities.includes("audio_upload") ?? false;
 
   const refetchAll = async () => {
-    await Promise.all([detail.refetch(), files.refetch(), phaseLocks.refetch()]);
+    await Promise.all([detail.refetch(), files.refetch(), phaseLocks.refetch(), sharePointSync.refetch()]);
   };
+
+  const retrySharePointSync = trpc.integrations.retrySharepointSync.useMutation({
+    async onSuccess() {
+      await sharePointSync.refetch();
+      toast.success("SharePoint retry queued", "The selected file will be retried by the secure background sync worker.");
+    },
+    onError(error) {
+      toast.error("Could not queue SharePoint retry", errorMessage(error));
+    },
+  });
 
   const assignWorkflow = trpc.admin.assignOrderWorkflow.useMutation({
     async onSuccess() { await detail.refetch(); toast.success("Workflow assigned", "The order now uses the selected workflow."); },
@@ -1008,6 +1024,7 @@ export function AdminOrderDetailPage() {
           { id: "files", label: `Files (${attachments.length})` },
           { id: "phase-locks", label: `Phase locks (${(phaseLocks.data ?? []).filter((lock) => !lock.unlockedAt).length})` },
           { id: "automation", label: "Automation" },
+          { id: "sharepoint-sync", label: `SharePoint sync (${sharePointSync.data?.total ?? 0})` },
           { id: "refund", label: "Refund" },
           { id: "history", label: "Order history" },
           { id: "mnda", label: `MNDA (${detail.data.mnda.length})` },
@@ -1018,6 +1035,14 @@ export function AdminOrderDetailPage() {
       <div className="mt-6">
         {tab === "automation" ? (
           <OrderAutomationTab order={order} customer={customer} />
+        ) : null}
+        {tab === "sharepoint-sync" ? (
+          <OrderSharePointSyncTab
+            sync={sharePointSync.data}
+            loading={sharePointSync.isLoading}
+            retrying={retrySharePointSync.isPending}
+            onRetry={(logId) => retrySharePointSync.mutate({ logId })}
+          />
         ) : null}
         {tab === "refund" ? (
           <Card>
@@ -1518,6 +1543,66 @@ export function AdminOrderDetailPage() {
         busy={softDelete.isPending}
       />
     </>
+  );
+}
+
+function OrderSharePointSyncTab({ sync, loading, retrying, onRetry }: { sync: any; loading: boolean; retrying: boolean; onRetry: (logId: number) => void }) {
+  const rows = sync?.rows ?? [];
+  const counts = rows.reduce((result: Record<string, number>, row: any) => {
+    result[row.status] = (result[row.status] ?? 0) + 1;
+    return result;
+  }, {});
+  const toneByStatus: Record<string, "neutral" | "warning" | "success" | "danger" | "teal"> = {
+    pending: "warning",
+    running: "teal",
+    succeeded: "success",
+    failed: "danger",
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader
+          title="SharePoint file sync"
+          description="Order-scoped delivery status for files queued to the configured SharePoint library. Retry is available only for a failed transfer whose source file still exists."
+          actions={<LinkButton href="/admin/integrations" size="sm" variant="outline">Open Sync Log Center</LinkButton>}
+        />
+        <div className="mt-4 flex flex-wrap gap-2" aria-label="SharePoint sync summary">
+          <Badge tone="neutral">{sync?.total ?? 0} total</Badge>
+          <Badge tone="success">{counts.succeeded ?? 0} synced</Badge>
+          <Badge tone="warning">{(counts.pending ?? 0) + (counts.running ?? 0)} in progress</Badge>
+          {counts.failed ? <Badge tone="danger">{counts.failed} failed</Badge> : null}
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="File transfer history" description="Newest synchronization attempt first. The target path and any error are retained for operational review." />
+        {loading ? (
+          <div className="mt-4 space-y-3"><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /></div>
+        ) : rows.length === 0 ? (
+          <EmptyState icon={Cloud} title="No SharePoint file transfers yet" description="Files appear here after they are queued for SharePoint synchronization. Check Integrations if SharePoint is not configured." />
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead><tr className="border-b border-line text-left text-xs uppercase tracking-wide text-muted"><th className="px-3 py-2">File</th><th className="px-3 py-2">Phase</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Target path</th><th className="px-3 py-2">Last update</th><th className="px-3 py-2 text-right">Action</th></tr></thead>
+              <tbody>
+                {rows.map((row: any) => (
+                  <tr key={row.id} className="border-b border-line align-top">
+                    <td className="max-w-52 px-3 py-3"><p className="truncate font-medium text-ink">{row.fileName ?? `File #${row.fileId ?? "unknown"}`}</p><p className="mt-1 text-xs text-muted">Attempt {row.attempts} · {row.detectedMime ?? row.extension ?? "File"}</p></td>
+                    <td className="px-3 py-3 text-body">{row.phase ? humanizeKey(row.phase) : "Not assigned"}</td>
+                    <td className="px-3 py-3"><Badge tone={toneByStatus[row.status] ?? "neutral"}>{row.status}</Badge>{row.errorMessage ? <p className="mt-2 max-w-80 text-xs text-danger">{row.errorMessage}</p> : null}</td>
+                    <td className="max-w-80 px-3 py-3 font-mono text-xs text-body"><span className="break-all">{row.sharepointPath || "Path pending"}</span></td>
+                    <td className="whitespace-nowrap px-3 py-3 text-xs text-muted">{formatDateTime(row.updatedAt)}</td>
+                    <td className="px-3 py-3 text-right">{row.status === "failed" ? <Button size="sm" variant="outline" busy={retrying} onClick={() => onRetry(row.id)} leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}>Retry</Button> : <span className="text-xs text-muted">{row.status === "succeeded" ? "Complete" : "Queued"}</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {sync && sync.total > rows.length ? <p className="mt-4 text-xs text-muted">Showing the newest {rows.length} of {sync.total} transfer records. Use the Sync Log Center for paginated search and organization-wide filtering.</p> : null}
+      </Card>
+    </div>
   );
 }
 
