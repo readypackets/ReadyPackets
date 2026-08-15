@@ -75,11 +75,16 @@ function rejectRequest(req: Request, res: Response, message: string): void {
     return;
   }
   const path = req.path.slice("/api/trpc/".length);
+  // tRPC's HTTP client expects the serialized error shape under `error.json`.
+  // A plain Express-like error object causes its transformer to fail before the
+  // caller can see an actionable CSRF message.
   const error = {
     error: {
-      message,
-      code: -32003,
-      data: { code: "FORBIDDEN", httpStatus: 403, path, validation: null },
+      json: {
+        message,
+        code: -32003,
+        data: { code: "FORBIDDEN", httpStatus: 403, path, validation: null, stack: undefined },
+      },
     },
   };
   // A mutation is normally one operation, but preserve the batch response

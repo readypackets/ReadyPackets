@@ -2656,3 +2656,17 @@ The Integrations page now accurately states that original WebM transfers use a c
 ## 2026-08-15 — SharePoint audio-mode label clarification
 
 The integration controls now explain that the MP3 fallback mode is used only when no delegated Microsoft 365 SharePoint sync identity is connected. The Original WebM mode is labeled as using the connected delegated SharePoint identity. This is a client-only guidance clarification; the verified production behavior remains original WebM synchronization through the delegated SharePoint REST transport.
+
+
+## 2026-08-15 — Maintenance administrator visibility and administration response recovery
+
+**User report:** Customer users and orders appeared to disappear when maintenance mode was enabled. Administration pages also showed repeated `Unable to transform response from server` errors during backup schedule, configuration export, archive verification, and download operations; SharePoint Sync Log appeared empty; and prior integration state appeared absent.
+
+**Data-integrity verification:** No records were deleted. Production verification confirmed 9 total active users, SharePoint synchronization history present, successful historical transfer records present, two outbound webhook endpoints, and all non-secret SharePoint configuration settings—including the encrypted delegated refresh token, Graph identifiers, site, drive, and root path—present. The inbound/outbound event screens show zero because no inbound listeners have been configured and no webhook deliveries have been emitted, respectively; they are not evidence of data loss.
+
+**Root causes corrected:**
+
+1. Maintenance middleware served the `/admin` HTML shell but returned a plain maintenance JSON response for every administrator tRPC query/mutation except the two explicitly named authentication/security router prefixes. The shell therefore rendered with empty customer/order/operational datasets while maintenance mode was active. The middleware now resolves the session after CSRF handling and permits API traffic only for an active, MFA-complete, unrestricted administrator. All anonymous, customer, staff, restricted, and MFA-pending requests remain blocked by maintenance mode.
+2. CSRF rejections generated before the tRPC adapter used an Express-like `error` body rather than tRPC’s serialized `error.json` envelope. When an old browser tab submitted an expired CSRF token, the tRPC client could not decode the error and misleadingly reported `Unable to transform response from server`. The rejection now uses the exact tRPC serialized error envelope and returns the actionable security-token reload message without weakening CSRF checks.
+
+**Validation:** TypeScript compilation, server bundle, and client build completed. The client build was run directly because the package-manager wrapper blocked on an unrelated ignored dependency-build policy; no dependency or lockfile changes were made. The deployment will retain rollback copies and production health must pass before release closure.

@@ -237,13 +237,25 @@ export function createApp(): Express {
     const state = await getMaintenanceState();
     if (!state.enabled) return next();
 
-    const isAdminPath =
+        const isAdminPath =
       req.path.startsWith("/api/trpc/auth.") ||
       req.path.startsWith("/api/trpc/adminSecurity.") ||
       req.path === "/login" ||
       req.path.startsWith("/admin");
-
     if (isAdminPath) return next();
+
+    // The administrator shell at /admin is intentionally available in maintenance
+    // mode, but its tRPC calls must be available too. Only a fully authenticated,
+    // unrestricted administrator is exempted; all customer/staff sessions and all
+    // anonymous API requests continue to receive the maintenance response.
+    const maintenanceSession = await resolveSession(req);
+    const isActiveAdministrator =
+      maintenanceSession?.user.role === "admin" &&
+      !maintenanceSession.mfaPending &&
+      !maintenanceSession.restricted &&
+      maintenanceSession.user.status === "active";
+    if (isActiveAdministrator) return next();
+
 
     if (req.path.startsWith("/api/")) {
       res.status(503).json({
