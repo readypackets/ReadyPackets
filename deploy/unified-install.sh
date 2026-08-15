@@ -16,6 +16,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 usage() {
   cat <<'USAGE'
 Usage:
+  # Interactive: prompts for native VPS, existing Docker, or Docker bootstrap.
+  sudo bash deploy/unified-install.sh --domain portal.example.com --email ops@example.com
+
+  # Non-interactive / automation: explicitly select the install mode.
   sudo bash deploy/unified-install.sh --mode native --domain portal.example.com --email ops@example.com --tls-provider letsencrypt
   sudo bash deploy/unified-install.sh --mode native --domain portal.example.com --tls-provider cloudflare-origin --cloudflare-origin-cert /secure/origin.pem --cloudflare-origin-key /secure/origin-key.pem
   sudo bash deploy/unified-install.sh --mode docker --domain portal.example.com --email ops@example.com --tls-provider letsencrypt [--project-dir /srv/readypackets]
@@ -57,6 +61,22 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ $EUID -eq 0 ]] || fail "Run this installer as root."
+
+# A human operator can omit --mode and select an installation method safely.
+# Non-interactive use must supply --mode so automation never blocks on stdin.
+if [[ -z "$MODE" && -t 0 ]]; then
+  printf '\nReadyPackets installation method:\n'
+  printf '  1) Native VPS (recommended: systemd, nginx, MySQL, protected backup/update helpers)\n'
+  printf '  2) Existing Docker Engine + Docker Compose\n'
+  printf '  3) Install Docker Engine, then deploy with Docker Compose\n'
+  read -r -p "Choose [1-3] (default 1): " install_choice
+  case "${install_choice:-1}" in
+    1) MODE="native" ;;
+    2) MODE="docker" ;;
+    3) MODE="docker-bootstrap" ;;
+    *) fail "Choose 1, 2, or 3." ;;
+  esac
+fi
 [[ "$MODE" == "native" || "$MODE" == "docker" || "$MODE" == "docker-bootstrap" ]] || fail "Choose --mode native, docker, or docker-bootstrap."
 [[ "$DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]] || fail "A valid --domain is required."
 if [[ -z "$TLS_PROVIDER" && -t 0 ]]; then

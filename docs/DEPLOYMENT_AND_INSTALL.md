@@ -15,6 +15,18 @@
 
 The native mode is the preferred mode for the built-in protected backup, update, and rollback helpers. Docker mode provides the same application features, but host-level lifecycle helpers remain the responsibility of the container host operator.
 
+### Interactive installation selection
+
+When the unified installer is run from an interactive terminal without `--mode`, it prompts for one of three choices: **Native VPS**, **existing Docker Engine and Compose**, or **Docker bootstrap**. The default is Native VPS. This is the simplest operator command:
+
+```bash
+sudo bash deploy/unified-install.sh \
+  --domain myportal.example.com \
+  --email operations@example.com
+```
+
+For unattended use, automation must pass `--mode native`, `--mode docker`, or `--mode docker-bootstrap` explicitly. This prevents an automated deployment from waiting for terminal input.
+
 ## Prerequisites
 
 The domain’s DNS A/AAAA record must point to the server before obtaining a certificate. Open only ports **22**, **80**, and **443**. Do not publish MySQL or the ReadyPackets application port directly to the internet. Use a current Ubuntu LTS host with root or sudo access.
