@@ -34,6 +34,7 @@ import { env } from "../config/env.js";
 import { logger } from "../observability/logger.js";
 import { recordActivity, recordSecurityEvent } from "../observability/audit.js";
 import { activatePaidOrder } from "./orders.js";
+import { getOrCreatePaidOrderInvoice } from "./invoices.js";
 
 let _stripe: Stripe | null = null;
 let _stripeKeyFromDb: string | null | undefined = undefined; // undefined = not yet loaded
@@ -370,7 +371,11 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
 
   const existingOrder = await db.select({ paymentStatus: orders.paymentStatus }).from(orders).where(eq(orders.id, orderId)).limit(1);
   if (existingOrder[0]?.paymentStatus === "paid") {
-    logger.info("stripe.checkout.completed.duplicate", { orderId, sessionId: session.id });
+    // Stripe delivery is at-least-once. Reusing the idempotent invoice service
+    // repairs any historical paid order that reached completion before its
+    // invoice was materialized, without replaying provisioning or automations.
+    const invoice = await getOrCreatePaidOrderInvoice(orderId);
+    logger.info("stripe.checkout.completed.duplicate", { orderId, sessionId: session.id, invoiceNumber: invoice.invoiceNumber });
     return;
   }
 

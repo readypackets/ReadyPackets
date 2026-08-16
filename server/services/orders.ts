@@ -41,6 +41,7 @@ import { ORDER_TRANSITIONS, type OrderStatus } from "../../shared/domain.js";
 import { assertActiveOrderStatus, isSystemOrderStatus, isTerminalOrderStatus } from "./orderStatusConfig.js";
 import { insertedId } from "../db/result.js";
 import { defaultOrderScopeMode, getPacketGroupNumbers, resolveBundleScopeManifest } from "./orderScope.js";
+import { getOrCreatePaidOrderInvoice } from "./invoices.js";
 
 export class OrderStateError extends Error {}
 
@@ -82,6 +83,9 @@ export async function activatePaidOrder(orderId: number, activationSource: "stri
       logger.warn("order.payment_activation.automation_failed", { orderId, error: String(error) }),
     );
   }
+  const invoice = await getOrCreatePaidOrderInvoice(orderId);
+  logger.info("invoice.paid_order_materialized", { orderId, invoiceNumber: invoice.invoiceNumber, activationSource });
+
   void recordActivity({
     actorUserId: null,
     actorRole: "system",
@@ -198,7 +202,7 @@ export async function createOrder(input: CreateOrderInput) {
   // deliberate administrator waiver activates the order immediately; test orders
   // activate without any external provisioning or notification side effects.
   if (paymentRequirement !== "required") {
-    void activatePaidOrder(orderId, paymentRequirement === "test" ? "test" : "admin_waiver");
+    await activatePaidOrder(orderId, paymentRequirement === "test" ? "test" : "admin_waiver");
   }
 
   return { orderId, orderNumber, quote: { ...quote, totalCents: manualPriceCents ?? quote.totalCents } };

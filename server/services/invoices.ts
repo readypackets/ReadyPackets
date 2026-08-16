@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { db } from "../db/client.js";
 import { invoices, orderItems, orders, payments, users } from "../db/schema.js";
 import { decryptField } from "../security/crypto.js";
+import { insertedId } from "../db/result.js";
 
 export type InvoiceLine = { description: string; quantity: number; unitPriceCents: number; lineTotalCents: number };
 
@@ -20,6 +21,10 @@ export type ReadyPacketsInvoice = {
   paymentReference: string | null;
   brand: { companyName: string; logoPath: string; supportUrl: string };
 };
+
+export function invoiceNumberFor(invoiceId: number, issuedAt: Date): string {
+  return `RP-INV-${issuedAt.getUTCFullYear()}-${String(invoiceId).padStart(6, "0")}`;
+}
 
 function customerName(row: { id: number; firstNameEnc: string | null; lastNameEnc: string | null }) {
   return [
@@ -65,6 +70,9 @@ export async function getOrCreatePaidOrderInvoice(orderId: number): Promise<Read
   if (!invoice) {
     const issuedAt = new Date();
     const result = await db.insert(invoices).values({
+      // The database auto-increment id is the authoritative invoice sequence.
+      // A temporary unique value permits recovery if a process stops between the
+      // insert and the canonical-number update.
       invoiceNumber: `RP-DRAFT-${orderId}-${issuedAt.getTime()}`,
       orderId,
       userId: order.userId,
@@ -74,10 +82,18 @@ export async function getOrCreatePaidOrderInvoice(orderId: number): Promise<Read
       paidAt: payment[0]?.receivedAt ?? issuedAt,
       externalReference: payment[0]?.providerReference ?? null,
     });
-    const id = Number((result as { insertId?: number }).insertId ?? 0);
-    const invoiceNumber = `RP-INV-${issuedAt.getUTCFullYear()}-${String(id).padStart(6, "0")}`;
+    const id = insertedId(result);
+    const invoiceNumber = invoiceNumberFor(id, issuedAt);
     await db.update(invoices).set({ invoiceNumber }).where(eq(invoices.id, id));
     invoice = (await db.select().from(invoices).where(eq(invoices.id, id)).limit(1))[0];
+  }
+
+  // Repair a draft record left by the legacy tuple-result extraction bug. This
+  // is safe and idempotent because invoices.id is immutable and globally unique.
+  if (invoice?.invoiceNumber.startsWith("RP-DRAFT-")) {
+    const canonicalNumber = invoiceNumberFor(invoice.id, invoice.issuedAt ?? invoice.createdAt ?? new Date());
+    await db.update(invoices).set({ invoiceNumber: canonicalNumber }).where(eq(invoices.id, invoice.id));
+    invoice = { ...invoice, invoiceNumber: canonicalNumber };
   }
   if (!invoice) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Invoice generation could not be completed." });
 
