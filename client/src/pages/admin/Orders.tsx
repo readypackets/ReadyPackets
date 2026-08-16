@@ -748,6 +748,10 @@ export function AdminOrderDetailPage() {
     { orderId, page: 1 },
     { enabled: Number.isFinite(orderId) },
   );
+  const invoice = trpc.invoices.getForOrder.useQuery(
+    { orderId },
+    { enabled: Number.isFinite(orderId) && ["paid", "partially_refunded"].includes(detail.data?.order.paymentStatus ?? "") },
+  );
 
   const [tab, setTab] = useState("overview");
   const [note, setNote] = useState("");
@@ -789,8 +793,23 @@ export function AdminOrderDetailPage() {
   const phaseAllowsPreRecordedAudio = selectedPhaseOption?.capabilities.includes("audio_upload") ?? false;
 
   const refetchAll = async () => {
-    await Promise.all([detail.refetch(), files.refetch(), phaseLocks.refetch(), sharePointSync.refetch()]);
+    await Promise.all([detail.refetch(), files.refetch(), phaseLocks.refetch(), sharePointSync.refetch(), invoice.refetch()]);
   };
+
+  const setInvoiceVisibility = trpc.invoices.setCustomerVisibility.useMutation({
+    async onSuccess(result) {
+      await invoice.refetch();
+      toast.success(result.customerVisible ? "Invoice published" : "Invoice hidden", result.customerVisible ? "The customer can now view this invoice in their portal." : "The invoice is no longer visible in the customer portal.");
+    },
+    onError(error) { toast.error("Could not update invoice visibility", errorMessage(error)); },
+  });
+  const emailInvoice = trpc.invoices.sendCustomerCopy.useMutation({
+    async onSuccess(result) {
+      await invoice.refetch();
+      toast.success("Invoice email queued", `A branded copy of ${result.invoiceNumber} was queued for the customer.`);
+    },
+    onError(error) { toast.error("Could not queue invoice email", errorMessage(error)); },
+  });
 
   const retrySharePointSync = trpc.integrations.retrySharepointSync.useMutation({
     async onSuccess() {
@@ -1025,6 +1044,7 @@ export function AdminOrderDetailPage() {
           { id: "phase-locks", label: `Phase locks (${(phaseLocks.data ?? []).filter((lock) => !lock.unlockedAt).length})` },
           { id: "automation", label: "Automation" },
           { id: "sharepoint-sync", label: `SharePoint sync (${sharePointSync.data?.total ?? 0})` },
+          ...(["paid", "partially_refunded"].includes(order.paymentStatus) ? [{ id: "invoice", label: "Invoice" }] : []),
           { id: "refund", label: "Refund" },
           { id: "history", label: "Order history" },
           { id: "mnda", label: `MNDA (${detail.data.mnda.length})` },
@@ -1043,6 +1063,28 @@ export function AdminOrderDetailPage() {
             retrying={retrySharePointSync.isPending}
             onRetry={(logId) => retrySharePointSync.mutate({ logId })}
           />
+        ) : null}
+        {tab === "invoice" ? (
+          <Card>
+            <CardHeader title="Saved customer invoice" description="The invoice record is stored with this order. You can publish it to the customer portal and queue a branded email copy." />
+            {invoice.isLoading ? <Skeleton className="mt-5 h-48 w-full" /> : null}
+            {invoice.error ? <Alert tone="danger" className="mt-5">{errorMessage(invoice.error)}</Alert> : null}
+            {invoice.data ? <div className="mt-5 space-y-5">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div><p className="text-xs font-semibold uppercase tracking-wide text-muted">Invoice number</p><p className="mt-1 font-mono text-sm font-semibold text-ink">{invoice.data.invoiceNumber}</p></div>
+                <div><p className="text-xs font-semibold uppercase tracking-wide text-muted">Customer</p><p className="mt-1 text-sm font-medium text-ink">{invoice.data.customer.name}</p></div>
+                <div><p className="text-xs font-semibold uppercase tracking-wide text-muted">Product total</p><p className="mt-1 text-sm font-medium text-ink">{formatMoney(invoice.data.subtotalCents)}</p></div>
+                <div><p className="text-xs font-semibold uppercase tracking-wide text-muted">Price paid</p><p className="mt-1 text-sm font-semibold text-success">{formatMoney(invoice.data.totalCents)}</p></div>
+              </div>
+              {invoice.data.discountCents > 0 ? <Alert tone="success">Discount applied: <strong>{invoice.data.discount?.code ?? "Recorded discount"}</strong> — {formatMoney(invoice.data.discountCents)} off.</Alert> : null}
+              <div className="flex flex-wrap gap-3 border-t border-line pt-5">
+                <LinkButton href={`/admin/orders/${order.id}/invoice`} variant="outline">Open / print invoice</LinkButton>
+                {session.isAdmin ? <Button variant={invoice.data.customerVisible ? "outline" : "primary"} busy={setInvoiceVisibility.isPending} onClick={() => setInvoiceVisibility.mutate({ orderId, visible: !invoice.data.customerVisible })}>{invoice.data.customerVisible ? "Hide from customer portal" : "Publish to customer portal"}</Button> : null}
+                {session.isAdmin ? <Button variant="primary" leadingIcon={<Send className="size-4" />} busy={emailInvoice.isPending} onClick={() => emailInvoice.mutate({ orderId })}>Email customer a copy</Button> : null}
+              </div>
+              <div className="grid gap-3 text-sm text-body sm:grid-cols-2"><p>Portal availability: <strong className={invoice.data.customerVisible ? "text-success" : "text-warning"}>{invoice.data.customerVisible ? "Published" : "Hidden"}</strong>{invoice.data.publishedAt ? ` · ${formatDateTime(invoice.data.publishedAt)}` : ""}</p><p>Email status: <strong className="text-ink">{invoice.data.emailQueuedAt ? `Queued ${formatDateTime(invoice.data.emailQueuedAt)}` : "Not yet queued"}</strong></p></div>
+            </div> : null}
+          </Card>
         ) : null}
         {tab === "refund" ? (
           <Card>

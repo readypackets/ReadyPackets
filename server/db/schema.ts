@@ -1265,6 +1265,12 @@ export const invoices = mysqlTable(
     issuedAt: timestamp("issued_at"),
     paidAt: timestamp("paid_at"),
     externalReference: varchar("external_reference", { length: 190 }),
+    /** Paid-order invoices are published to the customer portal by default. */
+    customerVisible: boolean("customer_visible").notNull().default(true),
+    publishedAt: timestamp("published_at"),
+    /** Timestamp when the customer copy was queued; delivery logs retain final transport status. */
+    emailQueuedAt: timestamp("email_queued_at"),
+    emailQueuedByUserId: int("email_queued_by_user_id"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
