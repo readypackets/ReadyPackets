@@ -2930,3 +2930,8 @@ The go-live readiness score is 67.7/100 and the application-security posture sco
 - Branded PowerPoint presentations for the application-security and production go-live assessments.
 
 The detailed assessment evidence is retained in `/home/ubuntu/readypackets_go_live_review_20260817/` without secrets.
+
+
+### Publication and final production verification
+
+The session recovery fix and the two Markdown reports were committed and pushed to private `main` in `eebb7f3b08775299b3bbbc17dd5aaee404e4d1e2` (`fix: recover login after expired session`). The deployed production release marker was updated to that commit on the attached production host, and `https://myportal.readypackets.com/api/health` returned `{"status":"ok"}` with `readypackets.service` active.
