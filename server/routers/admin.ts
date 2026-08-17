@@ -52,7 +52,7 @@ import {
   webhookEndpoints,
 } from "../db/schema.js";
 import { decryptField, encryptField, hashPassword, randomToken } from "../security/crypto.js";
-import { getSetting, getSettingNumber, setSetting } from "../services/settings.js";
+import { getSetting, getSettingBool, getSettingNumber, setSetting } from "../services/settings.js";
 import { getOrderStatusOptions, normalizeOrderStatusOptions, ORDER_STATUS_OPTIONS_SETTING } from "../services/orderStatusConfig.js";
 import { createOrderMessageReceipts } from "../services/orderMessages.js";
 import {
@@ -1491,6 +1491,31 @@ export const adminRouter = router({
   /* ---------------------------------------------------------------- */
 
   catalog: staffProcedure.query(async () => getCatalog({ includeUnlisted: true })),
+
+  publicCatalogPriceVisibility: adminProcedure.query(async () => ({
+    visible: await getSettingBool("catalog.public_prices_visible", true),
+  })),
+
+  setPublicCatalogPriceVisibility: adminProcedure
+    .input(z.object({ visible: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      await setSetting("catalog.public_prices_visible", input.visible ? "true" : "false", {
+        category: "catalog",
+        valueType: "boolean",
+        userId: ctx.session.user.id,
+      });
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: "admin",
+        action: "catalog.public_price_visibility_updated",
+        entityType: "site_setting",
+        entityId: 0,
+        summary: `Public catalogue price visibility ${input.visible ? "enabled" : "disabled"}`,
+        changes: { visible: input.visible },
+        ipAddress: ctx.clientIp,
+      });
+      return { ok: true as const, visible: input.visible };
+    }),
 
   upsertPacketGroup: adminProcedure
     .input(

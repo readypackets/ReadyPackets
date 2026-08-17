@@ -41,6 +41,7 @@ const GROUP_ICONS: Record<string, LucideIcon> = {
 export function HomePage() {
   const content = trpc.public.homeContent.useQuery();
   const catalog = trpc.public.catalog.useQuery();
+  const catalogPriceVisibility = trpc.public.catalogPriceVisibility.useQuery();
   const reviews = trpc.public.reviews.useQuery({ limit: 3 });
 
   const blocks = content.data ?? [];
@@ -64,6 +65,7 @@ export function HomePage() {
     .flatMap((group) => group.products.map((product) => product.priceCents))
     .filter((price): price is number => typeof price === "number");
   const entryPrice = listedPrices.length > 0 ? Math.min(...listedPrices) : null;
+  const pricesVisible = catalogPriceVisibility.data?.visible === true;
 
   return (
     <>
@@ -132,13 +134,15 @@ export function HomePage() {
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-xs uppercase tracking-wide text-white/50">From</dt>
+                  <dt className="text-xs uppercase tracking-wide text-white/50">{pricesVisible ? "From" : "Pricing"}</dt>
                   <dd className="mt-1 text-2xl font-semibold tabular-nums">
-                    {catalog.isLoading ? (
+                    {catalog.isLoading || catalogPriceVisibility.isLoading ? (
                       <span
                         className="inline-block h-7 w-24 animate-pulse rounded bg-white/15"
-                        aria-label="Loading starting price"
+                        aria-label="Loading pricing preference"
                       />
+                    ) : !pricesVisible ? (
+                      "On request"
                     ) : entryPrice === null ? (
                       "—"
                     ) : (
@@ -238,9 +242,9 @@ export function HomePage() {
                       </p>
                       <div className="mt-5 flex items-end justify-between gap-3 border-t border-line pt-4">
                         <div>
-                          <p className="text-xs text-muted">From</p>
+                          <p className="text-xs text-muted">{pricesVisible ? "From" : "Pricing"}</p>
                           <p className="text-xl font-semibold tabular-nums text-ink">
-                            {formatMoney(cheapest ?? null)}
+                            {pricesVisible ? formatMoney(cheapest ?? null) : "On request"}
                           </p>
                         </div>
                         <Link

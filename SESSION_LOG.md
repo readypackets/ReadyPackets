@@ -2859,3 +2859,13 @@ A read-only production database check confirmed that both reported files belong 
 **User request:** Provide the deploy-key installation instructions as a Markdown file and PDF.
 
 **Delivered:** Created `ReadyPackets_Deploy_Key_Installation_Guide.md` and `ReadyPackets_Deploy_Key_Installation_Guide.pdf`. Both documents cover server/DNS/firewall prerequisites, deploy-key generation, GitHub read-only deploy-key registration, SSH configuration and verification, immutable commit approval, controlled bootstrap-script transfer, native/Docker/Cloudflare install commands, post-install checks, and existing-deployment safeguards. The PDF was generated successfully as a six-page A4 document and visually checked for readable headings, tables, and command blocks. No credentials, keys, or token values appear in either deliverable.
+
+## 2026-08-17 — Public website price visibility control
+
+**User request:** Add a toggle or button in the administrator console to hide or show product prices on the public website.
+
+**Implementation:** Added the audited `catalog.public_prices_visible` boolean site setting, which defaults to `true` when absent. Administrators can change it from **Admin → Catalogue → Public website price visibility** using a checkbox. The server exposes a minimal public display-preference query and restricts writes to the existing administrator procedure. Every change records an activity event with the new state and source IP.
+
+**Public behavior:** The homepage hero, homepage packet cards, public packet listing, and public packet detail cards now display numeric prices only when the setting is enabled. When disabled, they show “Pricing on request.” The public pages avoid numeric-price exposure while the setting is loading. This is a public-site presentation setting only: customer portal live quotes, cart/checkout calculations, order totals, invoice data, Stripe settlement, and stored catalog prices remain authoritative and unchanged.
+
+**Validation and deployment:** TypeScript type checking and the existing regression test command passed. A full 897,874-byte server bundle and production client bundle were built, checksum verified, and deployed to `myportal.readypackets.com`. The service restarted normally; after the expected brief listener startup interval, local and public health checks returned `{"status":"ok"}`. The public visibility endpoint returned the default `{ "visible": true }`. Rollback assets are stored at `/opt/readypackets/rollback-20260817123000-public-price-visibility/`.

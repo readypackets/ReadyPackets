@@ -67,8 +67,17 @@ const emptyGroup: GroupForm = {
 
 export function AdminCatalogPage() {
   const toast = useToast();
-  const catalog = trpc.admin.catalog.useQuery();
-
+    const catalog = trpc.admin.catalog.useQuery();
+  const publicPriceVisibility = trpc.admin.publicCatalogPriceVisibility.useQuery();
+  const setPublicPriceVisibility = trpc.admin.setPublicCatalogPriceVisibility.useMutation({
+    async onSuccess(result) {
+      await publicPriceVisibility.refetch();
+      toast.success(result.visible ? "Public prices are now visible" : "Public prices are now hidden");
+    },
+    onError(error) {
+      toast.error("Could not update public price visibility", errorMessage(error));
+    },
+  });
   const [groupForm, setGroupForm] = useState<GroupForm | null>(null);
   const [productForm, setProductForm] = useState<ProductForm | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -125,6 +134,25 @@ export function AdminCatalogPage() {
           </Button>
         }
       />
+
+      <Card>
+        <CardHeader
+          title="Public website price visibility"
+          description="Control whether numeric product prices are displayed on the public website. This never changes checkout pricing, customer portal quotes, order totals, or invoices."
+          actions={<Badge tone={publicPriceVisibility.data?.visible ?? true ? "success" : "neutral"}>{publicPriceVisibility.data?.visible ?? true ? "Prices shown" : "Prices hidden"}</Badge>}
+        />
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
+          <Checkbox
+            label="Show numeric prices on the public website"
+            checked={publicPriceVisibility.data?.visible ?? true}
+            disabled={publicPriceVisibility.isLoading || setPublicPriceVisibility.isPending}
+            onChange={(event) => setPublicPriceVisibility.mutate({ visible: event.target.checked })}
+          />
+          <p className="max-w-xl text-xs leading-relaxed text-muted">
+            When hidden, public packet pages display “Pricing on request” instead. Signed-in customers still see protected live quotes during checkout.
+          </p>
+        </div>
+      </Card>
 
       {catalog.isLoading ? (
         <div className="space-y-4">

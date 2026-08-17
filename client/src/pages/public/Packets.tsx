@@ -47,6 +47,8 @@ const TIER_LABELS: Record<string, string> = {
 
 export function PacketsPage() {
   const catalog = trpc.public.catalog.useQuery();
+  const catalogPriceVisibility = trpc.public.catalogPriceVisibility.useQuery();
+  const pricesVisible = catalogPriceVisibility.data?.visible === true;
   const groups = catalog.data ?? [];
   const tiered = groups.filter((group) => group.groupNumber <= 6);
   const bundle = groups.find((group) => group.groupNumber === 7);
@@ -120,7 +122,7 @@ export function PacketsPage() {
                         </div>
 
                         <p className="mt-4 text-3xl font-semibold tabular-nums text-ink">
-                          {formatMoney(product.priceCents)}
+                          {pricesVisible ? formatMoney(product.priceCents) : "Pricing on request"}
                         </p>
                         <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted">
                           <Clock className="size-3.5" aria-hidden="true" />
@@ -250,6 +252,8 @@ export function PacketsPage() {
 export function PacketDetailPage() {
   const params = useParams<{ slug: string }>();
   const catalog = trpc.public.catalog.useQuery();
+  const catalogPriceVisibility = trpc.public.catalogPriceVisibility.useQuery();
+  const pricesVisible = catalogPriceVisibility.data?.visible === true;
   const group = (catalog.data ?? []).find((item) => item.slug === params.slug);
 
   if (catalog.isLoading) {
@@ -315,7 +319,7 @@ export function PacketDetailPage() {
                     {TIER_LABELS[product.tier] ?? product.tier}
                   </Badge>
                   <p className="mt-4 text-3xl font-semibold tabular-nums text-ink">
-                    {formatMoney(product.priceCents)}
+                    {pricesVisible ? formatMoney(product.priceCents) : "Pricing on request"}
                   </p>
                   <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted">
                     <Clock className="size-3.5" aria-hidden="true" />

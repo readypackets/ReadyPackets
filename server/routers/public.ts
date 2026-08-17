@@ -25,7 +25,7 @@ import {
 import { blindIndex, encryptField, hashToken, randomToken } from "../security/crypto.js";
 import { decryptUser, displayNameOf } from "../db/users.js";
 import { getCatalog } from "../services/catalog.js";
-import { getMaintenanceState, isFeatureEnabled } from "../services/settings.js";
+import { getMaintenanceState, getSettingBool, isFeatureEnabled } from "../services/settings.js";
 import { recordActivity } from "../observability/audit.js";
 import { queueTemplatedEmail, wrapHtmlBody } from "../services/email.js";
 import { publicProcedure, router } from "../trpc/trpc.js";
@@ -35,6 +35,11 @@ const TEASER_LENGTH = 260;
 
 export const publicRouter = router({
   catalog: publicProcedure.query(async () => getCatalog()),
+
+  /** Public display preference only; server-side checkout pricing remains authoritative. */
+  catalogPriceVisibility: publicProcedure.query(async () => ({
+    visible: await getSettingBool("catalog.public_prices_visible", true),
+  })),
 
   homeContent: publicProcedure.query(async () => {
     const blocks = await db
