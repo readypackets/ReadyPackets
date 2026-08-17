@@ -2889,3 +2889,11 @@ A read-only production database check confirmed that both reported files belong 
 **Auditability:** New explicit security-log event types cover password login, magic-link request/completion, registration, SAML completion, and session revocation caused by administrator-only access. Administrator setting transitions remain in the activity log.
 
 **Validation and deployment:** TypeScript checking and the existing regression suite passed. A 902,531-byte server bundle and production client bundle were built, checksum verified, and deployed. The application restarted successfully; following the normal listener startup interval, the health endpoint returned `{"status":"ok"}`. Rollback assets are preserved at `/opt/readypackets/rollback-20260817134000-administrator-only-access/`.
+
+## 2026-08-17 — Administrator-only access client bundle correction
+
+**User report:** The Administrator-only access panel did not appear at Admin → System → Housekeeping; the live page showed only the preceding Maintenance access controls.
+
+**Diagnosis:** The server release was correct, but the production client directory contained the newly built bundle nested at `client/dist/.incoming-20260817134000/`. The active root `client/dist/index.html` still referenced the prior `assets/index.wRzEuXpM.js` shell, so neither browser cache nor Cloudflare was the cause. Both local and public index requests confirmed the stale asset reference. The new nested `assets/index.DQBqJPFD.js` contained the Administrator-only access UI.
+
+**Correction:** The verified nested release was moved into the active `/opt/readypackets/client/dist` path and the stale root directory was preserved for rollback at `/opt/readypackets/rollback-20260817140500-administrator-only-client-path/client-dist-stale`. Permissions were reapplied to the active client release. Public index verification now returns `assets/index.DQBqJPFD.js`; the active bundle contains the Administrator-only access label. No data, server-bundle, database, or configuration setting was changed by this correction.
