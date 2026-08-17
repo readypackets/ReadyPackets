@@ -2897,3 +2897,36 @@ A read-only production database check confirmed that both reported files belong 
 **Diagnosis:** The server release was correct, but the production client directory contained the newly built bundle nested at `client/dist/.incoming-20260817134000/`. The active root `client/dist/index.html` still referenced the prior `assets/index.wRzEuXpM.js` shell, so neither browser cache nor Cloudflare was the cause. Both local and public index requests confirmed the stale asset reference. The new nested `assets/index.DQBqJPFD.js` contained the Administrator-only access UI.
 
 **Correction:** The verified nested release was moved into the active `/opt/readypackets/client/dist` path and the stale root directory was preserved for rollback at `/opt/readypackets/rollback-20260817140500-administrator-only-client-path/client-dist-stale`. Permissions were reapplied to the active client release. Public index verification now returns `assets/index.DQBqJPFD.js`; the active bundle contains the Administrator-only access label. No data, server-bundle, database, or configuration setting was changed by this correction.
+
+
+## 2026-08-17 — Expired-Session Recovery, Go-Live Review, and Security Assessment
+
+### User request
+
+The user requested a full production go-live code and application review, identified that an expired browser session caused a server error on re-login until a hard refresh or cache clearing, and requested separate go-live gap and application-security reports in Markdown, PDF, and PowerPoint formats. The security assessment was requested against OWASP ASVS, OWASP SAMM, and NIST SSDF criteria.
+
+### Session-timeout repair
+
+The review traced the login failure to stale session-bound CSRF cookies. A browser tab whose session expired, was revoked, or timed out retained a CSRF cookie that could not be refreshed anonymously because the prior `GET /api/security/csrf` route returned 401 when no current session resolved. The next public login, magic-link request, or magic-link verification could fail CSRF validation before credential handling and appear as a generic server error.
+
+The deployed repair updates `server/app.ts` and `client/src/pages/auth/Login.tsx`. The same-origin no-store CSRF refresh route now clears stale session cookies and issues an anonymous double-submit CSRF token for a new sign-in, while active unrestricted sessions retain their session-bound token. The login page refreshes CSRF on mount and immediately before all authentication mutations. Origin validation and unsafe-request CSRF validation remain enforced. Type checking and production builds passed. Anonymous bootstrap, simulated stale-cookie replacement, invalid-login behavior, and public health were validated. Timestamped production rollback assets are at `/opt/readypackets/rollback-20260817144500-session-csrf-recovery/`.
+
+### Assessment scope and evidence
+
+The assessment reviewed the ReadyPackets source, deployment record, live public security headers/cookies, production service/listener/firewall/certificate/backup state, static source patterns, dependency audit, test suite, operational documentation, and prior assessments. It also used OWASP ASVS 5.0, OWASP SAMM 2.0, and NIST SP 800-218 SSDF v1.1 as evidence-oriented frameworks. It is not an independent penetration test, certification, financial audit, legal opinion, or third-party account configuration audit.
+
+The dependency audit found zero advisories across 328 production dependencies. The live security verification passed reviewed CSP, transport, cookie, framing, and browser-policy assertions. A tracked source secret-pattern scan found no matching production secret markers. The test suite reported 153 passes and 12 database-dependent failures because the isolated review environment had no MySQL service at `127.0.0.1:3306`; this is recorded as a CI/test-environment readiness gap rather than a production database test execution.
+
+### Assessment conclusions
+
+The go-live readiness score is 67.7/100 and the application-security posture score is 68.7/100. The recommendation is conditional go-live: do not begin unrestricted public registration until encrypted off-host backup/restore proof, repeatable green database-backed test execution, production third-party acceptance evidence, and Cloudflare-only origin enforcement are completed. First-sprint priorities include SBOM/CI/branch protection, host-volume encryption planning, alert ownership, client asset verification, and performance budgeting.
+
+### Deliverables created
+
+- `docs/assessments/ReadyPackets_Go_Live_Readiness_and_Gap_Assessment_2026-08-17.md`
+- `docs/assessments/ReadyPackets_Application_Security_Assessment_ASVS_SAMM_SSDF_2026-08-17.md`
+- `/home/ubuntu/readypackets_go_live_review_20260817/ReadyPackets_Go_Live_Readiness_and_Gap_Assessment_2026-08-17.pdf`
+- `/home/ubuntu/readypackets_go_live_review_20260817/ReadyPackets_Application_Security_Assessment_ASVS_SAMM_SSDF_2026-08-17.pdf`
+- Branded PowerPoint presentations for the application-security and production go-live assessments.
+
+The detailed assessment evidence is retained in `/home/ubuntu/readypackets_go_live_review_20260817/` without secrets.

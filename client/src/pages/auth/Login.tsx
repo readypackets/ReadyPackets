@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { KeyRound, LogIn, Mail, ShieldCheck } from "lucide-react";
 import { BRAND, BRAND_ASSETS } from "@shared/brand";
-import { trpc, errorMessage } from "@/lib/trpc";
+import { trpc, errorMessage, refreshCsrfToken } from "@/lib/trpc";
 import { useSession } from "@/lib/session";
 import { Button } from "@/components/ui/Button";
 import { Input, PasswordInput } from "@/components/ui/Field";
@@ -75,6 +75,13 @@ export function LoginPage() {
   const [code, setCode] = useState("");
   const [useBackupCode, setUseBackupCode] = useState(false);
   const magicHandled = useRef(false);
+
+  // A server-side idle timeout can leave a stale session-bound CSRF cookie in an
+  // open tab. Refresh a same-origin anonymous token before any new sign-in
+  // attempt so the user never needs to clear storage or hard-refresh.
+  useEffect(() => {
+    void refreshCsrfToken();
+  }, []);
 
   // If a session already exists, do not show the form again.
   useEffect(() => {
@@ -156,16 +163,17 @@ export function LoginPage() {
     if (!token || magicHandled.current) return;
     magicHandled.current = true;
     window.history.replaceState({}, document.title, "/login");
-    verifyMagicLink.mutate({ token });
+    void refreshCsrfToken().then(() => verifyMagicLink.mutate({ token }));
   }, [verifyMagicLink]);
 
-  const submitCredentials = (event: React.FormEvent) => {
+  const submitCredentials = async (event: React.FormEvent) => {
     event.preventDefault();
     setFormError(null);
     if (!email.trim() || !password) {
       setFormError("Enter your email address and password.");
       return;
     }
+    await refreshCsrfToken();
     login.mutate({ email: email.trim().toLowerCase(), password });
   };
 
@@ -296,7 +304,10 @@ export function LoginPage() {
             busy={requestMagicLink.isPending}
             disabled={maintenanceBlocking || !email.trim()}
             leadingIcon={<Mail className="size-4" aria-hidden="true" />}
-            onClick={() => { setFormError(null); requestMagicLink.mutate({ email: email.trim().toLowerCase() }); }}
+            onClick={() => {
+              setFormError(null);
+              void refreshCsrfToken().then(() => requestMagicLink.mutate({ email: email.trim().toLowerCase() }));
+            }}
           >
             Email me a secure sign-in link
           </Button>

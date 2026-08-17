@@ -40,7 +40,7 @@ import { createSharePointDelegatedAuthRouter } from "./http/sharepointDelegatedA
 import { logger } from "./observability/logger.js";
 import { getMaintenanceState } from "./services/settings.js";
 import { handleStripeWebhook } from "./services/stripe.js";
-import { resolveSession } from "./auth/session.js";
+import { clearSessionCookies, resolveSession } from "./auth/session.js";
 import { getCatalog } from "./services/catalog.js";
 import {
   handleAcs,
@@ -282,18 +282,26 @@ export function createApp(): Express {
   app.use("/api/integrations/sharepoint", createSharePointDelegatedAuthRouter());
 
   /**
-   * A same-origin, authenticated CSRF cookie refresh for multipart uploads.
-   * The cookie mirrors the session-bound secret and is no-store; no client token
-   * is trusted or accepted by this route, and every unsafe request remains checked.
+   * Return a same-origin CSRF cookie without accepting any caller-supplied token.
+   * An active, unrestricted session receives its session-bound secret. Otherwise
+   * the route clears an expired/revoked session cookie and issues a fresh
+   * anonymous double-submit token so a stale tab can submit a new login without
+   * a hard refresh. Every unsafe request remains subject to Origin and CSRF
+   * validation; the anonymous token grants no authenticated capability.
    */
   app.get("/api/security/csrf", async (req: Request, res: Response) => {
     const session = await resolveSession(req);
-    if (!session || session.mfaPending || session.restricted) {
-      res.status(401).setHeader("Cache-Control", "no-store").json({ error: "Authentication required." });
-      return;
+    const canReuseSessionSecret = session && !session.mfaPending && !session.restricted;
+    const csrfToken = canReuseSessionSecret ? session.csrfSecret : generateCsrfToken();
+
+    if (!canReuseSessionSecret) {
+      // A stale session cookie can outlive a server-side idle timeout or
+      // revocation. Clear it before issuing the anonymous login token.
+      clearSessionCookies(res);
     }
-    setCsrfCookie(res, session.csrfSecret);
-    res.status(200).setHeader("Cache-Control", "no-store").json({ csrfToken: session.csrfSecret });
+
+    setCsrfCookie(res, csrfToken);
+    res.status(200).setHeader("Cache-Control", "no-store").json({ csrfToken });
   });
 
   app.use("/api/files", createDownloadRouter());
