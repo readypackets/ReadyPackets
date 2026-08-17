@@ -2839,3 +2839,11 @@ A read-only production database check confirmed that both reported files belong 
 **Existing-deployment safeguard:** Documented that first-install automation must not be used to overwrite a live deployment. Existing production updates continue to use the protected Administrator Platform Updates flow or root-only approved wrapper, which requires an approved run and immutable SHA, performs source validation, snapshots the database/application, health-checks, and retains a rollback path. Automated scheduling may scan/notify only; it must not silently deploy a new branch tip.
 
 **Validation:** `bash -n` passed for the new bootstrap script. The script help text was checked and an invalid `--commit main` invocation was confirmed to terminate before installation with the immutable-SHA guard. Documentation content and whitespace validation passed. No credentials were used or recorded.
+
+## 2026-08-17 — Country-level access control assessment
+
+**User request:** Ask whether country-level IP blocking can block traffic from China, Russia, Iran, and Sri Lanka.
+
+**Assessment:** Confirmed that ReadyPackets already has application-level individual-IP allowlist and block/security-log controls, but it does not currently provide a country-geo database or country-block administration setting. Because the customer portal is fronted by Cloudflare, the recommended enforcement point is a Cloudflare WAF Custom Rule at the edge. The appropriate ISO 3166-1 alpha-2 country codes are `CN`, `RU`, `IR`, and `LK`. The recommended expression is `(ip.src.country in {"CN" "RU" "IR" "LK"})` with the Block action, after a brief Log/Managed Challenge observation period and an explicit exemption for any known trusted service routes only if required. This blocks traffic before it reaches the origin, preserves ReadyPackets application controls for individual IPs, and avoids relying on origin geolocation based on Cloudflare proxy IPs.
+
+**Origin guidance:** Keep the Cloudflare DNS record proxied, restrict port 80/443 origin access to Cloudflare IP ranges plus explicitly approved maintenance sources, and do not block Cloudflare’s own shared proxy ranges. Country mapping is a risk control rather than identity proof; VPN/proxy traffic and legitimate customer travel remain possible. No Cloudflare or server rule was changed during this assessment.
