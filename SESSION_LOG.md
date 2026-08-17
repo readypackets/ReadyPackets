@@ -2853,3 +2853,9 @@ A read-only production database check confirmed that both reported files belong 
 **User request:** Ask how to deploy ReadyPackets using a GitHub deploy key.
 
 **Delivered:** Provided the ready-to-use procedure for generating a dedicated root-only Ed25519 key on a fresh Ubuntu host; adding only its public portion to the private `readypackets/ReadyPackets` repository under Settings → Deploy keys with write access disabled; configuring SSH to use that identity for GitHub; verifying read-only access; obtaining a separately reviewed immutable 40-character commit SHA; copying the repository-tracked `deploy/github-bootstrap-install.sh` to the server through a controlled channel; and executing it with repository, commit, domain, email, native/Docker mode, and TLS provider arguments. Emphasized that the deploy key is repository-scoped read-only access, is distinct from user SSH login keys, and must never be pasted into GitHub or stored in `.env`, application settings, browser storage, shell history, or logs. The bootstrap script rejects moving branch references and existing deployment directories; existing instances use the protected platform update workflow instead.
+
+## 2026-08-17 — Deploy-key guide files
+
+**User request:** Provide the deploy-key installation instructions as a Markdown file and PDF.
+
+**Delivered:** Created `ReadyPackets_Deploy_Key_Installation_Guide.md` and `ReadyPackets_Deploy_Key_Installation_Guide.pdf`. Both documents cover server/DNS/firewall prerequisites, deploy-key generation, GitHub read-only deploy-key registration, SSH configuration and verification, immutable commit approval, controlled bootstrap-script transfer, native/Docker/Cloudflare install commands, post-install checks, and existing-deployment safeguards. The PDF was generated successfully as a six-page A4 document and visually checked for readable headings, tables, and command blocks. No credentials, keys, or token values appear in either deliverable.
