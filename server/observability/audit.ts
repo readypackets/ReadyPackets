@@ -52,7 +52,11 @@ export type SecurityEventType =
   | "apikey.revoked"
   | "settings.changed"
   | "account.banned"
-  | "encryption.failure";
+  | "encryption.failure"
+  | "login.blocked_administrator_only"
+  | "magic_link.blocked_administrator_only"
+  | "register.blocked_administrator_only"
+  | "session.revoked_administrator_only";
 
 interface SecurityEventInput {
   eventType: SecurityEventType;

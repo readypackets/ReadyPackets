@@ -81,6 +81,7 @@ import { button, queueTemplatedEmail, wrapHtmlBody } from "../services/email.js"
 import { fireAutomations } from "../services/emailAutomations.js";
 import { affectedRows } from "../db/result.js";
 import { getMfaPolicyForRole, mfaRequirement } from "../auth/mfaPolicy.js";
+import { isAdministratorOnlyAccessEnabled, isRoleBlockedByAdministratorOnlyAccess } from "../auth/adminOnlyAccess.js";
 import { publicProcedure, protectedProcedure, router, sessionProcedure } from "../trpc/trpc.js";
 
 /** The single message returned for every credential failure. */
@@ -252,6 +253,21 @@ export const authRouter = router({
           message: "New account creation is temporarily unavailable during maintenance.",
         });
       }
+      if (await isAdministratorOnlyAccessEnabled()) {
+        void recordSecurityEvent({
+          eventType: "register.blocked_administrator_only",
+          outcome: "blocked",
+          severity: "warning",
+          message: "Registration blocked by administrator-only access mode",
+          subject: input.email,
+          ipAddress: ctx.clientIp,
+          userAgent: ctx.userAgent,
+        });
+        throw new TRPCError({
+          code: "SERVICE_UNAVAILABLE",
+          message: "New account creation is temporarily unavailable.",
+        });
+      }
       if (!(await isFeatureEnabled("registration", true))) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -337,6 +353,18 @@ export const authRouter = router({
         // Keep the external response uniform while avoiding a usable delivery path during a gate.
         return { ok: true as const };
       }
+      if (await isAdministratorOnlyAccessEnabled()) {
+        void recordSecurityEvent({
+          eventType: "magic_link.blocked_administrator_only",
+          outcome: "blocked",
+          severity: "notice",
+          message: "Magic-link request blocked by administrator-only access mode",
+          subject: input.email,
+          ipAddress: ctx.clientIp,
+          userAgent: ctx.userAgent,
+        });
+        return { ok: true as const };
+      }
       const user = await getUserByEmail(input.email);
       // Customer-only, active accounts receive a link. The constant response avoids account enumeration.
       if (!user || user.role !== "customer" || user.status !== "active") {
@@ -367,9 +395,21 @@ export const authRouter = router({
         void recordSecurityEvent({ eventType: "magic_link.invalid", outcome: "failure", message: "Invalid, expired, or previously used magic link", ipAddress: ctx.clientIp, userAgent: ctx.userAgent });
         throw new TRPCError({ code: "UNAUTHORIZED", message: "This sign-in link is invalid, expired, or has already been used." });
       }
+      const user = await getUserById(record.userId);
+      if (await isRoleBlockedByAdministratorOnlyAccess(user?.role)) {
+        void recordSecurityEvent({
+          eventType: "magic_link.blocked_administrator_only",
+          outcome: "blocked",
+          severity: "notice",
+          message: "Magic-link completion blocked by administrator-only access mode",
+          userId: record.userId,
+          ipAddress: ctx.clientIp,
+          userAgent: ctx.userAgent,
+        });
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "This sign-in link is no longer available." });
+      }
       const consumed = await db.update(magicLinkTokens).set({ usedAt: new Date() }).where(and(eq(magicLinkTokens.id, record.id), isNull(magicLinkTokens.usedAt)));
       if (!affectedRows(consumed)) throw new TRPCError({ code: "UNAUTHORIZED", message: "This sign-in link has already been used." });
-      const user = await getUserById(record.userId);
       if (!user || user.role !== "customer" || user.status !== "active" || !await isLoginWhitelisted(user)) {
         void recordSecurityEvent({ eventType: "magic_link.invalid", outcome: "blocked", message: "Magic-link account was not eligible", userId: record.userId, ipAddress: ctx.clientIp, userAgent: ctx.userAgent });
         throw new TRPCError({ code: "UNAUTHORIZED", message: "This sign-in link is no longer available." });
@@ -469,6 +509,19 @@ export const authRouter = router({
           userAgent: ctx.userAgent,
         });
         throw new TRPCError({ code: "UNAUTHORIZED", message: GENERIC_LOGIN_ERROR });
+      }
+
+      if (await isRoleBlockedByAdministratorOnlyAccess(user.role)) {
+        void recordSecurityEvent({
+          eventType: "login.blocked_administrator_only",
+          outcome: "blocked",
+          severity: "notice",
+          message: "Password login blocked by administrator-only access mode",
+          userId: user.id,
+          ipAddress: ctx.clientIp,
+          userAgent: ctx.userAgent,
+        });
+        throw new TRPCError({ code: "FORBIDDEN", message: "Administrator-only access is currently enabled." });
       }
 
       if (!await isLoginWhitelisted(user)) {

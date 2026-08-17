@@ -69,7 +69,7 @@ export function AdminSystemPage() {
         {tab === "keys" ? <ApiKeysPanel /> : null}
         {tab === "saml" ? <SamlPanel /> : null}
         {tab === "certificates" ? <CertificatePanel /> : null}
-        {tab === "maintenance" ? <><MaintenanceAccessPanel /><MaintenancePanel /></> : null}
+        {tab === "maintenance" ? <><AdministratorOnlyAccessPanel /><MaintenanceAccessPanel /><MaintenancePanel /></> : null}
         {tab === "launch" ? <LaunchCountdownPanel /> : null}
         {tab === "intake" ? <IntakeControlsPanel /> : null}
       </div>
@@ -779,6 +779,55 @@ function SamlPanel() {
       </div>
     </Card>
   );
+}
+
+function AdministratorOnlyAccessPanel() {
+  const toast = useToast();
+  const config = trpc.adminSecurity.administratorOnlyAccess.useQuery();
+  const [open, setOpen] = useState(false);
+  const [confirmation, setConfirmation] = useState("");
+  const enabled = config.data?.enabled ?? false;
+  const update = trpc.adminSecurity.updateAdministratorOnlyAccess.useMutation({
+    async onSuccess(result) {
+      setOpen(false);
+      setConfirmation("");
+      await config.refetch();
+      toast.success(result.enabled ? "Administrator-only access enabled" : "Administrator-only access disabled");
+    },
+    onError(error) { toast.error("Could not update administrator-only access", errorMessage(error)); },
+  });
+
+  if (config.isLoading) return <Skeleton className="mb-6 h-48 w-full" />;
+
+  return <Card className="mb-6">
+    <CardHeader
+      title="Administrator-only access"
+      description="Emergency access mode that admits only active administrators. It is separate from maintenance mode and applies to password, SSO, magic-link, registration, and existing sessions."
+      actions={<Badge tone={enabled ? "warning" : "success"}>{enabled ? "administrator-only active" : "normal access"}</Badge>}
+    />
+    <div className="mt-5 space-y-4">
+      <Alert tone={enabled ? "danger" : "warning"} title={enabled ? "Customer and staff access is blocked" : "Use only for controlled launch or incident response"}>
+        {enabled
+          ? "Existing non-administrator sessions are revoked on their next request. Only active administrator accounts can complete sign-in, and administrator MFA remains required."
+          : "Before enabling this gate, confirm that at least two active administrators have enrolled MFA and have verified their ability to sign in."}
+      </Alert>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="max-w-2xl text-xs leading-relaxed text-muted">Public registration, customer magic links, non-administrator password sign-ins, and non-administrator SSO completion are blocked while this mode is active.</p>
+        <Button variant={enabled ? "outline" : "danger"} onClick={() => setOpen(true)} leadingIcon={<LockKeyhole className="size-4" aria-hidden="true" />}>
+          {enabled ? "Disable administrator-only access" : "Enable administrator-only access"}
+        </Button>
+      </div>
+    </div>
+    <Modal
+      open={open}
+      onClose={() => { if (!update.isPending) { setOpen(false); setConfirmation(""); } }}
+      title={enabled ? "Disable administrator-only access?" : "Enable administrator-only access?"}
+      description={enabled ? "Normal eligible customer and staff sign-in paths will be restored. Existing session and account policies remain unchanged." : "This immediately restricts ReadyPackets to active administrator accounts and revokes non-administrator sessions when they next make a request."}
+      footer={<><Button variant="outline" disabled={update.isPending} onClick={() => { setOpen(false); setConfirmation(""); }}>Cancel</Button><Button variant={enabled ? "primary" : "danger"} busy={update.isPending} disabled={!enabled && confirmation !== "ADMINISTRATOR ONLY"} onClick={() => update.mutate({ enabled: !enabled, confirmation: enabled ? undefined : confirmation })}>{enabled ? "Restore normal access" : "Enable administrator-only access"}</Button></>}
+    >
+      {!enabled ? <Input label="Type ADMINISTRATOR ONLY to confirm" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" /> : <Alert tone="info">Administrators remain protected by their configured MFA policy after normal access is restored.</Alert>}
+    </Modal>
+  </Card>;
 }
 
 function MaintenanceAccessPanel() {

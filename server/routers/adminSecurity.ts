@@ -684,6 +684,35 @@ export const adminSecurityRouter = router({
       return { ok: true as const };
     }),
 
+  administratorOnlyAccess: adminProcedure.query(async () => ({
+    enabled: await getSettingBool("access.administrator_only_enabled", false),
+  })),
+
+  updateAdministratorOnlyAccess: adminProcedure
+    .input(z.object({ enabled: z.boolean(), confirmation: z.string().trim().max(80).optional() }))
+    .mutation(async ({ ctx, input }) => {
+      if (input.enabled && input.confirmation !== "ADMINISTRATOR ONLY") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Type ADMINISTRATOR ONLY to enable this access gate." });
+      }
+      await setSetting("access.administrator_only_enabled", String(input.enabled), {
+        category: "access",
+        valueType: "boolean",
+        userId: ctx.session.user.id,
+      });
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: "admin",
+        action: "access.administrator_only_updated",
+        entityType: "access_policy",
+        entityId: "administrator_only",
+        severity: input.enabled ? "warning" : "notice",
+        summary: `Administrator-only access ${input.enabled ? "enabled" : "disabled"}`,
+        changes: { enabled: input.enabled },
+        ipAddress: ctx.clientIp,
+      });
+      return { ok: true as const, enabled: input.enabled };
+    }),
+
   maintenanceConfig: adminProcedure.query(async () => {
     const [enabled, blocksLogin, blocksRegistration, showOnHomepage, message, estimatedCompletion] = await Promise.all([
       getSettingBool("maintenance.enabled", false),

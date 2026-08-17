@@ -30,6 +30,7 @@ import { recordSecurityEvent } from "../observability/audit.js";
 import { hasConfirmedMfa } from "./mfa.js";
 import { getMfaPolicyForRole, mfaRequirement } from "./mfaPolicy.js";
 import { getSettingBool, getSettingJson } from "../services/settings.js";
+import { isAdministratorOnlyAccessEnabled, isRoleBlockedByAdministratorOnlyAccess } from "./adminOnlyAccess.js";
 
 
 // ---------------------------------------------------------------------------
@@ -181,16 +182,20 @@ export async function handleAcs(req: Request, res: Response): Promise<void> {
   const firstName = String(profile[firstNameAttr] ?? "").slice(0, 64) || "User";
   const lastName = String(profile[lastNameAttr] ?? "").slice(0, 64) || "";
 
-  // Find or provision the user.
+  // Find or provision the user. Administrator-only access deliberately
+  // disables SAML auto-provisioning so no new account can enter during a gate.
+  const administratorOnly = await isAdministratorOnlyAccessEnabled();
   let user = await getUserByEmail(email);
 
   if (!user) {
-    if (!config.autoProvision) {
+    if (administratorOnly || !config.autoProvision) {
       logger.warn("saml.acs.no_account", { email: email.slice(0, 4) + "***" });
       await recordSecurityEvent({
         eventType: "login.failure",
         outcome: "failure",
-        message: "SAML login attempted for unregistered user and auto-provisioning is disabled",
+        message: administratorOnly
+          ? "SAML login blocked because administrator-only access does not permit auto-provisioning"
+          : "SAML login attempted for unregistered user and auto-provisioning is disabled",
         ipAddress: req.ip ?? null,
       });
       res.redirect(`${env.appUrl}/login?error=saml_no_account`);
@@ -216,6 +221,19 @@ export async function handleAcs(req: Request, res: Response): Promise<void> {
         .set({ loginMethod: "saml" })
         .where(eq(users.id, user.id));
     }
+  }
+
+  if (await isRoleBlockedByAdministratorOnlyAccess(user.role)) {
+    await recordSecurityEvent({
+      eventType: "login.blocked_administrator_only",
+      outcome: "blocked",
+      severity: "notice",
+      message: "SAML login blocked by administrator-only access mode",
+      userId: user.id,
+      ipAddress: req.ip ?? null,
+    });
+    res.redirect(`${env.appUrl}/login?error=administrator_only`);
+    return;
   }
 
   // Check the user is active and permitted by the optional account whitelist.

@@ -11,6 +11,7 @@ import type { Request, Response } from "express";
 import { and, eq, lt, sql } from "drizzle-orm";
 import { SignJWT, jwtVerify } from "jose";
 import { env } from "../config/env.js";
+import { isRoleBlockedByAdministratorOnlyAccess } from "./adminOnlyAccess.js";
 import { db } from "../db/client.js";
 import { users, userSessions } from "../db/schema.js";
 import { logger } from "../observability/logger.js";
@@ -178,6 +179,17 @@ export async function resolveSession(req: Request): Promise<ActiveSession | null
   if (!row) return null;
   if (row.revokedAt || row.status !== "active") return null;
   if (row.deletedAt || row.userStatus !== "active") return null;
+  if (await isRoleBlockedByAdministratorOnlyAccess(row.role)) {
+    await revokeSession(sessionId, "administrator_only_access");
+    void recordSecurityEvent({
+      eventType: "session.revoked_administrator_only",
+      outcome: "blocked",
+      severity: "notice",
+      message: "Session revoked by administrator-only access mode",
+      userId: row.userId,
+    });
+    return null;
+  }
   if (row.expiresAt.getTime() <= Date.now()) {
     await revokeSession(sessionId, "expired");
     return null;
