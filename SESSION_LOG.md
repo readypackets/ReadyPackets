@@ -2935,3 +2935,16 @@ The detailed assessment evidence is retained in `/home/ubuntu/readypackets_go_li
 ### Publication and final production verification
 
 The session recovery fix and the two Markdown reports were committed and pushed to private `main` in `eebb7f3b08775299b3bbbc17dd5aaee404e4d1e2` (`fix: recover login after expired session`). The deployed production release marker was updated to that commit on the attached production host, and `https://myportal.readypackets.com/api/health` returned `{"status":"ok"}` with `readypackets.service` active.
+
+
+## 2026-08-18 — Administrator MFA access recovery
+
+**User report:** No administrator could complete authenticator-app login.
+
+**Read-only production findings:** The host clock was NTP synchronized. Four active administrator accounts retained confirmed TOTP enrolments, and the `security.mfa_admin_policy` remained `required`. Password login reached the `mfaPending` state for affected administrators. No corresponding `login.mfa_failure` or `login.mfa_success` event was recorded after the MFA prompt, showing that the verification procedure was not receiving the browser request rather than that TOTP codes were being cryptographically rejected.
+
+**Cause and correction:** The client could retain a stale CSRF value across the password-login session rotation and submit that old value when it called `auth.verifyMfa`. The second-factor mutation was rejected by CSRF protection before the MFA handler, which is why authentication logs contained no MFA success/failure outcome. The login page now refreshes the same-origin CSRF token immediately before authenticator or backup-code verification and fails closed with a safe retry message if the token cannot be obtained. No MFA policy, encryption key, TOTP secret, administrator password, or server clock was altered.
+
+**Deployment and verification:** The corrected current client build was atomically promoted to production. The active bundle contains the MFA token-recovery guard; the public health endpoint returned `{"status":"ok"}` and the `readypackets` service remained active. Rollback client assets are retained at `/opt/readypackets/rollback-20260818123000-mfa-login-csrf/client-dist`. An earlier deployment attempt detected a pre-existing stale incoming directory and exited before it changed the active client path; it was not activated.
+
+**Requested operator verification:** Administrators should retry a normal password-plus-authenticator sign-in. A hard refresh or cache purge should no longer be necessary. The recovery remains fail-closed: no authenticated session is created unless the current TOTP or a valid unused backup code succeeds.

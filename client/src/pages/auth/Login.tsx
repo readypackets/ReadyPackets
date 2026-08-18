@@ -177,9 +177,17 @@ export function LoginPage() {
     login.mutate({ email: email.trim().toLowerCase(), password });
   };
 
-  const submitMfa = (event: React.FormEvent) => {
+  const submitMfa = async (event: React.FormEvent) => {
     event.preventDefault();
     setFormError(null);
+    // Password and magic-link verification rotate the session and CSRF cookie.
+    // Refresh immediately before the MFA mutation so an existing login tab never
+    // submits the previous anonymous or expired-session token.
+    const token = await refreshCsrfToken();
+    if (!token) {
+      setFormError("Your sign-in session could not be refreshed. Please try again.");
+      return;
+    }
     verifyMfa.mutate({ code: code.trim(), useBackupCode });
   };
 
