@@ -1116,7 +1116,7 @@ export async function jobNotifyWebhooks(orderId: number, phase: string): Promise
   // order_scope_mode column; scope is inferred from these canonical fields.
   // P201 remains deliberately minimal and reads P101 state downstream.
   const payload = isP101
-    ? (() => backfillCanonicalP101Scope(order.id).then((scope) => buildCanonicalP101Payload({
+    ? backfillCanonicalP101Scope(order.id).then((scope) => buildCanonicalP101Payload({
         customerId,
         orderId: order.orderNumber,
         scope,
@@ -1125,7 +1125,7 @@ export async function jobNotifyWebhooks(orderId: number, phase: string): Promise
         clientName: customer ? displayNameOf(customer) : "",
         clientEmail: customer?.email ?? "",
         releaseStatus: order.releaseStatus ?? "",
-      })))
+      }))
     : Promise.resolve(minimalPhasePayload);
   const resolvedPayload = normalizePhaseStartPayload(await payload);
 
