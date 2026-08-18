@@ -423,6 +423,8 @@ export const orders = mysqlTable(
     id: id(),
     orderNumber: varchar("order_number", { length: 32 }).notNull(),
     userId: int("user_id").notNull(),
+    /** Immutable evidence of whether the customer initiated the order or an administrator created it on their behalf. */
+    createdByOrigin: varchar("created_by_origin", { length: 20 }).notNull().default("customer"),
     projectNameEnc: text("project_name_enc"),
     status: varchar("status", { length: 32 }).notNull().default("new"),
     paymentStatus: varchar("payment_status", { length: 32 }).notNull().default("unpaid"),
@@ -985,6 +987,8 @@ export const emailQueue = mysqlTable(
     subject: varchar("subject", { length: 255 }).notNull(),
     bodyHtml: text("body_html").notNull(),
     bodyText: text("body_text"),
+    /** Attachment intent is regenerated at send time; binary documents are never stored in the queue table. */
+    attachmentManifest: json("attachment_manifest"),
     status: varchar("status", { length: 16 }).notNull().default("pending"),
     attempts: int("attempts").notNull().default(0),
     lastError: varchar("last_error", { length: 500 }),
@@ -1010,6 +1014,7 @@ export const emailLog = mysqlTable(
     subject: varchar("subject", { length: 255 }).notNull(),
     bodyHtmlEnc: text("body_html_enc"),
     bodyTextEnc: text("body_text_enc"),
+    attachmentManifest: json("attachment_manifest"),
     status: varchar("status", { length: 16 }).notNull(),
     detail: varchar("detail", { length: 500 }),
     sentAt: timestamp("sent_at"),

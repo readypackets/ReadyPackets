@@ -3033,3 +3033,31 @@ The session recovery fix and the two Markdown reports were committed and pushed 
 **Correction:** The uninvoked wrapper was removed. P101 now assigns the `backfillCanonicalP101Scope(...).then(...)` promise directly, awaits the resulting payload object, normalizes it, verifies its persisted JSON representation, and only then marks the delivery eligible for dispatch. The earlier null-payload guard remains in place as defense in depth, including recovery for historical P101/P201 records when an administrator chooses Retry or Redeliver.
 
 **Validation and deployment:** TypeScript checking passed, and the focused canonical P101 test suite passed all six tests. The server bundle built with SHA-256 `5fbebea1b54a227f2585db9e7cb5622435cccb9414e78af8a333d10c01b36bc7`, which was verified on production before deployment. Systemd is active and local/public health checks succeeded. The prior phase-job record remains completed historical evidence and no additional outbound webhook was sent automatically. A new Phase I start, or Retry/Redeliver of the existing P101 record, will now use the corrected canonical JSON-object flow. Rollback server bundle: `/opt/readypackets/rollback-20260818180915-p101-factory-invocation/server.js`.
+
+
+## 2026-08-18 — Order renaming and strengthened invoice evidence release
+
+### User request
+
+The user requested that customers and administrators be able to rename orders after creation. The user also requested that every order automatically receive a clean, company-branded invoice PDF by email and in the order, while preserving the current invoice design and adding the key evidentiary distinctions: customer-versus-administrator order creation, purchased products, discount code and discount amount, catalog value, amount due, and the actual amount paid by the customer.
+
+### Implementation
+
+1. Added `orders.rename`, a protected server mutation allowing an order owner or an administrator/staff user to rename an order. Shared customer collaborators are intentionally blocked from changing the owner’s commercial title. The project title stays AES-GCM encrypted using the order-bound AAD. The audit event records the actor and fact of a rename without storing the potentially sensitive title in the unencrypted audit JSON.
+2. Added customer and administrator **Rename order** actions with focused title dialogs. The unique order number, payment record, workflow, files, and invoice remain unchanged.
+3. Added migration `0040_order_rename_invoice_evidence.sql`. It records immutable `created_by_origin` evidence on orders, backfills historical administrator-created orders from their audited `order.admin_created` events, and adds non-sensitive invoice-PDF attachment manifests to the email queue and sent-email log.
+4. Enhanced invoice data and customer/admin invoice views to distinguish catalog product value, pricing or bundle adjustment, applied discount code/amount, order amount due, actual customer payment, payment evidence, and customer-created versus administrator-created order origin.
+5. Added a self-hosted, dependency-free branded PDF invoice renderer. The PDF includes a ReadyPackets navy/teal/gold header, invoice and order references, products, customer ID, pricing and discount ledger, actual payment, origin/payment evidence, and footer. It is created on demand from immutable order/payment records rather than stored in a public location.
+6. Added a short-lived, single-use, authenticated invoice-PDF download ticket and no-store `/api/invoices/download/:token` response. Both customer and administrator interfaces can download the branded PDF. A ticket is bound to the requesting account and cannot be replayed by another account.
+7. Added invoice PDF attachments to both SMTP and Microsoft Graph email paths. Attachment intent is persisted as a small validated manifest; the PDF binary is regenerated only when the message is sent. New Stripe-confirmed orders queue the receipt only after coupon redemption evidence and actual Stripe amount are finalized. Administrator-waived orders queue their receipt after activation. Test orders retain a portal invoice but deliberately do not email a simulated payment receipt.
+8. Preserved invoice idempotency and the existing manual administrator publish/email controls. Duplicate Stripe completion events do not duplicate an email if one has already been queued.
+
+### Validation and production deployment
+
+- Type checking passed.
+- Focused regression tests passed: `tests/invoicePdf.test.ts` and `tests/orderScope.test.ts` (7 assertions across 2 test files).
+- Production client and server builds passed.
+- Migration `0040_order_rename_invoice_evidence.sql` applied successfully in production and the new `created_by_origin` and `attachment_manifest` fields were verified.
+- Production server SHA-256: `48a873e74f5fbbbdce319d69456bbee9896301fe1f9da46e0713076ce8bcdadc`.
+- The first post-restart localhost check ran during the normal startup grace period; service status/logs then confirmed the application listening on `127.0.0.1:3000`, and the public health endpoint returned `{"status":"ok"}`.
+- Retained rollback assets: `/opt/readypackets/rollback-20260818190039-order-invoice` and `/opt/readypackets/client/dist.previous-20260818190039-order-invoice`.

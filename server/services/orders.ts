@@ -41,7 +41,7 @@ import { ORDER_TRANSITIONS, type OrderStatus } from "../../shared/domain.js";
 import { assertActiveOrderStatus, isSystemOrderStatus, isTerminalOrderStatus } from "./orderStatusConfig.js";
 import { insertedId } from "../db/result.js";
 import { deriveCanonicalP101Scope, getPacketGroupNumbers } from "./orderScope.js";
-import { getOrCreatePaidOrderInvoice } from "./invoices.js";
+import { getOrCreatePaidOrderInvoice, queueAutomaticCustomerInvoiceEmail } from "./invoices.js";
 
 export class OrderStateError extends Error {}
 
@@ -84,6 +84,13 @@ export async function activatePaidOrder(orderId: number, activationSource: "stri
     );
   }
   const invoice = await getOrCreatePaidOrderInvoice(orderId);
+  // Stripe coupon evidence is finalized immediately after activation in the signed
+  // webhook handler; defer that path's email until then. Administrator waivers
+  // are already final and receive their receipt automatically. Test orders keep
+  // their invoice for portal QA without emailing a simulated payment receipt.
+  if (activationSource === "admin_waiver") {
+    await queueAutomaticCustomerInvoiceEmail(orderId);
+  }
   logger.info("invoice.paid_order_materialized", { orderId, invoiceNumber: invoice.invoiceNumber, activationSource });
 
   void recordActivity({
@@ -130,6 +137,7 @@ export async function createOrder(input: CreateOrderInput) {
   const inserted = await db.insert(orders).values({
     orderNumber,
     userId: input.userId,
+    createdByOrigin: input.actorRole === "admin" || input.actorRole === "staff" ? "admin" : "customer",
     projectNameEnc: encryptField(input.projectName ?? null, "order:pending"),
     status: "new",
     paymentStatus: paymentRequirement === "required" ? (quote.requiresCustomQuote ? "awaiting_invoice" : "unpaid") : "paid",

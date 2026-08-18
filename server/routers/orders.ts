@@ -65,6 +65,7 @@ function customerOrderActivityLabel(action: string): string {
     "order.phase_kickoff_manual": "Order phase started",
     "order.phase_submitted": "Workflow phase submitted",
     "order.phase_unlocked": "Workflow phase reopened",
+    "order.renamed": "Order title updated",
     "order.share": "Order sharing updated",
     "order.transition": "Order status updated",
     "order.update": "Order details updated",
@@ -369,6 +370,42 @@ export const ordersRouter = router({
       if (!owner[0]) throw new TRPCError({ code: "FORBIDDEN", message: "Only the order owner can revoke sharing." });
       await db.update(orderShares).set({ revokedAt: new Date() }).where(and(eq(orderShares.id, input.shareId), eq(orderShares.orderId, input.orderId)));
       return { ok: true as const };
+    }),
+
+  rename: protectedProcedure
+    .input(z.object({ orderId: z.number().int().positive(), projectName: z.string().trim().min(1, "Enter an order title.").max(190) }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        await assertOrderAccess(input.orderId, ctx.session.user.id, ctx.session.user.role);
+        const rows = await db.select({ userId: orders.userId, projectNameEnc: orders.projectNameEnc }).from(orders).where(and(eq(orders.id, input.orderId), isNull(orders.deletedAt))).limit(1);
+        const order = rows[0];
+        if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Order not found." });
+        // A shared customer collaborator may work in an order, but cannot rename
+        // the account owner's legal/commercial order reference. Administrators
+        // retain the operational ability to correct it.
+        if (ctx.session.user.role === "customer" && order.userId !== ctx.session.user.id) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Only the order owner can rename this order." });
+        }
+        const previousName = decryptField(order.projectNameEnc, `order:${input.orderId}`);
+        if (previousName === input.projectName) return { ok: true as const, projectName: input.projectName };
+        await db.update(orders).set({ projectNameEnc: encryptField(input.projectName, `order:${input.orderId}`) }).where(eq(orders.id, input.orderId));
+        await recordActivity({
+          actorUserId: ctx.session.user.id,
+          actorRole: ctx.session.user.role,
+          action: "order.renamed",
+          entityType: "order",
+          entityId: input.orderId,
+          severity: "info",
+          summary: `Order ${input.orderId} title updated`,
+          // Do not place potentially sensitive commercial titles in an
+          // unencrypted JSON audit column; the event remains fully attributable.
+          changes: { renamed: true },
+          ipAddress: ctx.clientIp,
+        });
+        return { ok: true as const, projectName: input.projectName };
+      } catch (error) {
+        toTrpcError(error);
+      }
     }),
 
   create: protectedProcedure

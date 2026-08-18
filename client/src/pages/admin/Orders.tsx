@@ -21,6 +21,7 @@ import {
   Lock,
   MessageSquarePlus,
   Plus,
+  Pencil,
   RefreshCw,
   Save,
   Search,
@@ -758,6 +759,8 @@ export function AdminOrderDetailPage() {
   const [internalNotes, setInternalNotes] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteReason, setDeleteReason] = useState("");
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
   const [workflowId, setWorkflowId] = useState("");
   const [phaseUploadOpen, setPhaseUploadOpen] = useState(false);
   const [phaseUpload, setPhaseUpload] = useState("phase_1");
@@ -794,6 +797,21 @@ export function AdminOrderDetailPage() {
       toast.success(result.customerVisible ? "Invoice published" : "Invoice hidden", result.customerVisible ? "The customer can now view this invoice in their portal." : "The invoice is no longer visible in the customer portal.");
     },
     onError(error) { toast.error("Could not update invoice visibility", errorMessage(error)); },
+  });
+  const downloadInvoicePdf = trpc.invoices.requestPdfDownload.useMutation({
+    onSuccess(result) {
+      window.open(result.url, "_blank", "noopener,noreferrer");
+    },
+    onError(error) { toast.error("Could not prepare invoice PDF", errorMessage(error)); },
+  });
+  const renameOrder = trpc.orders.rename.useMutation({
+    async onSuccess(result) {
+      setRenameOpen(false);
+      setRenameValue(result.projectName);
+      await refetchAll();
+      toast.success("Order renamed", "The updated title is now visible to the customer and staff.");
+    },
+    onError(error) { toast.error("Could not rename the order", errorMessage(error)); },
   });
   const emailInvoice = trpc.invoices.sendCustomerCopy.useMutation({
     async onSuccess(result) {
@@ -1003,6 +1021,7 @@ export function AdminOrderDetailPage() {
         breadcrumb={{ href: "/admin/orders", label: "Order queue" }}
         actions={
           <div className="flex flex-wrap gap-2">
+            <Button variant="outline" leadingIcon={<Pencil className="size-4" aria-hidden="true" />} onClick={() => { setRenameValue(order.projectName ?? ""); setRenameOpen(true); }}>Rename order</Button>
             {["paid", "partially_refunded"].includes(order.paymentStatus) ? <><LinkButton href={`/admin/orders/${order.id}/invoice`} variant="outline">Invoice</LinkButton>{session.isAdmin ? <LinkButton href={`/admin/finance?orderId=${order.id}`} variant="danger">Refund</LinkButton> : null}</> : null}
             {session.isAdmin ? (
               <Button
@@ -1068,15 +1087,20 @@ export function AdminOrderDetailPage() {
             {invoice.isLoading ? <Skeleton className="mt-5 h-48 w-full" /> : null}
             {invoice.error ? <Alert tone="danger" className="mt-5">{errorMessage(invoice.error)}</Alert> : null}
             {invoice.data ? <div className="mt-5 space-y-5">
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div><p className="text-xs font-semibold uppercase tracking-wide text-muted">Invoice number</p><p className="mt-1 font-mono text-sm font-semibold text-ink">{invoice.data.invoiceNumber}</p></div>
                 <div><p className="text-xs font-semibold uppercase tracking-wide text-muted">Customer</p><p className="mt-1 text-sm font-medium text-ink">{invoice.data.customer.name}</p></div>
-                <div><p className="text-xs font-semibold uppercase tracking-wide text-muted">Product total</p><p className="mt-1 text-sm font-medium text-ink">{formatMoney(invoice.data.subtotalCents)}</p></div>
-                <div><p className="text-xs font-semibold uppercase tracking-wide text-muted">Price paid</p><p className="mt-1 text-sm font-semibold text-success">{formatMoney(invoice.data.totalCents)}</p></div>
+                <div><p className="text-xs font-semibold uppercase tracking-wide text-muted">Order source</p><p className="mt-1 text-sm font-medium text-ink">{invoice.data.orderOriginLabel}</p></div>
+                <div><p className="text-xs font-semibold uppercase tracking-wide text-muted">Catalog product value</p><p className="mt-1 text-sm font-medium text-ink">{formatMoney(invoice.data.productValueCents)}</p></div>
+                <div><p className="text-xs font-semibold uppercase tracking-wide text-muted">Order amount due</p><p className="mt-1 text-sm font-medium text-ink">{formatMoney(invoice.data.totalCents)}</p></div>
+                <div><p className="text-xs font-semibold uppercase tracking-wide text-muted">Actual customer payment</p><p className="mt-1 text-sm font-semibold text-success">{formatMoney(invoice.data.actualCustomerPaidCents)}</p></div>
               </div>
+              {invoice.data.pricingAdjustmentCents > 0 ? <Alert tone="info">Pricing or bundle adjustment: <strong>{formatMoney(invoice.data.pricingAdjustmentCents)}</strong>.</Alert> : null}
               {invoice.data.discountCents > 0 ? <Alert tone="success">Discount applied: <strong>{invoice.data.discount?.code ?? "Recorded discount"}</strong> — {formatMoney(invoice.data.discountCents)} off.</Alert> : null}
+              <Alert tone="info">{invoice.data.paymentEvidenceLabel}</Alert>
               <div className="flex flex-wrap gap-3 border-t border-line pt-5">
-                <LinkButton href={`/admin/orders/${order.id}/invoice`} variant="outline">Open / print invoice</LinkButton>
+                <LinkButton href={`/admin/orders/${order.id}/invoice`} variant="outline">Open invoice</LinkButton>
+                <Button variant="outline" leadingIcon={<Download className="size-4" />} busy={downloadInvoicePdf.isPending} onClick={() => downloadInvoicePdf.mutate({ orderId })}>Download branded PDF</Button>
                 {session.isAdmin ? <Button variant={invoice.data.customerVisible ? "outline" : "primary"} busy={setInvoiceVisibility.isPending} onClick={() => setInvoiceVisibility.mutate({ orderId, visible: !invoice.data.customerVisible })}>{invoice.data.customerVisible ? "Hide from customer portal" : "Publish to customer portal"}</Button> : null}
                 {session.isAdmin ? <Button variant="primary" leadingIcon={<Send className="size-4" />} busy={emailInvoice.isPending} onClick={() => emailInvoice.mutate({ orderId })}>Email customer a copy</Button> : null}
               </div>
@@ -1552,6 +1576,8 @@ export function AdminOrderDetailPage() {
       <Modal open={phaseUploadOpen} onClose={() => setPhaseUploadOpen(false)} title="Upload phase documents" description="Attach administrator documents to this order and assign them to the correct workflow phase." footer={<><Button variant="outline" onClick={() => setPhaseUploadOpen(false)}>Cancel</Button><Button busy={phaseUploading} leadingIcon={<Upload className="size-4" />} onClick={() => phaseFileInput.current?.click()}>Choose documents</Button></>}><div className="space-y-4"><Select label="Order phase" value={phaseUpload} onChange={(event) => { setPhaseUpload(event.target.value); setPhaseUploadPreRecordedAudio(false); }} options={phaseUploadOptions} />{phaseAllowsPreRecordedAudio ? <Checkbox label="Upload pre-recorded audio files for this phase" checked={phaseUploadPreRecordedAudio} onChange={(event) => setPhaseUploadPreRecordedAudio(event.target.checked)} /> : null}<Alert tone="info">Uploaded administrator documents are initially internal. Use the visibility control in the Files tab to publish a file to the customer inside this order’s matching phase workspace.</Alert><input ref={phaseFileInput} className="hidden" type="file" accept={phaseUploadPreRecordedAudio ? "audio/*,.webm,.ogg" : undefined} multiple onChange={(event) => void uploadPhaseDocuments(event.target.files)} /></div></Modal>
 
       <Modal open={Boolean(unlockTarget)} onClose={() => setUnlockTarget(null)} title="Unlock customer workflow phase" description="This reopens customer changes for the selected phase. The action is audited and should be used only when a correction is needed." footer={<><Button variant="outline" onClick={() => setUnlockTarget(null)}>Cancel</Button><Button variant="danger" busy={unlockWorkflowPhase.isPending} disabled={unlockConfirmation !== "UNLOCK PHASE" || unlockReason.trim().length < 10} onClick={() => { if (unlockTarget) unlockWorkflowPhase.mutate({ orderId, phaseKey: unlockTarget.phaseKey, reason: unlockReason.trim(), confirmation: "UNLOCK PHASE" }); }}>Unlock phase</Button></>}><div className="space-y-4"><Alert tone="warning">Unlocking allows the customer to add, remove, or update files, recordings, and answers until they submit this phase again.</Alert><Input label="Reason for unlock" value={unlockReason} onChange={(event) => setUnlockReason(event.target.value)} help="Required; recorded in the audit trail." maxLength={1000} /><Input label="Type UNLOCK PHASE to confirm" value={unlockConfirmation} onChange={(event) => setUnlockConfirmation(event.target.value)} /></div></Modal>
+
+      <Modal open={renameOpen} onClose={() => setRenameOpen(false)} title="Rename order" description="This changes the project title only. The order number, customer, payment evidence, files, workflow, and invoice remain unchanged."><div className="space-y-4"><Input autoFocus label="Order title" value={renameValue} maxLength={190} onChange={(event) => setRenameValue(event.target.value)} placeholder="e.g., Building Mount Olympus" /><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setRenameOpen(false)}>Cancel</Button><Button busy={renameOrder.isPending} disabled={!renameValue.trim()} onClick={() => renameOrder.mutate({ orderId, projectName: renameValue.trim() })}>Save title</Button></div></div></Modal>
 
       <ConfirmDialog
         open={deleteOpen}

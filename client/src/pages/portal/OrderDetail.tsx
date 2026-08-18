@@ -18,6 +18,7 @@ import {
   Loader2,
   MessageSquarePlus,
   Package,
+  Pencil,
   Send,
 } from "lucide-react";
 import { INTEGRITY_CHOICE_LABELS } from "@shared/domain";
@@ -97,6 +98,8 @@ export function OrderDetailPage() {
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
   const [downloading, setDownloading] = useState<number | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const [shareEmail, setShareEmail] = useState("");
@@ -122,6 +125,18 @@ export function OrderDetailPage() {
     },
     onError(error) {
       toast.error("Could not save your answer", errorMessage(error));
+    },
+  });
+
+  const renameOrder = trpc.orders.rename.useMutation({
+    async onSuccess(result) {
+      setRenameOpen(false);
+      setRenameValue(result.projectName);
+      await detail.refetch();
+      toast.success("Order renamed", "Your updated order title is now visible across the portal.");
+    },
+    onError(error) {
+      toast.error("Could not rename the order", errorMessage(error));
     },
   });
 
@@ -225,6 +240,7 @@ export function OrderDetailPage() {
         breadcrumb={{ href: "/portal/orders", label: "My orders" }}
         actions={
           <>
+            <Button variant="outline" leadingIcon={<Pencil className="size-4" aria-hidden="true" />} onClick={() => { setRenameValue(order.projectName ?? ""); setRenameOpen(true); }}>Rename order</Button>
             {["paid", "partially_refunded"].includes(order.paymentStatus) ? <LinkButton href={`/portal/orders/${order.id}/invoice`} variant="outline" leadingIcon={<FileText className="size-4" aria-hidden="true" />}>Invoice</LinkButton> : null}
             {deliverables.length > 0 ? (
               <LinkButton
@@ -584,6 +600,8 @@ export function OrderDetailPage() {
       </div>
 
             <Modal open={shareOpen} onClose={() => setShareOpen(false)} title="Share this order"><div className="space-y-4"><p className="text-sm text-body">Choose a customer account and the work they may perform. A contributor can view the order, upload supporting documents, and record a Business Pitch Idea.</p><Input label="Customer email" value={shareEmail} onChange={(event) => setShareEmail(event.target.value)} placeholder="collaborator@example.com" /><Select label="Permission" value={shareScope} onChange={(event) => setShareScope(event.target.value)} options={[{ value: "view", label: "View only" }, { value: "upload_documents", label: "Upload documents" }, { value: "view_deliverables", label: "View final deliverables" }, { value: "record_business_pitch", label: "Record a Business Pitch Idea" }, { value: "contributor", label: "Contributor — all Phase 1 contributions" }, { value: "manager", label: "Manager — full collaboration" }]} /><div className="flex justify-end gap-3"><Button variant="outline" onClick={() => setShareOpen(false)}>Cancel</Button><Button busy={shareOrder.isPending} disabled={!shareEmail.trim()} onClick={() => shareOrder.mutate({ orderId, email: shareEmail, scope: shareScope as never })}>Share order</Button></div></div></Modal>
+
+            <Modal open={renameOpen} onClose={() => setRenameOpen(false)} title="Rename order" description="This changes the project title only. Your unique order number, payment records, workflow, and invoice remain unchanged."><div className="space-y-4"><Input autoFocus label="Order title" value={renameValue} maxLength={190} onChange={(event) => setRenameValue(event.target.value)} placeholder="e.g., Building Mount Olympus" /><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setRenameOpen(false)}>Cancel</Button><Button busy={renameOrder.isPending} disabled={!renameValue.trim()} onClick={() => renameOrder.mutate({ orderId, projectName: renameValue.trim() })}>Save title</Button></div></div></Modal>
 
       <Modal open={cancelOpen}
         onClose={() => setCancelOpen(false)}

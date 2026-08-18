@@ -34,7 +34,7 @@ import { env } from "../config/env.js";
 import { logger } from "../observability/logger.js";
 import { recordActivity, recordSecurityEvent } from "../observability/audit.js";
 import { activatePaidOrder } from "./orders.js";
-import { getOrCreatePaidOrderInvoice } from "./invoices.js";
+import { getOrCreatePaidOrderInvoice, queueAutomaticCustomerInvoiceEmail } from "./invoices.js";
 
 let _stripe: Stripe | null = null;
 let _stripeKeyFromDb: string | null | undefined = undefined; // undefined = not yet loaded
@@ -375,6 +375,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     // repairs any historical paid order that reached completion before its
     // invoice was materialized, without replaying provisioning or automations.
     const invoice = await getOrCreatePaidOrderInvoice(orderId);
+    await queueAutomaticCustomerInvoiceEmail(orderId);
     logger.info("stripe.checkout.completed.duplicate", { orderId, sessionId: session.id, invoiceNumber: invoice.invoiceNumber });
     return;
   }
@@ -433,6 +434,10 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       });
     }
   }
+
+  // Coupon and payment evidence are now final, so create/send the one branded
+  // invoice email with the actual settled amount and immutable discount record.
+  await queueAutomaticCustomerInvoiceEmail(orderId);
 
   // Record referral commission (5% of amount).
   if (referrerId) {

@@ -17,6 +17,7 @@ import { raiseAlert } from "../observability/audit.js";
 import { getSetting } from "./settings.js";
 import { BRAND, BRAND_COLORS } from "../../shared/brand.js";
 import { isGraphEmailEnabled, sendViaGraph } from "./emailGraph.js";
+import { invoicePdfFileName, renderInvoicePdf } from "./invoicePdf.js";
 
 let transporter: Transporter | null = null;
 
@@ -90,12 +91,31 @@ export function button(label: string, href: string): string {
   return `<p style="margin:24px 0;"><a href="${escapeHtml(href)}" style="display:inline-block;background:${BRAND_COLORS.teal};color:#ffffff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:8px;">${escapeHtml(label)}</a></p>`;
 }
 
+export type EmailAttachmentManifest = {
+  kind: "invoice_pdf";
+  invoiceId: number;
+  filename: string;
+};
+
 export interface QueueEmailInput {
   to: string;
   subject: string;
   html: string;
   text?: string;
   templateKey?: string;
+  attachments?: EmailAttachmentManifest[];
+}
+
+function normalizeAttachments(attachments: EmailAttachmentManifest[] | undefined): EmailAttachmentManifest[] | null {
+  if (!attachments?.length) return null;
+  return attachments
+    .filter((attachment) => attachment.kind === "invoice_pdf" && Number.isInteger(attachment.invoiceId) && attachment.invoiceId > 0)
+    .slice(0, 3)
+    .map((attachment) => ({
+      kind: "invoice_pdf" as const,
+      invoiceId: attachment.invoiceId,
+      filename: attachment.filename.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 190) || "ReadyPackets-Invoice.pdf",
+    }));
 }
 
 export async function queueEmail(input: QueueEmailInput): Promise<void> {
@@ -105,6 +125,7 @@ export async function queueEmail(input: QueueEmailInput): Promise<void> {
     subject: input.subject.slice(0, 255),
     bodyHtml: input.html,
     bodyText: input.text ?? null,
+    attachmentManifest: normalizeAttachments(input.attachments),
   });
 }
 
@@ -159,18 +180,50 @@ async function getAuditBcc(): Promise<string | null> {
   return configured && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(configured) ? configured : null;
 }
 
+type MaterializedAttachment = { filename: string; content: Buffer; contentType: string };
+
+async function materializeAttachments(manifest: unknown): Promise<MaterializedAttachment[]> {
+  if (!Array.isArray(manifest)) return [];
+  const attachments: MaterializedAttachment[] = [];
+  for (const entry of manifest.slice(0, 3)) {
+    if (!entry || typeof entry !== "object") continue;
+    const attachment = entry as Partial<EmailAttachmentManifest>;
+    if (attachment.kind !== "invoice_pdf" || !Number.isInteger(attachment.invoiceId) || (attachment.invoiceId ?? 0) <= 0) continue;
+    // Dynamic import avoids a service initialization cycle: invoices queue emails,
+    // while the queue materializes invoice PDFs only at send time.
+    const { getInvoiceByIdForDocument } = await import("./invoices.js");
+    const invoice = await getInvoiceByIdForDocument(attachment.invoiceId!);
+    const filename = attachment.filename?.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 190) || invoicePdfFileName(invoice);
+    attachments.push({ filename, content: renderInvoicePdf(invoice), contentType: "application/pdf" });
+  }
+  return attachments;
+}
+
 async function deliver(
   to: string,
   subject: string,
   html: string,
   text: string | null,
   bcc: string | null = null,
+  attachments: MaterializedAttachment[] = [],
 ): Promise<void> {
   const fromName = (await getSetting("email.from_name")) ?? BRAND.companyShortName;
 
   // Try Microsoft Graph first if configured; fall back to SMTP.
   if (await isGraphEmailEnabled()) {
-    const sent = await sendViaGraph({ to, subject, html, text, fromName, bcc });
+    const sent = await sendViaGraph({
+      to,
+      subject,
+      html,
+      text,
+      fromName,
+      bcc,
+      attachments: attachments.map((attachment) => ({
+        name: attachment.filename,
+        contentType: attachment.contentType,
+        contentBytes: attachment.content.toString("base64"),
+      })),
+    });
     if (sent) {
       logger.debug("Email delivered via Microsoft Graph", { subject });
       return;
@@ -191,6 +244,7 @@ async function deliver(
     subject,
     html,
     text: text ?? undefined,
+    attachments: attachments.map((attachment) => ({ filename: attachment.filename, content: attachment.content, contentType: attachment.contentType })),
   });
 }
 
@@ -225,7 +279,8 @@ export async function processEmailQueue(batchSize = 20): Promise<{ sent: number;
 
     try {
       const auditBcc = await getAuditBcc();
-      await deliver(to, message.subject, message.bodyHtml, message.bodyText, auditBcc);
+      const attachments = await materializeAttachments(message.attachmentManifest);
+      await deliver(to, message.subject, message.bodyHtml, message.bodyText, auditBcc, attachments);
       await db
         .update(emailQueue)
         .set({ status: "sent", sentAt: new Date() })
@@ -238,6 +293,7 @@ export async function processEmailQueue(batchSize = 20): Promise<{ sent: number;
         subject: message.subject,
         bodyHtmlEnc: encryptField(message.bodyHtml, "email_log:html"),
         bodyTextEnc: message.bodyText ? encryptField(message.bodyText, "email_log:text") : null,
+        attachmentManifest: message.attachmentManifest,
         status: "sent",
         sentAt: new Date(),
       });

@@ -20,6 +20,7 @@ interface GraphMailMessage {
   text: string | null;
   fromName?: string;
   bcc?: string | null;
+  attachments?: { name: string; contentType: string; contentBytes: string }[];
 }
 
 /** Cached access token with expiry. */
@@ -136,6 +137,14 @@ export async function sendViaGraph(message: GraphMailMessage): Promise<boolean> 
         },
       ],
       ...(message.bcc ? { bccRecipients: [{ emailAddress: { address: message.bcc } }] } : {}),
+      ...(message.attachments?.length ? {
+        attachments: message.attachments.slice(0, 3).map((attachment) => ({
+          "@odata.type": "#microsoft.graph.fileAttachment",
+          name: attachment.name,
+          contentType: attachment.contentType,
+          contentBytes: attachment.contentBytes,
+        })),
+      } : {}),
       from: {
         emailAddress: { address: sender, name: fromName },
       },

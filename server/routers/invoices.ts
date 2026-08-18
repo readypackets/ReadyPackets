@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { recordActivity } from "../observability/audit.js";
 import { assertOrderAccess } from "../services/orders.js";
 import { getOrCreatePaidOrderInvoice, queueCustomerInvoiceEmail, setInvoiceCustomerVisibility } from "../services/invoices.js";
+import { issueInvoiceDownloadTicket } from "../services/invoiceDownloads.js";
 import { adminProcedure, protectedProcedure, router } from "../trpc/trpc.js";
 
 const orderIdInput = z.object({ orderId: z.number().int().positive() });
@@ -17,6 +18,18 @@ export const invoicesRouter = router({
         throw new TRPCError({ code: "NOT_FOUND", message: "This invoice is not currently available in the customer portal." });
       }
       return invoice;
+    }),
+
+  requestPdfDownload: protectedProcedure
+    .input(orderIdInput)
+    .mutation(async ({ ctx, input }) => {
+      await assertOrderAccess(input.orderId, ctx.session.user.id, ctx.session.user.role);
+      const invoice = await getOrCreatePaidOrderInvoice(input.orderId);
+      if (ctx.session.user.role === "customer" && !invoice.customerVisible) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "This invoice is not currently available in the customer portal." });
+      }
+      const ticket = issueInvoiceDownloadTicket(invoice.id, ctx.session.user.id);
+      return { url: `/api/invoices/download/${ticket.token}`, expiresInSeconds: ticket.expiresInSeconds };
     }),
 
   setCustomerVisibility: adminProcedure
