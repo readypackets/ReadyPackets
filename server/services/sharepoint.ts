@@ -1071,6 +1071,21 @@ async function jobAttachPlaceholders(orderId: number, phase: string): Promise<vo
 // Webhook notifications
 // ---------------------------------------------------------------------------
 
+function normalizePhaseStartPayload(payload: unknown): Record<string, string> {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Phase-start webhook payload must be a JSON object.");
+  }
+  const serialized = JSON.stringify(payload);
+  if (!serialized || serialized === "null") {
+    throw new Error("Phase-start webhook payload serialized to null.");
+  }
+  const normalized = JSON.parse(serialized) as unknown;
+  if (!normalized || typeof normalized !== "object" || Array.isArray(normalized)) {
+    throw new Error("Phase-start webhook payload normalization did not produce a JSON object.");
+  }
+  return normalized as Record<string, string>;
+}
+
 export async function jobNotifyWebhooks(orderId: number, phase: string): Promise<void> {
   const orderRows = await db
     .select()
@@ -1112,7 +1127,7 @@ export async function jobNotifyWebhooks(orderId: number, phase: string): Promise
         releaseStatus: order.releaseStatus ?? "",
       })))
     : Promise.resolve(minimalPhasePayload);
-  const resolvedPayload = await payload;
+  const resolvedPayload = normalizePhaseStartPayload(await payload);
 
   const endpoints = await db
     .select()
@@ -1125,16 +1140,32 @@ export async function jobNotifyWebhooks(orderId: number, phase: string): Promise
       continue;
     }
 
-    await db.insert(webhookDeliveries).values({
+    const insert = await db.insert(webhookDeliveries).values({
       endpointId: endpoint.id,
       orderId: order.id,
       orderNumber: order.orderNumber,
       customerName: customer ? displayNameOf(customer) : null,
       eventType: phaseCode,
       payload: resolvedPayload,
-      status: "pending",
+      // Do not make this eligible for the delivery scheduler until the JSON
+      // payload has been read back from MySQL and verified as a real object.
+      status: "preparing",
       attempts: 0,
     });
+    const deliveryId = insertedId(insert);
+    const [saved] = await db
+      .select({ payload: webhookDeliveries.payload })
+      .from(webhookDeliveries)
+      .where(eq(webhookDeliveries.id, deliveryId))
+      .limit(1);
+    if (!saved || saved.payload === null || saved.payload === undefined || typeof saved.payload !== "object" || Array.isArray(saved.payload)) {
+      await db
+        .update(webhookDeliveries)
+        .set({ status: "failed", lastError: "Phase-start webhook payload did not persist as a JSON object; delivery blocked before dispatch." })
+        .where(eq(webhookDeliveries.id, deliveryId));
+      throw new Error(`Phase-start webhook delivery ${deliveryId} payload did not persist as JSON.`);
+    }
+    await db.update(webhookDeliveries).set({ status: "pending" }).where(eq(webhookDeliveries.id, deliveryId));
   }
 }
 
@@ -1160,9 +1191,35 @@ export async function deliverWebhooks(): Promise<void> {
   }
 }
 
+async function rebuildPhaseStartPayload(orderId: number, eventType: "P101" | "P201"): Promise<Record<string, string>> {
+  const [order] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+  if (!order) throw new Error("Order no longer exists for this phase-start webhook delivery.");
+  const customer = await getUserById(order.userId);
+  const customerId = customer?.customerNumber ?? `RP-CUST-${String(order.userId).padStart(6, "0")}`;
+  const minimalPayload = {
+    customer_id: customerId,
+    order_id: order.orderNumber,
+    run_mode: order.runMode ?? "production",
+  };
+  if (eventType === "P201") return minimalPayload;
+
+  const scope = await backfillCanonicalP101Scope(order.id);
+  return buildCanonicalP101Payload({
+    customerId,
+    orderId: order.orderNumber,
+    scope,
+    canonVersion: order.canonVersion ?? "ReadyPackets_Production_v2.0",
+    runMode: order.runMode ?? "production",
+    clientName: customer ? displayNameOf(customer) : "",
+    clientEmail: customer?.email ?? "",
+    releaseStatus: order.releaseStatus ?? "",
+  });
+}
+
 async function deliverWebhook(delivery: {
   id: number;
   endpointId: number;
+  orderId: number | null;
   eventType: string;
   payload: unknown;
   attempts: number;
@@ -1182,12 +1239,37 @@ async function deliverWebhook(delivery: {
   }
 
   const endpoint = endpointRows[0]!;
+  const phaseStartEventType = delivery.eventType === "P101" || delivery.eventType === "P201" ? delivery.eventType : null;
+  const isPhaseStart = phaseStartEventType !== null;
+  if (delivery.payload === null || delivery.payload === undefined) {
+    if (!phaseStartEventType || !delivery.orderId) {
+      await db
+        .update(webhookDeliveries)
+        .set({ status: "failed", lastError: "Webhook payload is missing; delivery blocked before sending a literal null body." })
+        .where(eq(webhookDeliveries.id, delivery.id));
+      logger.error("webhook.delivery.payload_missing", { deliveryId: delivery.id, eventType: delivery.eventType, orderId: delivery.orderId });
+      return;
+    }
+    try {
+      delivery.payload = await rebuildPhaseStartPayload(delivery.orderId, phaseStartEventType);
+      await db.update(webhookDeliveries).set({ payload: delivery.payload }).where(eq(webhookDeliveries.id, delivery.id));
+      logger.warn("webhook.phase_start_payload_rebuilt", { deliveryId: delivery.id, eventType: delivery.eventType, orderId: delivery.orderId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await db
+        .update(webhookDeliveries)
+        .set({ status: "failed", lastError: `Webhook payload recovery failed: ${message}`.slice(0, 500) })
+        .where(eq(webhookDeliveries.id, delivery.id));
+      logger.error("webhook.phase_start_payload_rebuild_failed", { deliveryId: delivery.id, eventType: delivery.eventType, orderId: delivery.orderId, error: message });
+      return;
+    }
+  }
+
   const secret = endpoint.secretEnc
     ? decryptField(endpoint.secretEnc, `webhook:${endpoint.id}`)
     : null;
 
   const body = JSON.stringify(delivery.payload);
-  const isPhaseStart = delivery.eventType === "P101" || delivery.eventType === "P201";
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "X-ReadyPackets-Event": isPhaseStart ? "phase.start" : delivery.eventType,
