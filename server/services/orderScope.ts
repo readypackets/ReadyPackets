@@ -13,8 +13,50 @@ export type CanonicalOrderScopeMode = "single_packet" | "multi_packet_partial";
 export interface CanonicalP101Scope {
   packet: string;
   tier: CanonicalPacketTier | "Mixed";
+  /** Internal compatibility state only; not part of the P101/P5 payload contract. */
   orderScopeMode: CanonicalOrderScopeMode;
   bundleScopeManifest: string;
+}
+
+export type CanonicalP101Payload = {
+  customer_id: string;
+  order_id: string;
+  packet: string;
+  tier: CanonicalPacketTier | "Mixed";
+  canon_version: string;
+  run_mode: string;
+  client_name: string;
+  client_email: string;
+  release_status: string;
+  bundle_scope_manifest: string;
+};
+
+/**
+ * The corrected external P101 contract deliberately has no order_scope_mode.
+ * P5_MASTER_STATE infers scope from packet, tier, and the escaped JSON manifest.
+ */
+export function buildCanonicalP101Payload(input: {
+  customerId: string;
+  orderId: string;
+  scope: CanonicalP101Scope;
+  canonVersion: string;
+  runMode: string;
+  clientName: string;
+  clientEmail: string;
+  releaseStatus: string;
+}): CanonicalP101Payload {
+  return {
+    customer_id: input.customerId,
+    order_id: input.orderId,
+    packet: input.scope.packet,
+    tier: input.scope.tier,
+    canon_version: input.canonVersion,
+    run_mode: input.runMode,
+    client_name: input.clientName,
+    client_email: input.clientEmail,
+    release_status: input.releaseStatus,
+    bundle_scope_manifest: input.scope.bundleScopeManifest,
+  };
 }
 
 const CANONICAL_TIERS: Record<string, CanonicalPacketTier> = {

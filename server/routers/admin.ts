@@ -86,6 +86,33 @@ import { ORDER_STATUSES, PRODUCT_TIERS, USER_ROLES } from "../../shared/domain.j
 import { insertedId } from "../db/result.js";
 import { deriveCanonicalP101ScopeForOrder } from "../services/orderScope.js";
 
+type AppliedWorkflowStage = {
+  key: string;
+  label: string;
+  order: number;
+  capabilities: string[];
+};
+
+function normalizeAppliedWorkflowStages(rawStages: unknown): AppliedWorkflowStage[] {
+  if (!Array.isArray(rawStages)) return [];
+  return rawStages
+    .filter((stage): stage is { key?: unknown; label?: unknown; order?: unknown; capabilities?: unknown } => Boolean(stage) && typeof stage === "object" && typeof stage.key === "string")
+    .map((stage, index) => ({
+      key: stage.key as string,
+      label: typeof stage.label === "string" && stage.label.trim() ? stage.label : (stage.key as string).replaceAll("_", " "),
+      order: typeof stage.order === "number" ? stage.order : index + 1,
+      capabilities: Array.isArray(stage.capabilities) ? stage.capabilities.filter((capability): capability is string => typeof capability === "string") : [],
+    }))
+    .sort((left, right) => left.order - right.order || left.key.localeCompare(right.key));
+}
+
+/** Matches historic Phase 1/2 lock keys to the stable keys used by current workflows. */
+function equivalentPhaseKeys(phaseKey: string): string[] {
+  if (phaseKey === "phase_1" || phaseKey === "phase_1_intake") return ["phase_1", "phase_1_intake"];
+  if (phaseKey === "phase_2" || phaseKey === "phase_2_synthesis") return ["phase_2", "phase_2_synthesis"];
+  return [phaseKey];
+}
+
 const workflowStageActionsSchema = z.object({
   emailTemplateKey: z.string().trim().min(1).max(64).optional(),
   adminAlert: z.object({
@@ -599,7 +626,6 @@ export const adminRouter = router({
           internalNotesText: decryptField(order.internalNotesEnc, `order_internal:${order.id}`),
           p101Packet: canonicalP101Scope.packet,
           p101Tier: canonicalP101Scope.tier,
-          orderScopeMode: canonicalP101Scope.orderScopeMode,
           bundleScopeManifest: canonicalP101Scope.bundleScopeManifest,
         },
         customer: customer
@@ -1405,9 +1431,57 @@ export const adminRouter = router({
   phaseLocks: staffProcedure
     .input(z.object({ orderId: z.number().int().positive(), includeUnlocked: z.boolean().default(false) }))
     .query(async ({ input }) => {
-      const conditions = [eq(orderPhaseLocks.orderId, input.orderId)];
-      if (!input.includeUnlocked) conditions.push(isNull(orderPhaseLocks.unlockedAt));
-      return db.select().from(orderPhaseLocks).where(and(...conditions)).orderBy(desc(orderPhaseLocks.lockedAt));
+      const [order] = await db
+        .select({ workflowId: orders.workflowId })
+        .from(orders)
+        .where(and(eq(orders.id, input.orderId), isNull(orders.deletedAt)))
+        .limit(1);
+      if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Order not found." });
+
+      const [workflow] = order.workflowId
+        ? await db.select({ stages: orderWorkflows.stages }).from(orderWorkflows).where(eq(orderWorkflows.id, order.workflowId)).limit(1)
+        : [];
+      const stages = normalizeAppliedWorkflowStages(workflow?.stages);
+      const locks = await db
+        .select()
+        .from(orderPhaseLocks)
+        .where(eq(orderPhaseLocks.orderId, input.orderId))
+        .orderBy(desc(orderPhaseLocks.lockedAt));
+
+      const consumedLockIds = new Set<number>();
+      const rows = stages.map((stage) => {
+        const aliases = equivalentPhaseKeys(stage.key);
+        const lock = locks.find((candidate) => aliases.includes(candidate.phaseKey) && !consumedLockIds.has(candidate.id));
+        if (lock) consumedLockIds.add(lock.id);
+        return {
+          phaseKey: stage.key,
+          label: stage.label,
+          stageOrder: stage.order,
+          capabilities: stage.capabilities,
+          rawPhaseKey: lock?.phaseKey ?? null,
+          lock,
+          active: Boolean(lock && !lock.unlockedAt),
+          appliedWorkflow: true,
+        };
+      });
+
+      // Retain historical lock records when a workflow was reassigned or a stage
+      // was removed; an administrator can still reopen an active retired lock.
+      for (const lock of locks) {
+        if (consumedLockIds.has(lock.id)) continue;
+        rows.push({
+          phaseKey: lock.phaseKey,
+          label: lock.phaseKey.replaceAll("_", " "),
+          stageOrder: 10_000 + lock.id,
+          capabilities: [],
+          rawPhaseKey: lock.phaseKey,
+          lock,
+          active: !lock.unlockedAt,
+          appliedWorkflow: false,
+        });
+      }
+
+      return input.includeUnlocked ? rows : rows.filter((row) => row.active);
     }),
 
   reviewWorkflowPhase: staffProcedure
@@ -1416,7 +1490,8 @@ export const adminRouter = router({
       const lockRows = await db
         .select({ id: orderPhaseLocks.id })
         .from(orderPhaseLocks)
-        .where(and(eq(orderPhaseLocks.orderId, input.orderId), eq(orderPhaseLocks.phaseKey, input.phaseKey), isNull(orderPhaseLocks.unlockedAt), isNull(orderPhaseLocks.reviewedAt)))
+        .where(and(eq(orderPhaseLocks.orderId, input.orderId), inArray(orderPhaseLocks.phaseKey, equivalentPhaseKeys(input.phaseKey)), isNull(orderPhaseLocks.unlockedAt), isNull(orderPhaseLocks.reviewedAt)))
+        .orderBy(desc(orderPhaseLocks.lockedAt))
         .limit(1);
       const lock = lockRows[0];
       if (!lock) throw new TRPCError({ code: "NOT_FOUND", message: "An unreviewed submitted workflow phase was not found." });
@@ -1443,14 +1518,15 @@ export const adminRouter = router({
     }))
     .mutation(async ({ ctx, input }) => {
       const lockRows = await db
-        .select({ id: orderPhaseLocks.id })
+        .select({ id: orderPhaseLocks.id, phaseKey: orderPhaseLocks.phaseKey })
         .from(orderPhaseLocks)
-        .where(and(eq(orderPhaseLocks.orderId, input.orderId), eq(orderPhaseLocks.phaseKey, input.phaseKey), isNull(orderPhaseLocks.unlockedAt)))
+        .where(and(eq(orderPhaseLocks.orderId, input.orderId), inArray(orderPhaseLocks.phaseKey, equivalentPhaseKeys(input.phaseKey)), isNull(orderPhaseLocks.unlockedAt)))
+        .orderBy(desc(orderPhaseLocks.lockedAt))
         .limit(1);
       const lock = lockRows[0];
       if (!lock) throw new TRPCError({ code: "NOT_FOUND", message: "An active lock for this workflow phase was not found." });
       await db.update(orderPhaseLocks).set({ unlockedAt: new Date(), unlockedByUserId: ctx.session.user.id, unlockReason: input.reason }).where(eq(orderPhaseLocks.id, lock.id));
-      if (input.phaseKey === "phase_1") {
+      if (lock.phaseKey === "phase_1" || lock.phaseKey === "phase_1_intake") {
         await db.update(intakeSubmissions).set({ status: "draft", submittedAt: null }).where(eq(intakeSubmissions.orderId, input.orderId));
       }
       void recordActivity({

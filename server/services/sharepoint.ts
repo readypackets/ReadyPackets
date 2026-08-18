@@ -40,7 +40,7 @@ import { buildOrderFileName } from "./fileNaming.js";
 import { getObjectBuffer } from "./storage.js";
 import { transcodeWebmToMp3ForSharePoint } from "./audioTranscode.js";
 import { getDelegatedSharePointStatus, getDelegatedSharePointRestToken, recordDelegatedSharePointError } from "./sharepointDelegatedAuth.js";
-import { backfillCanonicalP101Scope } from "./orderScope.js";
+import { backfillCanonicalP101Scope, buildCanonicalP101Payload } from "./orderScope.js";
 import type { OrderStatus } from "../../shared/domain.js";
 
 // ---------------------------------------------------------------------------
@@ -1095,22 +1095,21 @@ export async function jobNotifyWebhooks(orderId: number, phase: string): Promise
     run_mode: order.runMode ?? "production",
   };
 
-  // P101 is the canonical metadata writer. Derive the complete scope from the
-  // immutable purchased order items and persist it before delivery so no later
-  // phase can receive contradictory packet/tier/scope/manifest values. P201 is
-  // deliberately minimal and reads canonical P101 state downstream.
+  // P101 is the canonical metadata writer. Derive packet, tier, and manifest
+  // from immutable purchased items before delivery so no downstream phase can
+  // receive contradictory routing data. The receiving master state has no
+  // order_scope_mode column; scope is inferred from these canonical fields.
+  // P201 remains deliberately minimal and reads P101 state downstream.
   const payload = isP101
-    ? (() => backfillCanonicalP101Scope(order.id).then((scope) => ({
-        ...minimalPhasePayload,
-        packet: scope.packet,
-        tier: scope.tier,
-        canon_version: order.canonVersion ?? "ReadyPackets_Production_v2.0",
-        client_name: customer ? displayNameOf(customer) : "",
-        client_email: customer?.email ?? "",
-        release_status: order.releaseStatus ?? "",
-        order_scope_mode: scope.orderScopeMode,
-        // Intentionally remains an escaped JSON string, per the receiving contract.
-        bundle_scope_manifest: scope.bundleScopeManifest,
+    ? (() => backfillCanonicalP101Scope(order.id).then((scope) => buildCanonicalP101Payload({
+        customerId,
+        orderId: order.orderNumber,
+        scope,
+        canonVersion: order.canonVersion ?? "ReadyPackets_Production_v2.0",
+        runMode: order.runMode ?? "production",
+        clientName: customer ? displayNameOf(customer) : "",
+        clientEmail: customer?.email ?? "",
+        releaseStatus: order.releaseStatus ?? "",
       })))
     : Promise.resolve(minimalPhasePayload);
   const resolvedPayload = await payload;

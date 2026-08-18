@@ -65,7 +65,6 @@ function CreateOrderModal({ open, onClose }: { open: boolean; onClose: () => voi
   const [canonVersion, setCanonVersion] = useState("");
   const [runMode, setRunMode] = useState("production");
   const [releaseStatus, setReleaseStatus] = useState("");
-  const [orderScopeMode, setOrderScopeMode] = useState("");
   const [bundleScopeManifest, setBundleScopeManifest] = useState("");
   const [paymentRequirement, setPaymentRequirement] = useState<"required" | "waived" | "test">("required");
   const [manualPrice, setManualPrice] = useState("");
@@ -117,7 +116,6 @@ function CreateOrderModal({ open, onClose }: { open: boolean; onClose: () => voi
       canonVersion: canonVersion.trim() || undefined,
       runMode: runMode.trim() || undefined,
       releaseStatus: releaseStatus.trim() || undefined,
-      orderScopeMode: orderScopeMode.trim() || undefined,
       bundleScopeManifest: bundleScopeManifest.trim() || undefined,
       paymentRequirement,
       manualPriceCents,
@@ -198,12 +196,6 @@ function CreateOrderModal({ open, onClose }: { open: boolean; onClose: () => voi
               placeholder="e.g. production"
               value={runMode}
               onChange={(e) => setRunMode(e.target.value)}
-            />
-            <Input
-              label="Order scope mode"
-              placeholder="e.g. multi_packet_partial"
-              value={orderScopeMode}
-              onChange={(e) => setOrderScopeMode(e.target.value)}
             />
             <Input
               label="Release status"
@@ -1047,7 +1039,7 @@ export function AdminOrderDetailPage() {
           { id: "notes", label: `Notes (${notes.length})` },
                     { id: "questions", label: `Questions (${questions.length})` },
           { id: "files", label: `Files (${attachments.length})` },
-          { id: "phase-locks", label: `Phase locks (${(phaseLocks.data ?? []).filter((lock) => !lock.unlockedAt).length})` },
+          { id: "phase-locks", label: `Phase locks (${(phaseLocks.data ?? []).filter((stage) => stage.active).length})` },
           { id: "automation", label: "Automation" },
           { id: "sharepoint-sync", label: `SharePoint sync (${sharePointSync.data?.total ?? 0})` },
           ...(["paid", "partially_refunded"].includes(order.paymentStatus) ? [{ id: "invoice", label: "Invoice" }] : []),
@@ -1523,8 +1515,8 @@ export function AdminOrderDetailPage() {
 
         {tab === "phase-locks" ? (
           <Card>
-            <CardHeader title="Workflow phase review" description="Customer submissions remain locked after submission. Mark a phase reviewed to clear the staff review queue; unlock only when the customer must make changes." />
-            {(phaseLocks.data ?? []).length === 0 ? <p className="mt-4 text-sm text-muted">No workflow phases have been submitted yet.</p> : <div className="mt-4 space-y-3">{(phaseLocks.data ?? []).map((lock) => <div key={lock.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line p-4"><div><p className="font-medium text-ink">{lock.phaseKey.replaceAll("_", " ")}</p><p className="mt-1 text-xs text-muted">Submitted {formatDateTime(lock.lockedAt)}{lock.unlockedAt ? ` · Unlocked ${formatDateTime(lock.unlockedAt)}` : " · Customer changes are locked"}</p>{lock.reviewedAt ? <p className="mt-1 text-xs text-success">Reviewed {formatDateTime(lock.reviewedAt)}</p> : !lock.unlockedAt ? <p className="mt-1 text-xs font-medium text-warning">Awaiting staff review</p> : null}{lock.unlockReason ? <p className="mt-1 text-xs text-muted">Unlock reason: {lock.unlockReason}</p> : null}</div>{!lock.unlockedAt ? <div className="flex flex-wrap gap-2">{!lock.reviewedAt ? <Button variant="primary" size="sm" busy={reviewWorkflowPhase.isPending} onClick={() => reviewWorkflowPhase.mutate({ orderId, phaseKey: lock.phaseKey })}>Mark reviewed</Button> : <Badge tone="success">Reviewed</Badge>}{session.isAdmin ? <Button variant="danger" size="sm" onClick={() => { setUnlockTarget({ phaseKey: lock.phaseKey }); setUnlockReason(""); setUnlockConfirmation(""); }}>Unlock phase</Button> : null}</div> : <Badge tone="success">Unlocked</Badge>}</div>)}</div>}
+            <CardHeader title="Workflow phase review" description="Every phase in the workflow assigned to this order is listed below. Submitted customer phases are locked until an administrator unlocks the matching stage." />
+            {(phaseLocks.data ?? []).length === 0 ? <p className="mt-4 text-sm text-muted">This order has no assigned workflow phases or historical phase locks.</p> : <div className="mt-4 space-y-3">{(phaseLocks.data ?? []).map((stage) => { const lock = stage.lock; const customerSubmissionStage = stage.capabilities.length > 0; return <div key={`${stage.phaseKey}-${stage.rawPhaseKey ?? "workflow"}`} className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4 ${stage.active ? "border-warning/40 bg-warning/5" : "border-line"}`}><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-ink">{stage.label}</p>{stage.appliedWorkflow ? <Badge tone="teal">Workflow step {stage.stageOrder}</Badge> : <Badge tone="warning">Historical lock</Badge>}</div>{lock ? <><p className="mt-1 text-xs text-muted">Submitted {formatDateTime(lock.lockedAt)}{stage.rawPhaseKey && stage.rawPhaseKey !== stage.phaseKey ? ` · stored as ${stage.rawPhaseKey}` : ""}{lock.unlockedAt ? ` · Unlocked ${formatDateTime(lock.unlockedAt)}` : " · Customer changes are locked"}</p>{lock.reviewedAt ? <p className="mt-1 text-xs text-success">Reviewed {formatDateTime(lock.reviewedAt)}</p> : stage.active ? <p className="mt-1 text-xs font-medium text-warning">Awaiting staff review</p> : null}{lock.unlockReason ? <p className="mt-1 text-xs text-muted">Unlock reason: {lock.unlockReason}</p> : null}</> : <p className="mt-1 text-xs text-muted">{customerSubmissionStage ? "Not submitted by the customer yet." : "No customer submission is required for this workflow step."}</p>}</div>{stage.active && lock ? <div className="flex flex-wrap gap-2">{!lock.reviewedAt ? <Button variant="primary" size="sm" busy={reviewWorkflowPhase.isPending} onClick={() => reviewWorkflowPhase.mutate({ orderId, phaseKey: stage.phaseKey })}>Mark reviewed</Button> : <Badge tone="success">Reviewed</Badge>}{session.isAdmin ? <Button variant="danger" size="sm" onClick={() => { setUnlockTarget({ phaseKey: stage.phaseKey }); setUnlockReason(""); setUnlockConfirmation(""); }}>Unlock phase</Button> : null}</div> : lock?.unlockedAt ? <Badge tone="success">Unlocked</Badge> : <Badge tone="neutral">Not locked</Badge>}</div>; })}</div>}
           </Card>
         ) : null}
 
@@ -1697,7 +1689,6 @@ function OrderAutomationTab({ order, customer }: { order: any; customer: any }) 
     client_name: customer?.name ?? "",
     client_email: customer?.email ?? "",
     release_status: order.releaseStatus ?? "",
-    order_scope_mode: order.orderScopeMode ?? "multi_packet_partial",
     bundle_scope_manifest: order.bundleScopeManifest ?? "{}",
   };
 

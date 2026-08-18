@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildCanonicalP101Payload,
   deriveCanonicalP101Scope,
   resolveBundleScopeManifest,
 } from "../server/services/orderScope.js";
@@ -27,6 +28,32 @@ describe("P101 canonical order scope", () => {
       orderScopeMode: "multi_packet_partial",
       bundleScopeManifest: '{"packet_1":"Standard","packet_2":"Basic"}',
     });
+  });
+
+  it("builds the corrected external P101 payload without order_scope_mode", () => {
+    const payload = buildCanonicalP101Payload({
+      customerId: "RP-CUST-000008",
+      orderId: "RP-C000008-2608-5E4A2D",
+      scope: deriveCanonicalP101Scope([{ packetGroupId: 4, tier: "premium" }], groupNumbers),
+      canonVersion: "ReadyPackets_Production_v2.0",
+      runMode: "production",
+      clientName: "John Wick",
+      clientEmail: "test2@readypackets.com",
+      releaseStatus: "",
+    });
+    expect(payload).toEqual({
+      customer_id: "RP-CUST-000008",
+      order_id: "RP-C000008-2608-5E4A2D",
+      packet: "1",
+      tier: "Premium",
+      canon_version: "ReadyPackets_Production_v2.0",
+      run_mode: "production",
+      client_name: "John Wick",
+      client_email: "test2@readypackets.com",
+      release_status: "",
+      bundle_scope_manifest: '{"packet_1":"Premium"}',
+    });
+    expect(payload).not.toHaveProperty("order_scope_mode");
   });
 
   it("rebuilds legacy or administrator-supplied contradictions from actual purchased selections", () => {
