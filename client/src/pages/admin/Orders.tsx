@@ -1683,8 +1683,8 @@ function OrderAutomationTab({ order, customer }: { order: any; customer: any }) 
   const p101Payload = {
     customer_id: customer?.customerNumber ?? `RP-CUST-${String(order.userId).padStart(6, '0')}`,
     order_id: order.orderNumber,
-    packet: "7", // Hardcoded for this example per PDF, normally derived from items
-    tier: "Mixed",
+    packet: order.p101Packet ?? "7",
+    tier: order.p101Tier ?? "Mixed",
     canon_version: order.canonVersion ?? "ReadyPackets_Production_v2.0",
     run_mode: order.runMode ?? "production",
     client_name: customer?.name ?? "",

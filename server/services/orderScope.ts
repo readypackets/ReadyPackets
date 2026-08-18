@@ -7,45 +7,76 @@ export interface PacketTierSelection {
   tier: string;
 }
 
-function normaliseManifestObject(value: unknown): Record<string, string> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const entries = Object.entries(value);
-  if (entries.length === 0) return null;
-  const output: Record<string, string> = {};
-  for (const [key, tier] of entries) {
-    if (!/^packet_[1-9]\d*$/.test(key) || typeof tier !== "string" || !tier.trim()) return null;
-    output[key] = tier.trim();
+export type CanonicalPacketTier = "Basic" | "Standard" | "Premium";
+export type CanonicalOrderScopeMode = "single_packet" | "multi_packet_partial";
+
+export interface CanonicalP101Scope {
+  packet: string;
+  tier: CanonicalPacketTier | "Mixed";
+  orderScopeMode: CanonicalOrderScopeMode;
+  bundleScopeManifest: string;
+}
+
+const CANONICAL_TIERS: Record<string, CanonicalPacketTier> = {
+  basic: "Basic",
+  standard: "Standard",
+  premium: "Premium",
+};
+
+function canonicalTier(value: string): CanonicalPacketTier {
+  const normalized = CANONICAL_TIERS[value.trim().toLowerCase()];
+  if (!normalized) {
+    throw new Error(`Order scope contains unsupported tier "${value}". P101 accepts only Basic, Standard, or Premium.`);
   }
-  return output;
+  return normalized;
 }
 
 /**
- * Preserve a valid, non-empty administrator-supplied manifest. Empty, malformed,
- * or absent values are deliberately replaced by a deterministic representation of
- * the packet groups and tiers actually purchased with the order.
+ * Derive the P101 routing contract from the immutable purchased order items.
+ * Stored administrator input is deliberately not authoritative here: P101 must
+ * never emit a packet/tier/scope/manifest contradiction.
  */
-export function resolveBundleScopeManifest(
-  storedManifest: string | null | undefined,
+export function deriveCanonicalP101Scope(
   selections: PacketTierSelection[],
   groupNumbers: Map<number, number>,
-): string {
-  if (storedManifest?.trim()) {
-    try {
-      const explicit = normaliseManifestObject(JSON.parse(storedManifest));
-      if (explicit) return JSON.stringify(explicit);
-    } catch {
-      // Fall through to the durable order-item source of truth.
-    }
+): CanonicalP101Scope {
+  const selected = [...selections]
+    .map((selection) => {
+      const packetNumber = groupNumbers.get(selection.packetGroupId);
+      if (!packetNumber || !Number.isInteger(packetNumber) || packetNumber < 1) {
+        throw new Error("Order scope is missing a valid packet group number required for P101.");
+      }
+      return { packetNumber, tier: canonicalTier(selection.tier) };
+    })
+    .sort((left, right) => left.packetNumber - right.packetNumber);
+
+  if (selected.length === 0) {
+    throw new Error("P101 cannot start because this order has no purchased packet selections.");
+  }
+  if (new Set(selected.map((selection) => selection.packetNumber)).size !== selected.length) {
+    throw new Error("P101 cannot start because the order contains more than one tier for the same packet.");
   }
 
-  const output: Record<string, string> = {};
-  for (const selection of [...selections].sort((left, right) => (groupNumbers.get(left.packetGroupId) ?? Number.MAX_SAFE_INTEGER) - (groupNumbers.get(right.packetGroupId) ?? Number.MAX_SAFE_INTEGER))) {
-    const groupNumber = groupNumbers.get(selection.packetGroupId);
-    const tier = selection.tier.trim();
-    if (!groupNumber || !tier) continue;
-    output[`packet_${groupNumber}`] = tier;
+  const manifest: Record<string, CanonicalPacketTier> = {};
+  for (const selection of selected) manifest[`packet_${selection.packetNumber}`] = selection.tier;
+  const bundleScopeManifest = JSON.stringify(manifest);
+
+  if (selected.length === 1) {
+    const only = selected[0]!;
+    return {
+      packet: String(only.packetNumber),
+      tier: only.tier,
+      orderScopeMode: "single_packet",
+      bundleScopeManifest,
+    };
   }
-  return JSON.stringify(output);
+
+  return {
+    packet: "7",
+    tier: "Mixed",
+    orderScopeMode: "multi_packet_partial",
+    bundleScopeManifest,
+  };
 }
 
 export async function getPacketGroupNumbers(groupIds: number[]): Promise<Map<number, number>> {
@@ -58,27 +89,46 @@ export async function getPacketGroupNumbers(groupIds: number[]): Promise<Map<num
   return new Map(rows.map((row) => [row.id, row.groupNumber]));
 }
 
-export async function deriveBundleScopeManifestForOrder(orderId: number, storedManifest?: string | null): Promise<string> {
+export async function deriveCanonicalP101ScopeForOrder(orderId: number): Promise<CanonicalP101Scope> {
   const rows = await db
     .select({ packetGroupId: orderItems.packetGroupId, tier: orderItems.tier })
     .from(orderItems)
     .where(eq(orderItems.orderId, orderId));
   const groupNumbers = await getPacketGroupNumbers(rows.map((row) => row.packetGroupId));
-  return resolveBundleScopeManifest(storedManifest, rows, groupNumbers);
+  return deriveCanonicalP101Scope(rows, groupNumbers);
 }
 
-/** Backfill a missing legacy manifest only when an order has an actual selection-derived scope. */
-export async function backfillBundleScopeManifest(orderId: number, storedManifest?: string | null): Promise<string> {
-  const manifest = await deriveBundleScopeManifestForOrder(orderId, storedManifest);
-  if (manifest !== "{}" && manifest !== storedManifest) {
-    await db
-      .update(orders)
-      .set({ bundleScopeManifest: manifest })
-      .where(and(eq(orders.id, orderId), isNull(orders.deletedAt)));
-  }
-  return manifest;
+/** Compatibility alias used by non-routing display paths. */
+export async function deriveBundleScopeManifestForOrder(orderId: number): Promise<string> {
+  return (await deriveCanonicalP101ScopeForOrder(orderId)).bundleScopeManifest;
 }
 
-export function defaultOrderScopeMode(selections: PacketTierSelection[]): string {
+/**
+ * Persist canonical scope values for legacy orders before P101 delivery. This
+ * makes P101 the durable metadata writer required by the production contract.
+ */
+export async function backfillCanonicalP101Scope(orderId: number): Promise<CanonicalP101Scope> {
+  const scope = await deriveCanonicalP101ScopeForOrder(orderId);
+  await db
+    .update(orders)
+    .set({
+      orderScopeMode: scope.orderScopeMode,
+      bundleScopeManifest: scope.bundleScopeManifest,
+    })
+    .where(and(eq(orders.id, orderId), isNull(orders.deletedAt)));
+  return scope;
+}
+
+/** Compatibility helper retained for callers that only need canonical scope mode. */
+export function defaultOrderScopeMode(selections: PacketTierSelection[]): CanonicalOrderScopeMode {
   return selections.length > 1 ? "multi_packet_partial" : "single_packet";
+}
+
+/** Compatibility helper retained for order creation callers. Stored input is ignored for canonical P101 safety. */
+export function resolveBundleScopeManifest(
+  _storedManifest: string | null | undefined,
+  selections: PacketTierSelection[],
+  groupNumbers: Map<number, number>,
+): string {
+  return deriveCanonicalP101Scope(selections, groupNumbers).bundleScopeManifest;
 }

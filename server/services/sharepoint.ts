@@ -40,7 +40,7 @@ import { buildOrderFileName } from "./fileNaming.js";
 import { getObjectBuffer } from "./storage.js";
 import { transcodeWebmToMp3ForSharePoint } from "./audioTranscode.js";
 import { getDelegatedSharePointStatus, getDelegatedSharePointRestToken, recordDelegatedSharePointError } from "./sharepointDelegatedAuth.js";
-import { backfillBundleScopeManifest } from "./orderScope.js";
+import { backfillCanonicalP101Scope } from "./orderScope.js";
 import type { OrderStatus } from "../../shared/domain.js";
 
 // ---------------------------------------------------------------------------
@@ -1089,30 +1089,31 @@ export async function jobNotifyWebhooks(orderId: number, phase: string): Promise
   if (!isP101 && !isP201) return;
 
   const phaseCode = isP101 ? "P101" : "P201";
-  // Older orders did not persist a manifest. Derive it from immutable order items
-  // and persist a non-empty result before P101 is previewed or delivered.
-  const bundleScopeManifest = await backfillBundleScopeManifest(order.id, order.bundleScopeManifest);
-  const p101Payload = {
+  const minimalPhasePayload = {
     customer_id: customerId,
     order_id: order.orderNumber,
-    packet: "7",
-    tier: "Mixed",
-    canon_version: order.canonVersion ?? "ReadyPackets_Production_v2.0",
     run_mode: order.runMode ?? "production",
-    client_name: customer ? displayNameOf(customer) : "",
-    client_email: customer?.email ?? "",
-    release_status: order.releaseStatus ?? "",
-    order_scope_mode: order.orderScopeMode ?? "multi_packet_partial",
-    // Intentionally remains an escaped JSON string, per the receiving scenario contract.
-    bundle_scope_manifest: bundleScopeManifest,
   };
+
+  // P101 is the canonical metadata writer. Derive the complete scope from the
+  // immutable purchased order items and persist it before delivery so no later
+  // phase can receive contradictory packet/tier/scope/manifest values. P201 is
+  // deliberately minimal and reads canonical P101 state downstream.
   const payload = isP101
-    ? p101Payload
-    : {
-        customer_id: p101Payload.customer_id,
-        order_id: p101Payload.order_id,
-        run_mode: p101Payload.run_mode,
-      };
+    ? (() => backfillCanonicalP101Scope(order.id).then((scope) => ({
+        ...minimalPhasePayload,
+        packet: scope.packet,
+        tier: scope.tier,
+        canon_version: order.canonVersion ?? "ReadyPackets_Production_v2.0",
+        client_name: customer ? displayNameOf(customer) : "",
+        client_email: customer?.email ?? "",
+        release_status: order.releaseStatus ?? "",
+        order_scope_mode: scope.orderScopeMode,
+        // Intentionally remains an escaped JSON string, per the receiving contract.
+        bundle_scope_manifest: scope.bundleScopeManifest,
+      })))
+    : Promise.resolve(minimalPhasePayload);
+  const resolvedPayload = await payload;
 
   const endpoints = await db
     .select()
@@ -1131,7 +1132,7 @@ export async function jobNotifyWebhooks(orderId: number, phase: string): Promise
       orderNumber: order.orderNumber,
       customerName: customer ? displayNameOf(customer) : null,
       eventType: phaseCode,
-      payload,
+      payload: resolvedPayload,
       status: "pending",
       attempts: 0,
     });
