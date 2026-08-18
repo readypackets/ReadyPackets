@@ -3092,3 +3092,29 @@ The same audit found historical link-variable naming differences across template
 - Public `reset-password`, `verify-email`, magic-login, and portal destinations each returned HTTP 200 with representative non-sensitive probe parameters.
 - Server SHA-256: `4f046ac619e048409b614aa07f7651cb06e04bc89832068cbb99709fac174ff3`.
 - Production health returned `{"status":"ok"}`. Rollback server copy: `/opt/readypackets/rollback-20260818191909-email-links/server.js`.
+
+
+## 2026-08-18 — Branded prospective platform-partner MNDA draft
+
+### User request
+
+The user asked for an NDA for a potential partner who may work on building the ReadyPackets platform, branded with the company branding.
+
+### Drafting basis and deliverable
+
+- Reviewed the existing ReadyPackets mutual NDA, which supplied the existing Maryland governing-law and Baltimore County venue choices, the two-year baseline, and the company’s confidentiality/IP position.
+- Prepared a refreshed *Mutual Non-Disclosure Agreement — Prospective Platform Development Partner* tailored to the contemplated platform-development evaluation while preserving a mutual structure.
+- The document identifies Ready Packets Consulting LLC d/b/a ReadyPackets and leaves the partner’s legal name, entity, address, effective date, and agreement reference as clear completion fields.
+- Added platform-specific confidential-information coverage: non-public architecture, source code, repositories, workflows, security assessments, customer data, credentials, keys, certificates, and related derivatives.
+- Added security and access obligations: authorized access only, approved methods, no credential sharing or public-repository storage, a twenty-four-hour suspected/actual incident notice requirement, cooperation, and data-use restrictions.
+- Clarified that no license, production access, services commitment, payment obligation, intellectual-property assignment, or work authorization arises from the NDA alone; any such terms require a separate signed agreement.
+- Included return/destruction, compelled disclosure, exclusions, equitable relief, assignment, electronic-signature, term/survival, no-warranty, and signature provisions.
+- Added a ReadyPackets-branded cover page using the document logo and navy/teal/gold palette. Every draft page is labeled **DRAFT — FOR ATTORNEY REVIEW BEFORE SIGNATURE** or carries the attorney-review footer.
+
+### Validation and repository record
+
+- Generated a five-page branded PDF with Typst strict compilation: PASS, no warnings.
+- Deterministic PDF verification using the text-document profile: PASS (6 checks; 0 warnings/failures/unknowns).
+- Standard visual review rendered all five pages; the cover, section hierarchy, flow, signature blocks, and branded footer were legible and balanced.
+- The PDF and editable Typst source are archived in private GitHub under `docs/legal/ReadyPackets_Prospective_Partner_MNDA_Draft.pdf` and `.typ`.
+- This is a working legal draft, not legal advice, and must be reviewed by qualified counsel before signature or reliance.
