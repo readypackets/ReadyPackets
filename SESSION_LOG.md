@@ -3061,3 +3061,34 @@ The user requested that customers and administrators be able to rename orders af
 - Production server SHA-256: `48a873e74f5fbbbdce319d69456bbee9896301fe1f9da46e0713076ce8bcdadc`.
 - The first post-restart localhost check ran during the normal startup grace period; service status/logs then confirmed the application listening on `127.0.0.1:3000`, and the public health endpoint returned `{"status":"ok"}`.
 - Retained rollback assets: `/opt/readypackets/rollback-20260818190039-order-invoice` and `/opt/readypackets/client/dist.previous-20260818190039-order-invoice`.
+
+
+## 2026-08-18 — Outbound email-link audit and repair
+
+### User request
+
+The user reported that links in received emails did not work and requested that all outbound email links be checked. The screenshot showed a ReadyPackets password-reset message with a visually normal **Choose a new password** button.
+
+### Confirmed root cause
+
+The production `APP_URL` was already correctly set to `https://myportal.readypackets.com`, and the public reset route returned HTTP 200. A redacted inspection of the encrypted sent-email log then showed that the password-reset message’s actual `href` was empty. The production `password_reset` template uses `{{resetUrl}}`, whereas both ordinary and administrator password-reset call sites had supplied only the older `link` variable. The generic renderer deliberately converted an absent placeholder to an empty string, causing an email button with `href=""` while leaving no unresolved placeholder visible in the final markup.
+
+The same audit found historical link-variable naming differences across templates, including `resetUrl`, `verifyUrl`, `magic_link`, and `portalUrl`. Existing order, ticket, and portal-action templates use `portalUrl` where applicable.
+
+### Correction
+
+1. Added centralized link-variable normalization in `server/services/email.ts`. It maps compatible action-link aliases so legacy callers and stored templates receive the same correctly formed public URL. A canonical public portal URL is supplied for portal-action templates that do not provide their own destination.
+2. Added centralized fail-closed email hyperlink validation before any message enters the delivery queue. An email is rejected if an `href` is empty, unresolved, malformed, or uses an unsafe protocol. HTTPS URLs and mailto links are permitted; loopback HTTP exists only for development use.
+3. Updated password-reset and verification call sites to provide the exact canonical `resetUrl` and `verifyUrl` variables in addition to their existing compatibility values.
+4. Added `tests/emailLinks.test.ts`, covering password-reset/verification alias rendering, escaped query separators, and rejection of unresolved, empty, and JavaScript URLs.
+5. Kept the email-link protection server-side and self-hosted. No third-party link wrapper, redirect service, or Manus dependency was introduced.
+
+### Verification and deployment
+
+- Type checking passed.
+- Focused tests passed: `tests/emailLinks.test.ts` (3), `tests/invoicePdf.test.ts` (1), and `tests/orderScope.test.ts` (6): 10 tests total.
+- A fresh public password-reset request was sent to `hera@orbtech.org` after deployment.
+- A temporary redacted diagnostic inspected the newest encrypted email-log record without exposing the token, recipient data, or message body. The delivered button contained `https://myportal.readypackets.com/reset-password?token=<redacted>` and no unresolved placeholders. The prior defective message was confirmed to contain an empty href.
+- Public `reset-password`, `verify-email`, magic-login, and portal destinations each returned HTTP 200 with representative non-sensitive probe parameters.
+- Server SHA-256: `4f046ac619e048409b614aa07f7651cb06e04bc89832068cbb99709fac174ff3`.
+- Production health returned `{"status":"ok"}`. Rollback server copy: `/opt/readypackets/rollback-20260818191909-email-links/server.js`.

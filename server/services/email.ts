@@ -60,6 +60,58 @@ export function renderTemplate(
   });
 }
 
+/**
+ * Normalise historical template variable names before rendering. Earlier seeded
+ * templates use `resetUrl` and `verifyUrl`, while older callers supplied `link`.
+ * Keeping aliases in one place makes existing templates and fallback templates
+ * compatible without risking a literal empty `href` in a sent message.
+ */
+export function normalizeEmailTemplateVariables(
+  variables: Record<string, string | number | null | undefined>,
+): Record<string, string | number | null | undefined> {
+  const normalized = { ...variables };
+  const value = (key: string): string | null => {
+    const candidate = normalized[key];
+    return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
+  };
+  const suppliedActionUrl = value("link") ?? value("resetUrl") ?? value("verifyUrl") ?? value("magic_link") ?? value("magicLink");
+  if (suppliedActionUrl) {
+    normalized.link ??= suppliedActionUrl;
+    normalized.resetUrl ??= suppliedActionUrl;
+    normalized.verifyUrl ??= suppliedActionUrl;
+    normalized.magic_link ??= suppliedActionUrl;
+    normalized.magicLink ??= suppliedActionUrl;
+  }
+  // General-purpose system and automation emails that deliberately expose a
+  // portal action always receive a canonical public portal fallback.
+  normalized.portalUrl ??= new URL("/portal", env.appUrl).toString();
+  return normalized;
+}
+
+function decodeHtmlAttribute(value: string): string {
+  return value.replace(/&amp;/gi, "&").replace(/&#39;/g, "'").replace(/&quot;/gi, '"');
+}
+
+/** Reject a queued email before it can deliver a dead or unsafe hyperlink. */
+export function assertValidEmailLinks(html: string): void {
+  for (const match of html.matchAll(/\bhref\s*=\s*(["'])(.*?)\1/gi)) {
+    const raw = decodeHtmlAttribute(match[2] ?? "").trim();
+    if (!raw || /\{\{[^}]+\}\}/.test(raw)) {
+      throw new Error("Email contains an unresolved action link.");
+    }
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      throw new Error("Email contains a malformed action link.");
+    }
+    const localhost = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+    if (url.protocol !== "https:" && !(localhost && url.protocol === "http:") && url.protocol !== "mailto:") {
+      throw new Error("Email contains an unsafe action link protocol.");
+    }
+  }
+}
+
 /** Brand-consistent HTML wrapper; the logo is served from the app's own origin. */
 export function wrapHtmlBody(title: string, innerHtml: string): string {
   const logoUrl = `${env.appUrl}/brand/dark/readypackets_dark_email_header.png`;
@@ -119,6 +171,7 @@ function normalizeAttachments(attachments: EmailAttachmentManifest[] | undefined
 }
 
 export async function queueEmail(input: QueueEmailInput): Promise<void> {
+  assertValidEmailLinks(input.html);
   await db.insert(emailQueue).values({
     toAddressEnc: encryptField(input.to, "email:queue") ?? "",
     templateKey: input.templateKey ?? null,
@@ -138,6 +191,7 @@ export interface SendTemplateInput {
 }
 
 export async function queueTemplatedEmail(input: SendTemplateInput): Promise<void> {
+  const variables = normalizeEmailTemplateVariables(input.variables);
   const rows = await db
     .select()
     .from(emailTemplates)
@@ -154,10 +208,10 @@ export async function queueTemplatedEmail(input: SendTemplateInput): Promise<voi
     }
     await queueEmail({
       to: input.to,
-      subject: renderTemplate(input.fallback.subject, input.variables, false),
-      html: renderTemplate(input.fallback.html, input.variables, true),
+      subject: renderTemplate(input.fallback.subject, variables, false),
+      html: renderTemplate(input.fallback.html, variables, true),
       text: input.fallback.text
-        ? renderTemplate(input.fallback.text, input.variables, false)
+        ? renderTemplate(input.fallback.text, variables, false)
         : undefined,
       templateKey: input.templateKey,
     });
@@ -166,10 +220,10 @@ export async function queueTemplatedEmail(input: SendTemplateInput): Promise<voi
 
   await queueEmail({
     to: input.to,
-    subject: renderTemplate(template.subject, input.variables, false),
-    html: renderTemplate(template.bodyHtml, input.variables, true),
+    subject: renderTemplate(template.subject, variables, false),
+    html: renderTemplate(template.bodyHtml, variables, true),
     text: template.bodyText
-      ? renderTemplate(template.bodyText, input.variables, false)
+      ? renderTemplate(template.bodyText, variables, false)
       : undefined,
     templateKey: input.templateKey,
   });

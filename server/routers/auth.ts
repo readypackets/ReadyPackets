@@ -137,7 +137,8 @@ async function issueVerificationEmail(userId: number, email: string, name: strin
   await queueTemplatedEmail({
     to: email,
     templateKey: "email_verification",
-    variables: { name, link, expiry: "24 hours" },
+              variables: { name, link, verifyUrl: link, expiry: "24 hours" },
+
     fallback: {
       subject: "Verify your ReadyPackets account",
       html: wrapHtmlBody(
@@ -661,7 +662,7 @@ export const authRouter = router({
         await queueTemplatedEmail({
           to: user.email,
           templateKey: "password_reset",
-          variables: { name: displayNameOf(user), link, expiry: "30 minutes" },
+          variables: { name: displayNameOf(user), link, resetUrl: link, expiry: "30 minutes" },
           fallback: {
             subject: "Reset your ReadyPackets password",
             html: wrapHtmlBody(

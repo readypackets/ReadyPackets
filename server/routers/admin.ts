@@ -2494,7 +2494,7 @@ export const adminRouter = router({
       await queueTemplatedEmail({
         to: user.email,
         templateKey: "password_reset",
-        variables: { name: displayNameOf(user), link, expiry: "24 hours" },
+        variables: { name: displayNameOf(user), link, resetUrl: link, expiry: "24 hours" },
         fallback: {
           subject: "Reset your ReadyPackets password",
           html: wrapHtmlBody(
