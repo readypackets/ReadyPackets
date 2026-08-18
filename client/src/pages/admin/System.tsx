@@ -643,6 +643,9 @@ function ApiKeysPanel() {
 function SamlPanel() {
   const toast = useToast();
   const config = trpc.adminSecurity.samlConfig.useQuery();
+  const mfaSource = trpc.adminSecurity.samlAdministratorMfaSource.useQuery();
+  const [mfaDraft, setMfaDraft] = useState<{ source: "local" | "entra" | "both"; claimName: string; requiredValue: string } | null>(null);
+  const [mfaConfirmation, setMfaConfirmation] = useState("");
   const [draft, setDraft] = useState<{
     name: string;
     enabled: boolean;
@@ -665,10 +668,27 @@ function SamlPanel() {
       setFormError(errorMessage(error));
     },
   });
+  const updateMfaSource = trpc.adminSecurity.updateSamlAdministratorMfaSource.useMutation({
+    async onSuccess(result) {
+      await mfaSource.refetch();
+      setMfaDraft(null);
+      setMfaConfirmation("");
+      toast.success(result.source === "local" ? "SAML administrators will use ReadyPackets MFA" : `SAML administrator MFA source set to ${result.source}`);
+    },
+    onError(error) {
+      setFormError(errorMessage(error));
+    },
+  });
 
-  if (config.isLoading) return <Skeleton className="h-64 w-full" />;
+  if (config.isLoading || mfaSource.isLoading) return <Skeleton className="h-64 w-full" />;
 
   const current = config.data;
+  const currentMfa: { source: "local" | "entra" | "both"; claimName: string; requiredValue: string } = {
+    source: (mfaSource.data?.source ?? "local") as "local" | "entra" | "both",
+    claimName: mfaSource.data?.claimName ?? "http://schemas.microsoft.com/claims/authnmethodsreferences",
+    requiredValue: mfaSource.data?.requiredValue ?? "http://schemas.microsoft.com/claims/multipleauthn",
+  };
+  const mfaForm = mfaDraft ?? currentMfa;
   const form =
     draft ??
     {
@@ -754,8 +774,73 @@ function SamlPanel() {
         />
 
         <Alert tone="info">
-          New SAML accounts receive this role only when automatic provisioning is enabled. SAML is treated as the primary factor; Administrator accounts must still complete or enrol in MFA before receiving administrative access.
+          New SAML accounts receive this role only when automatic provisioning is enabled. SAML is treated as the primary factor; Administrator accounts use the policy configured below before receiving administrative access.
         </Alert>
+
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/40">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="font-semibold text-slate-900 dark:text-white">Administrator SAML MFA source</p>
+              <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Choose whether SAML administrators use ReadyPackets MFA, Microsoft Entra MFA assurance, or both. Customers and staff keep their existing MFA policy.</p>
+            </div>
+            <Badge tone={mfaForm.source === "local" ? "neutral" : mfaForm.source === "entra" ? "success" : "warning"}>
+              {mfaForm.source === "local" ? "ReadyPackets local MFA" : mfaForm.source === "entra" ? "Entra-managed MFA" : "Entra + local MFA"}
+            </Badge>
+          </div>
+          <div className="mt-4 grid gap-4 sm:grid-cols-3">
+            <Select
+              label="MFA source"
+              value={mfaForm.source}
+              onChange={(event) => setMfaDraft({ ...mfaForm, source: event.target.value as "local" | "entra" | "both" })}
+              options={[
+                { value: "local", label: "ReadyPackets local MFA" },
+                { value: "entra", label: "Microsoft Entra-managed MFA" },
+                { value: "both", label: "Require both Entra and local MFA" },
+              ]}
+            />
+            <Input
+              label="Signed MFA claim name"
+              value={mfaForm.claimName}
+              disabled={mfaForm.source === "local"}
+              onChange={(event) => setMfaDraft({ ...mfaForm, claimName: event.target.value })}
+            />
+            <Input
+              label="Required claim value"
+              value={mfaForm.requiredValue}
+              disabled={mfaForm.source === "local"}
+              onChange={(event) => setMfaDraft({ ...mfaForm, requiredValue: event.target.value })}
+            />
+          </div>
+          {mfaForm.source === "entra" || mfaForm.source === "both" ? (
+            <>
+              <Alert tone="warning" className="mt-4">
+                Entra trust is accepted only for a validated signed SAML assertion containing the configured assurance claim. Configure Microsoft Entra Conditional Access to require MFA for this enterprise application and retain a separate local break-glass administrator before enabling this mode.
+              </Alert>
+              <Input
+                className="mt-4"
+                label="Type TRUST ENTRA MFA to save this mode"
+                value={mfaConfirmation}
+                onChange={(event) => setMfaConfirmation(event.target.value)}
+              />
+            </>
+          ) : null}
+          <Button
+            className="mt-4"
+            variant={mfaForm.source === "local" ? "secondary" : "danger"}
+            busy={updateMfaSource.isPending}
+            onClick={() => {
+              setFormError(null);
+              updateMfaSource.mutate({
+                source: mfaForm.source,
+                claimName: mfaForm.claimName.trim(),
+                requiredValue: mfaForm.requiredValue.trim(),
+                confirmation: mfaConfirmation,
+              });
+            }}
+          >
+            Save administrator MFA source
+          </Button>
+        </div>
 
         <Button
           busy={upsert.isPending}

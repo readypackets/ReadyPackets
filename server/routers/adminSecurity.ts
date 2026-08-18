@@ -776,6 +776,62 @@ export const adminSecurityRouter = router({
   /* SAML                                                              */
   /* ---------------------------------------------------------------- */
 
+  samlAdministratorMfaSource: adminProcedure.query(async () => {
+    const [source, claimName, requiredValue] = await Promise.all([
+      getSetting("security.saml_admin_mfa_source"),
+      getSetting("security.saml_entra_mfa_claim_name"),
+      getSetting("security.saml_entra_mfa_required_value"),
+    ]);
+    const mfaSource = source === "entra" || source === "both" || source === "local" ? source : "local";
+    return {
+      source: mfaSource,
+      claimName: claimName?.trim() || "http://schemas.microsoft.com/claims/authnmethodsreferences",
+      requiredValue: requiredValue?.trim() || "http://schemas.microsoft.com/claims/multipleauthn",
+      enabled: mfaSource !== "local",
+    };
+  }),
+
+  updateSamlAdministratorMfaSource: adminProcedure
+    .input(z.object({
+      source: z.enum(["local", "entra", "both"]),
+      claimName: z.string().trim().min(8).max(500).optional(),
+      requiredValue: z.string().trim().min(3).max(500).optional(),
+      confirmation: z.string().trim().max(80).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      if (input.source !== "local" && input.confirmation !== "TRUST ENTRA MFA") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Type TRUST ENTRA MFA to activate Microsoft Entra-managed MFA." });
+      }
+      const claimName = input.claimName?.trim() || "http://schemas.microsoft.com/claims/authnmethodsreferences";
+      const requiredValue = input.requiredValue?.trim() || "http://schemas.microsoft.com/claims/multipleauthn";
+      await Promise.all([
+        setSetting("security.saml_admin_mfa_source", input.source, { category: "security", valueType: "string", userId: ctx.session.user.id }),
+        setSetting("security.saml_entra_mfa_claim_name", claimName, { category: "security", valueType: "string", userId: ctx.session.user.id }),
+        setSetting("security.saml_entra_mfa_required_value", requiredValue, { category: "security", valueType: "string", userId: ctx.session.user.id }),
+      ]);
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: "admin",
+        action: "security.saml_mfa_source_updated",
+        entityType: "security_policy",
+        entityId: "saml_administrator_mfa_source",
+        severity: input.source === "local" ? "notice" : "warning",
+        summary: `SAML administrator MFA source set to ${input.source}`,
+        changes: { source: input.source, claimName, requiredValue },
+        ipAddress: ctx.clientIp,
+      });
+      void recordSecurityEvent({
+        eventType: "settings.changed",
+        outcome: "success",
+        severity: input.source === "local" ? "notice" : "warning",
+        message: `SAML administrator MFA source changed to ${input.source}`,
+        userId: ctx.session.user.id,
+        ipAddress: ctx.clientIp,
+        metadata: { claimConfigured: Boolean(claimName), assuranceValueConfigured: Boolean(requiredValue) },
+      });
+      return { ok: true as const, source: input.source };
+    }),
+
   samlConfig: adminProcedure.query(async () => {
     const rows = await db.select().from(samlConfigs).limit(1);
     const config = rows[0];

@@ -29,6 +29,11 @@ import { logger } from "../observability/logger.js";
 import { recordSecurityEvent } from "../observability/audit.js";
 import { hasConfirmedMfa } from "./mfa.js";
 import { getMfaPolicyForRole, mfaRequirement } from "./mfaPolicy.js";
+import {
+  getSamlAdministratorMfaSourcePolicy,
+  hasRequiredSamlMfaAssurance,
+  samlMfaAssuranceEvidence,
+} from "./samlMfaSource.js";
 import { getSettingBool, getSettingJson } from "../services/settings.js";
 import { isAdministratorOnlyAccessEnabled, isRoleBlockedByAdministratorOnlyAccess } from "./adminOnlyAccess.js";
 
@@ -251,10 +256,48 @@ export async function handleAcs(req: Request, res: Response): Promise<void> {
     return;
   }
 
-    // SAML is a primary factor. Administrators still follow the same enforced MFA
-  // path as local sign-ins, including restricted MFA-enrolment sessions.
-  const [mfaConfirmed, policy] = await Promise.all([hasConfirmedMfa(user.id), getMfaPolicyForRole(user.role)]);
-  const requirement = mfaRequirement(policy, mfaConfirmed);
+  // SAML is the primary factor. For administrators, the security console can
+  // select ReadyPackets local MFA, verified Entra MFA, or both. Entra trust is
+  // never inferred from the issuer alone: it requires an explicitly configured
+  // signed assertion claim and value.
+  const [mfaConfirmed, roleMfaPolicy, samlMfaPolicy] = await Promise.all([
+    hasConfirmedMfa(user.id),
+    getMfaPolicyForRole(user.role),
+    getSamlAdministratorMfaSourcePolicy(),
+  ]);
+  const isAdministrator = user.role === "admin";
+  const requiresEntraAssurance = isAdministrator && samlMfaPolicy.source !== "local";
+  const assuranceEvidence = requiresEntraAssurance
+    ? samlMfaAssuranceEvidence(profile, samlMfaPolicy)
+    : { claimPresent: false, assuranceSatisfied: false };
+
+  if (requiresEntraAssurance && !hasRequiredSamlMfaAssurance(profile, samlMfaPolicy)) {
+    await recordSecurityEvent({
+      eventType: "login.failure",
+      outcome: "failure",
+      severity: "warning",
+      message: "SAML login denied because the configured Entra MFA assurance claim was absent or insufficient",
+      userId: user.id,
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers["user-agent"]?.slice(0, 255) ?? null,
+      metadata: { mfaSource: samlMfaPolicy.source, claimPresent: assuranceEvidence.claimPresent },
+    });
+    res.redirect(`${env.appUrl}/login?error=saml_mfa_assurance_required`);
+    return;
+  }
+
+  // Dual mode always requires a local administrator MFA factor in addition to
+  // the signed Entra assurance assertion, even if the generic role policy was
+  // relaxed later. Entra-only mode intentionally skips the local MFA prompt only
+  // after the configured assurance claim has passed the validation above.
+  const effectiveLocalPolicy = isAdministrator && samlMfaPolicy.source === "both"
+    ? "required"
+    : roleMfaPolicy;
+  let requirement = mfaRequirement(effectiveLocalPolicy, mfaConfirmed);
+  if (isAdministrator && samlMfaPolicy.source === "entra") {
+    requirement = { mfaPending: false, restricted: false, mfaRequired: false, mfaSetupRequired: false };
+  }
+
   await revokePendingMfaSessions(user.id);
   await createSession(res, {
     userId: user.id,
@@ -266,10 +309,19 @@ export async function handleAcs(req: Request, res: Response): Promise<void> {
   await recordSecurityEvent({
     eventType: requirement.mfaPending ? "login.mfa_required" : requirement.mfaSetupRequired ? "mfa.enrolment_required" : "login.success",
     outcome: "success",
-    message: requirement.mfaPending ? "SAML assertion accepted; awaiting second factor" : requirement.mfaSetupRequired ? "SAML assertion accepted; MFA enrolment required by policy" : "SAML SSO login succeeded",
+    message: isAdministrator && samlMfaPolicy.source === "entra"
+      ? "SAML assertion accepted with configured Entra MFA assurance"
+      : isAdministrator && samlMfaPolicy.source === "both"
+        ? "SAML assertion accepted with Entra MFA assurance; awaiting local MFA"
+        : requirement.mfaPending
+          ? "SAML assertion accepted; awaiting local second factor"
+          : requirement.mfaSetupRequired
+            ? "SAML assertion accepted; local MFA enrolment required by policy"
+            : "SAML SSO login succeeded",
     userId: user.id,
     ipAddress: req.ip ?? null,
     userAgent: req.headers["user-agent"]?.slice(0, 255) ?? null,
+    metadata: isAdministrator ? { mfaSource: samlMfaPolicy.source, entraAssuranceSatisfied: assuranceEvidence.assuranceSatisfied } : undefined,
   });
   const relayState = req.body?.RelayState as string | undefined;
   const redirectTo = relayState && relayState.startsWith("/") ? relayState : "/portal";
