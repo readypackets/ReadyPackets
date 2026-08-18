@@ -283,20 +283,21 @@ export function createApp(): Express {
 
   /**
    * Return a same-origin CSRF cookie without accepting any caller-supplied token.
-   * An active, unrestricted session receives its session-bound secret. Otherwise
-   * the route clears an expired/revoked session cookie and issues a fresh
-   * anonymous double-submit token so a stale tab can submit a new login without
-   * a hard refresh. Every unsafe request remains subject to Origin and CSRF
-   * validation; the anonymous token grants no authenticated capability.
+   * Every valid session, including one awaiting MFA or restricted to MFA
+   * enrolment, receives its own session-bound secret. Otherwise the route clears
+   * an expired/revoked session cookie and issues a fresh anonymous double-submit
+   * token so a stale tab can submit a new login without a hard refresh. Every
+   * unsafe request remains subject to Origin and CSRF validation; the anonymous
+   * token grants no authenticated capability.
    */
   app.get("/api/security/csrf", async (req: Request, res: Response) => {
     const session = await resolveSession(req);
-    const canReuseSessionSecret = session && !session.mfaPending && !session.restricted;
-    const csrfToken = canReuseSessionSecret ? session.csrfSecret : generateCsrfToken();
+    const csrfToken = session ? session.csrfSecret : generateCsrfToken();
 
-    if (!canReuseSessionSecret) {
+    if (!session) {
       // A stale session cookie can outlive a server-side idle timeout or
-      // revocation. Clear it before issuing the anonymous login token.
+      // revocation. Clear it before issuing the anonymous login token. Valid
+      // pending-MFA sessions must never be cleared here.
       clearSessionCookies(res);
     }
 
