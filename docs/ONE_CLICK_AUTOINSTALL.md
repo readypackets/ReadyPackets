@@ -56,6 +56,18 @@ sudo env \
 
 The generated initial administrator password is printed once to the secured terminal. Store it in an offline password manager immediately. Use `RP_ADMIN_PASSWORD` only in protected automation where exposure through the execution environment is understood and controlled; the guided flow never places a typed password in shell history or command-line arguments.
 
+## Recovering a failed fresh installation
+
+If a fresh installation stops before the service becomes active, first pull the corrected installer source, then run the installer again using the same domain and email. The guided resume mode recognizes the incomplete Git checkout, requires a second review, and refuses to run when an active ReadyPackets service is detected:
+
+```bash
+cd /srv/readypackets
+sudo git pull --ff-only origin main
+sudo env RP_RESUME_FAILED_INSTALL='yes' bash deploy/one-click-install.sh
+```
+
+The resume flow reuses the protected environment and database already created on the failed fresh server, fetches the latest selected source, rebuilds all operational bundles, and resumes setup. Do **not** use this option on a working portal; it is intentionally rejected if the service is active.
+
 ## Verification
 
 After installation, verify the returned public health endpoint:

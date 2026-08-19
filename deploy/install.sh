@@ -270,6 +270,15 @@ for script in migrate seed create-admin; do
     --format=esm --packages=external --outfile="dist/${script}.js"
 done
 
+# Fail before writing the protected runtime environment or touching the database
+# if a development/build interruption left any mandatory operational bundle out.
+# The migration runner is particularly important: a missing bundle must never be
+# discovered only after database credentials and service configuration exist.
+for runtime_artifact in dist/server.js dist/migrate.js dist/seed.js dist/create-admin.js; do
+  [[ -s "$runtime_artifact" ]] || die "Required build artifact is missing: ${APP_DIR}/${runtime_artifact}. Re-run after fixing the source build."
+  node --check "$runtime_artifact" >/dev/null
+done
+
 # The bundler inlines code, not data. The seed reads the catalogue and the policy
 # documents at runtime and resolves them relative to its own location, so they
 # must sit beside the bundle. The migration runner reads its SQL the same way.
@@ -279,7 +288,10 @@ cp -a "${APP_DIR}/scripts/data/." "${APP_DIR}/dist/data/"
   || die "Seed data was not copied to dist/data; the catalogue would be empty."
 [[ -d "${APP_DIR}/drizzle/migrations" ]] \
   || die "drizzle/migrations is missing from the source tree; the database cannot be created."
-pnpm prune --prod
+# Development dependencies are retained until migration and seed execution below.
+# Some package-manager versions can prune executable build helpers aggressively;
+# pruning only after the runtime has been initialized keeps a fresh install
+# deterministic and prevents an absent migration artifact from blocking setup.
 
 # The service account needs to read the build but must not be able to modify it.
 chown -R root:root "$APP_DIR"
@@ -363,6 +375,14 @@ if [[ "$WANT_SEED" == "true" ]]; then
   log "Seeding catalogue, policies and settings"
   runuser -u "$APP_USER" -- env $(grep -v '^#' "$ENV_FILE" | xargs) node "${APP_DIR}/dist/seed.js"
 fi
+
+# Runtime initialization is complete. Now remove development-only packages while
+# leaving the already verified bundled operational artifacts intact.
+log "Pruning development dependencies"
+pnpm prune --prod
+for runtime_artifact in dist/server.js dist/migrate.js dist/seed.js dist/create-admin.js; do
+  [[ -s "$runtime_artifact" ]] || die "Production dependency pruning removed a required artifact: ${APP_DIR}/${runtime_artifact}."
+done
 
 if [[ -n "$GITHUB_CONFIG_REPOSITORY" ]]; then
   log "Downloading the latest encrypted configuration vault bundle from private GitHub."

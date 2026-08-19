@@ -32,6 +32,7 @@ ADMIN_NAME="${RP_ADMIN_NAME:-}"
 ADMIN_PASSWORD="${RP_ADMIN_PASSWORD:-}"
 ADMIN_GENERATE_PASSWORD="${RP_ADMIN_GENERATE_PASSWORD:-yes}"
 AUTO_CONFIRM="${RP_AUTO_CONFIRM:-}"
+RESUME_FAILED_INSTALL="${RP_RESUME_FAILED_INSTALL:-no}"
 TEMP_FILES=()
 
 step() { printf '\n\033[1;36m[ReadyPackets install]\033[0m %s\n' "$*"; }
@@ -45,6 +46,8 @@ trap cleanup EXIT
 trap 'fail "Stopped at line ${LINENO}. Review the message above, correct it, and rerun on this fresh server."' ERR
 
 is_interactive() { [[ -t 0 && -t 1 && "${RP_NONINTERACTIVE:-false}" != "true" ]]; }
+INTERACTIVE_MODE="false"
+if is_interactive; then INTERACTIVE_MODE="true"; fi
 prompt_value() {
   local label="$1" variable="$2" default_value="$3" answer
   [[ -n "${!variable-}" ]] && return 0
@@ -93,7 +96,7 @@ write_secret_file() {
 
 [[ $EUID -eq 0 ]] || fail "Run this installer as root, for example: sudo bash one-click-install.sh"
 
-if is_interactive; then
+if [[ "$INTERACTIVE_MODE" == "true" ]]; then
   printf '\nReadyPackets guided fresh-server installation\n'
   printf 'This installer retrieves the latest public %s commit by default, asks for required settings, then shows a review before it changes this server.\n' "$REF"
 
@@ -203,9 +206,20 @@ if [[ "$PROVISION_ADMIN" == "yes" ]]; then
   if [[ "$ADMIN_GENERATE_PASSWORD" == "no" ]]; then [[ ${#ADMIN_PASSWORD} -ge 12 ]] || fail "Initial administrator password must meet the password policy."; fi
 fi
 [[ "$BACKUP_ENABLED" =~ ^(yes|no)$ ]] || fail "RP_ENABLE_NIGHTLY_BACKUPS must be yes or no."
-[[ ! -e "$PROJECT_DIR" ]] || fail "Project directory already exists: $PROJECT_DIR. This script is for a fresh server and will not overwrite an installation."
+if [[ -e "$PROJECT_DIR" ]]; then
+  if [[ "$INTERACTIVE_MODE" == "true" && "$RESUME_FAILED_INSTALL" == "no" ]]; then
+    prompt_yes_no "An existing ReadyPackets project directory was found. Resume a previously failed fresh installation" RESUME_FAILED_INSTALL "no"
+  fi
+  [[ "$RESUME_FAILED_INSTALL" == "yes" ]] || fail "Project directory already exists: $PROJECT_DIR. This script will not overwrite an existing installation. Set RP_RESUME_FAILED_INSTALL=yes only for a failed fresh installation."
+  [[ -d "$PROJECT_DIR/.git" ]] || fail "The existing project directory is not a Git checkout and cannot be safely resumed."
+  if systemctl is-active --quiet readypackets 2>/dev/null; then
+    fail "The ReadyPackets service is active. This resume path is restricted to failed fresh installations and will not modify a live portal."
+  fi
+else
+  RESUME_FAILED_INSTALL="no"
+fi
 
-if is_interactive; then
+if [[ "$INTERACTIVE_MODE" == "true" ]]; then
   printf '\n\033[1;36mReadyPackets installation review\033[0m\n'
   printf '  Installation type: %s\n' "$MODE"
   printf '  Public hostname:    %s\n' "$DOMAIN"
@@ -215,6 +229,7 @@ if is_interactive; then
   printf '  Config recovery:    %s\n' "$( [[ -n "$VAULT_REPOSITORY" ]] && printf 'enabled (secrets hidden)' || printf 'not requested' )"
   printf '  Nightly backup:     %s\n' "$BACKUP_ENABLED"
   printf '  Initial admin:      %s\n' "$( [[ "$PROVISION_ADMIN" == "yes" ]] && printf '%s (%s password)' "$ADMIN_EMAIL" "$ADMIN_GENERATE_PASSWORD" || printf 'not provisioned by installer' )"
+  printf '  Failed-install resume: %s\n' "$RESUME_FAILED_INSTALL"
   printf '\nNo secrets will be displayed or stored in shell history by this guided flow.\n'
   read -r -p "Type INSTALL READY PACKETS to begin: " final_confirmation
   [[ "$final_confirmation" == "INSTALL READY PACKETS" ]] || fail "Installation cancelled before any server changes."
@@ -229,9 +244,18 @@ apt-get update -qq
 apt-get install -y --no-install-recommends ca-certificates curl git
 
 step "Retrieving ReadyPackets source from https://github.com/${REPOSITORY}.git"
-install -d -m 0755 "$(dirname "$PROJECT_DIR")"
-git clone --depth 1 --branch "$REF" "https://github.com/${REPOSITORY}.git" "$PROJECT_DIR"
-cd "$PROJECT_DIR"
+if [[ "$RESUME_FAILED_INSTALL" == "yes" ]]; then
+  step "Resuming the failed fresh installation with the latest selected source."
+  cd "$PROJECT_DIR"
+  git remote set-url origin "https://github.com/${REPOSITORY}.git"
+  git fetch --depth 1 origin "$REF"
+  git reset --hard FETCH_HEAD
+  git clean -fd
+else
+  install -d -m 0755 "$(dirname "$PROJECT_DIR")"
+  git clone --depth 1 --branch "$REF" "https://github.com/${REPOSITORY}.git" "$PROJECT_DIR"
+  cd "$PROJECT_DIR"
+fi
 if [[ -n "$COMMIT" ]]; then
   step "Verifying reviewed immutable source commit ${COMMIT}."
   git fetch --depth=1 origin "$COMMIT"
