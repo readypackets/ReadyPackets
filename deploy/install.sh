@@ -369,24 +369,27 @@ chmod 0640 "$ENV_FILE"
 # Migrate and seed
 # ---------------------------------------------------------------------------
 # A migration runner is essential even on a fresh database because it creates the
-# entire application schema. Rebuild it at the execution boundary if an external
-# package-manager/cache anomaly removed the earlier bundle, then verify it again
-# before the service account receives database credentials.
-ensure_migration_runner() {
+# entire application schema. Build a new runner at the execution boundary rather
+# than trusting any earlier bundle: this removes package-manager/cache timing from
+# the path between source compilation and the service-account migration command.
+rebuild_migration_runner() {
   local artifact="${APP_DIR}/dist/migrate.js"
-  if [[ ! -s "$artifact" ]]; then
-    log "Rebuilding missing database migration runner."
-    [[ -f "${APP_DIR}/scripts/migrate.ts" ]] \
-      || die "Migration source is missing: ${APP_DIR}/scripts/migrate.ts"
-    pnpm exec esbuild "${APP_DIR}/scripts/migrate.ts" --bundle --platform=node --target=node22 \
-      --format=esm --packages=external --outfile="$artifact"
-    chown root:root "$artifact"
-    chmod go-w "$artifact"
-  fi
-  [[ -s "$artifact" ]] || die "The database migration runner could not be built: $artifact"
-  node --check "$artifact" >/dev/null || die "The database migration runner has invalid JavaScript: $artifact"
+  local temporary="${APP_DIR}/dist/.migrate.$$.js"
+  log "Building the database migration runner immediately before schema initialization."
+  [[ -f "${APP_DIR}/scripts/migrate.ts" ]] \
+    || die "Migration source is missing: ${APP_DIR}/scripts/migrate.ts"
+  rm -f -- "$temporary"
+  pnpm exec esbuild "${APP_DIR}/scripts/migrate.ts" --bundle --platform=node --target=node22 \
+    --format=esm --packages=external --outfile="$temporary"
+  [[ -s "$temporary" ]] || die "The database migration runner could not be built: $temporary"
+  node --check "$temporary" >/dev/null || die "The database migration runner has invalid JavaScript: $temporary"
+  install -o root -g root -m 0644 "$temporary" "$artifact"
+  rm -f -- "$temporary"
+  [[ -s "$artifact" ]] || die "The database migration runner disappeared after installation: $artifact"
+  runuser -u "$APP_USER" -- test -r "$artifact" \
+    || die "The service account cannot read the database migration runner: $artifact"
 }
-ensure_migration_runner
+rebuild_migration_runner
 
 log "Applying database migrations"
 runuser -u "$APP_USER" -- env $(grep -v '^#' "$ENV_FILE" | xargs) node "${APP_DIR}/dist/migrate.js"
