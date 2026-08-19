@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# ReadyPackets post-install connectivity verifier.
+# Local service health is authoritative for installation success. Public reachability
+# is separately evaluated because DNS, certificate issuance, Cloudflare proxying,
+# and external firewall propagation may legitimately lag a fresh server build.
+set -Eeuo pipefail
+
+DOMAIN=""
+LOCAL_ONLY="false"
+
+usage() {
+  cat <<'USAGE'
+Usage: sudo bash deploy/verify-public-connectivity.sh --domain portal.example.com [--local-only]
+
+Checks the local ReadyPackets service through its loopback listener first. Unless
+--local-only is given, then checks the public HTTPS endpoint separately.
+
+Exit codes:
+  0  Local service is healthy and, when requested, public HTTPS is reachable.
+  2  Local service is healthy but public HTTPS is not reachable yet.
+  1  Local service health failed or the command was used incorrectly.
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --domain) DOMAIN="${2:-}"; shift 2 ;;
+    --local-only) LOCAL_ONLY="true"; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) printf 'Unknown argument: %s\n' "$1" >&2; usage >&2; exit 1 ;;
+  esac
+done
+
+[[ "$DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]] \
+  || { printf 'A valid --domain is required.\n' >&2; exit 1; }
+
+if ! systemctl is-active --quiet readypackets; then
+  printf 'Local ReadyPackets service is not active. Inspect: journalctl -u readypackets -n 80 --no-pager\n' >&2
+  exit 1
+fi
+
+if ! curl --fail --silent --show-error --connect-timeout 3 --max-time 10 \
+  -H "Host: ${DOMAIN}" -H 'X-Forwarded-Proto: https' \
+  http://127.0.0.1:3000/api/health/ready >/dev/null; then
+  printf 'Local ReadyPackets readiness endpoint failed. Inspect: journalctl -u readypackets -n 80 --no-pager\n' >&2
+  exit 1
+fi
+
+printf 'Local installation health: PASS\n'
+[[ "$LOCAL_ONLY" == "true" ]] && exit 0
+
+if curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
+  "https://${DOMAIN}/api/health" >/dev/null; then
+  printf 'Public HTTPS health: PASS\n'
+  exit 0
+fi
+
+printf '\nPublic HTTPS health: PENDING\n' >&2
+printf 'The local portal is installed and running, but the public path is not reachable yet.\n' >&2
+printf 'Check DNS/Cloudflare routing, inbound TCP 443, and certificate issuance, then retry:\n' >&2
+printf '  sudo bash /opt/readypackets/deploy/verify-public-connectivity.sh --domain %s\n' "$DOMAIN" >&2
+printf '\nLocal diagnostics:\n' >&2
+printf '  getent ahostsv4 %s\n' "$DOMAIN" >&2
+printf "  sudo ss -ltnp '( sport = :443 )'\n" >&2
+printf '  sudo ufw status numbered\n' >&2
+exit 2

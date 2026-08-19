@@ -53,6 +53,7 @@ ADMIN_PASSWORD="${RP_ADMIN_PASSWORD:-}"
 ADMIN_GENERATE_PASSWORD="${RP_ADMIN_GENERATE_PASSWORD:-yes}"
 AUTO_CONFIRM="${RP_AUTO_CONFIRM:-}"
 RESUME_FAILED_INSTALL="${RP_RESUME_FAILED_INSTALL:-no}"
+REQUIRE_PUBLIC_HEALTH="${RP_REQUIRE_PUBLIC_HEALTH:-no}"
 TEMP_FILES=()
 
 step() { printf '\n\033[1;36m[ReadyPackets install]\033[0m %s\n' "$*"; }
@@ -344,12 +345,29 @@ if [[ "$PROVISION_ADMIN" == "yes" ]]; then
   unset ADMIN_PASSWORD
 fi
 
-if [[ "$TLS_PROVIDER" == "cloudflare-origin" ]]; then
-  step "Checking the local Cloudflare-origin listener."
-  curl -fsS -H "Host: ${DOMAIN}" -H 'X-Forwarded-Proto: https' http://127.0.0.1:3000/api/health
-elif [[ "$TLS_PROVIDER" == "letsencrypt" ]]; then
-  step "Checking the public HTTPS health endpoint."
-  curl -fsS "https://${DOMAIN}/api/health"
+if [[ "$MODE" == "native" ]]; then
+  step "Verifying the completed local installation."
+  bash "$PROJECT_DIR/deploy/verify-public-connectivity.sh" --domain "$DOMAIN" --local-only
+
+  if [[ "$TLS_PROVIDER" != "none" ]]; then
+    step "Checking public HTTPS reachability separately from installation success."
+    if bash "$PROJECT_DIR/deploy/verify-public-connectivity.sh" --domain "$DOMAIN"; then
+      :
+    else
+      connectivity_status=$?
+      if [[ "$connectivity_status" -eq 2 && "$REQUIRE_PUBLIC_HEALTH" != "yes" ]]; then
+        warn "The portal is installed locally; public HTTPS is still pending DNS, proxy, firewall, or certificate propagation."
+      else
+        fail "Public connectivity verification failed. The local installation remains available; run /opt/readypackets/deploy/verify-public-connectivity.sh after correcting reachability."
+      fi
+    fi
+  fi
+elif [[ "$TLS_PROVIDER" != "none" ]]; then
+  # Docker completion has already verified the local reverse-proxy path. Public
+  # DNS/TLS propagation is advisory here for the same reason as native installs.
+  step "Attempting public HTTPS reachability (advisory)."
+  curl -fsS --connect-timeout 5 --max-time 15 "https://${DOMAIN}/api/health" >/dev/null \
+    || warn "Public HTTPS is not reachable yet; verify DNS, proxy, firewall, and certificate propagation."
 fi
 printf '\n\033[1;32m[ReadyPackets install complete]\033[0m Source commit: %s\n' "$resolved"
 printf '[ReadyPackets install complete] Open: %s://%s\n' "$([[ "$TLS_PROVIDER" == "none" ]] && printf http || printf https)" "$DOMAIN"
