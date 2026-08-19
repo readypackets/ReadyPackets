@@ -561,7 +561,10 @@ function runBackupControl(args: string[], stdin = ""): Promise<string> {
       clearTimeout(timer);
       try {
         const payload = JSON.parse(response.trim()) as { ok?: boolean; output?: string; error?: string };
-        payload.ok ? resolve(payload.output ?? "") : reject(new Error(payload.error ?? "Backup control rejected the request."));
+        // Root helpers terminate human-readable output with a newline. Normalize it
+        // at the privilege boundary so filename-based actions never pass whitespace
+        // into the protected export reader or a browser download payload.
+        payload.ok ? resolve((payload.output ?? "").trim()) : reject(new Error(payload.error ?? "Backup control rejected the request."));
       } catch { reject(new Error("Backup control returned an invalid response.")); }
     });
   });
@@ -644,9 +647,13 @@ const systemBackupsRouter = router({
     return { reachable: result.reachable === "true", destination: result.destination ?? input.destination };
   }),
   exportConfiguration: adminProcedure.input(z.object({ passphrase: z.string().min(16).max(512) })).mutation(async ({ ctx, input }) => {
-    const filename = await runBackupControl(["export-config"], `${input.passphrase}\\n`);
+    const filename = (await runBackupControl(["export-config"], `${input.passphrase}\\n`)).trim();
+    if (!/^readypackets-config-[0-9TZ-]+\\.rpconfig$/.test(filename)) {
+      throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The protected export helper did not return a valid encrypted configuration filename. Review the backup-control service log before retrying." });
+    }
+    const payload = await readProtectedExport(filename);
     void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "backup.configuration_exported", entityType: "backup", entityId: 0, severity: "warning", summary: "Administrator exported an encrypted configuration migration bundle", ipAddress: ctx.clientIp });
-    return readProtectedExport(filename);
+    return payload;
   }),
   githubVaultStatus: adminProcedure.query(async () => getGitHubVaultStatus()),
   configureGitHubVault: adminProcedure.input(z.object({
