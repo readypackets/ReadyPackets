@@ -73,9 +73,9 @@ export const users = mysqlTable(
     avatarStorageKey: varchar("avatar_storage_key", { length: 128 }),
     /** Unique referral code generated on first request; used for the referral programme. */
     referralCode: varchar("referral_code", { length: 48 }),
-    /** Stable customer reference retained for legacy order and SharePoint folder naming. */
+    /** Opaque customer-facing reference in RP-CUS-XXXXXXXX format. */
     customerNumber: varchar("customer_number", { length: 24 }),
-    /** Opaque alphanumeric account identifier for display and external references. */
+    /** Compatibility identifier; customerNumber is the primary customer-facing reference. */
     publicId: varchar("public_id", { length: 32 }),
     marketingOptIn: boolean("marketing_opt_in").notNull().default(false),
     timezone: varchar("timezone", { length: 64 }).notNull().default("America/New_York"),

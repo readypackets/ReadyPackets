@@ -1706,7 +1706,7 @@ function OrderAutomationTab({ order, customer }: { order: any; customer: any }) 
   const redeliver = trpc.integrations.redeliverWebhook.useMutation({ onSuccess: () => { void deliveryLog.refetch(); toast.success("New webhook redelivery queued"); }, onError: (error) => toast.error("Could not create redelivery", errorMessage(error)) });
 
   const p101Payload = {
-    customer_id: customer?.customerNumber ?? `RP-CUST-${String(order.userId).padStart(6, '0')}`,
+    customer_id: customer?.customerNumber ?? "RP-CUS-UNKNOWN0",
     order_id: order.orderNumber,
     packet: order.p101Packet ?? "7",
     tier: order.p101Tier ?? "Mixed",

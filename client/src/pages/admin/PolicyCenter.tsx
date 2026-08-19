@@ -9,7 +9,7 @@
  * - View acceptance stats per policy
  * - View per-customer acceptance history
  */
-import { useState, useMemo } from "react";
+import { useRef, useState, useMemo } from "react";
 import {
   BookOpen,
   CheckCircle2,
@@ -18,12 +18,13 @@ import {
   Clock,
   Download,
   FileText,
+  FileUp,
   Plus,
   RefreshCw,
   Shield,
   Users,
 } from "lucide-react";
-import { trpc, errorMessage } from "@/lib/trpc";
+import { trpc, errorMessage, csrfToken, refreshCsrfToken } from "@/lib/trpc";
 import { formatDate, formatDateTime } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { Input, Select, Textarea } from "@/components/ui/Field";
@@ -77,10 +78,15 @@ export function PolicyCenterPage() {
   const [tab, setTab] = useState<"documents" | "acceptances">("documents");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [showCreateDoc, setShowCreateDoc] = useState(false);
-  const [showPublishVersion, setShowPublishVersion] = useState<PolicyDoc | null>(null);
+  const [showPublishVersion, setShowPublishVersion] = useState<Pick<PolicyDoc, "id" | "title"> | null>(null);
   const [showPreview, setShowPreview] = useState<{ title: string; content: string } | null>(null);
   const [acceptanceSearch, setAcceptanceSearch] = useState("");
   const [acceptancePolicyFilter, setAcceptancePolicyFilter] = useState("");
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+  const [importTarget, setImportTarget] = useState<"new" | "version">("new");
+  const [importing, setImporting] = useState(false);
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
+  const [pendingInitialBody, setPendingInitialBody] = useState("");
 
   // Create document form
   const [newSlug, setNewSlug] = useState("");
@@ -105,13 +111,23 @@ export function PolicyCenterPage() {
   }, { enabled: tab === "acceptances" });
 
   const createDoc = trpc.admin.createPolicyDocument.useMutation({
-    onSuccess() {
-      toast.success("Policy created", "You can now publish the first version.");
+    onSuccess(result) {
       void utils.admin.policies.invalidate();
       setShowCreateDoc(false);
+      if (pendingInitialBody.trim()) {
+        setShowPublishVersion({ id: result.id, title: newTitle.trim() || "Imported policy" });
+        setPvVersion("1.0");
+        setPvEffectiveDate(new Date().toISOString().slice(0, 10));
+        setPvBody(pendingInitialBody);
+        setPendingInitialBody("");
+        toast.success("Policy created", "Review the converted Markdown and publish its first version when ready.");
+      } else {
+        toast.success("Policy created", "You can now publish the first version.");
+      }
       setNewSlug("");
       setNewTitle("");
       setNewPublicRoute("");
+      setImportWarnings([]);
     },
     onError(err) {
       toast.error("Could not create policy", errorMessage(err));
@@ -140,6 +156,52 @@ export function PolicyCenterPage() {
       toast.error("Could not publish version", errorMessage(err));
     },
   });
+
+  const handlePolicyImport = async (selected: FileList | null) => {
+    const file = selected?.[0];
+    if (!file) return;
+    setImporting(true);
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const post = async (token: string) => fetch("/api/policies/import", {
+        method: "POST",
+        credentials: "include",
+        headers: { "X-RP-CSRF": token },
+        body,
+      });
+      let token = await refreshCsrfToken();
+      let response = await post(token ?? csrfToken() ?? "");
+      if (response.status === 403) {
+        token = await refreshCsrfToken();
+        if (token) response = await post(token);
+      }
+      const payload = (await response.json()) as { error?: string; suggestedTitle?: string; markdown?: string; warnings?: string[] };
+      if (!response.ok || !payload.markdown) throw new Error(payload.error ?? "The policy document could not be converted.");
+      setImportWarnings(payload.warnings ?? []);
+      if (importTarget === "new") {
+        const title = payload.suggestedTitle?.trim() || "Imported policy";
+        setNewTitle(title);
+        setNewSlug(title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 96));
+        setPendingInitialBody(payload.markdown);
+        setShowCreateDoc(true);
+        toast.success("Policy converted", "Confirm the policy details, then review the converted Markdown before publishing.");
+      } else {
+        setPvBody(payload.markdown);
+        toast.success("Policy converted", "Review the converted Markdown before publishing this version.");
+      }
+    } catch (error) {
+      toast.error("Could not import policy", error instanceof Error ? error.message : "The policy document could not be converted.");
+    } finally {
+      setImporting(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  };
+
+  const beginImport = (target: "new" | "version") => {
+    setImportTarget(target);
+    importInputRef.current?.click();
+  };
 
   const handleCreateDoc = () => {
     createDoc.mutate({
@@ -282,13 +344,15 @@ export function PolicyCenterPage() {
         title="Policy Center"
         description="Manage policy documents, publish new versions, and track customer acceptances."
         actions={
-          <Button
-            variant="primary"
-            leadingIcon={<Plus className="size-4" />}
-            onClick={() => setShowCreateDoc(true)}
-          >
-            New policy
-          </Button>
+          <div className="flex items-center gap-2">
+            <input ref={importInputRef} className="sr-only" type="file" accept=".doc,.docx,.pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" onChange={(event) => void handlePolicyImport(event.target.files)} />
+            <Button variant="outline" leadingIcon={<FileUp className="size-4" />} busy={importing} onClick={() => beginImport("new")}>
+              Import document
+            </Button>
+            <Button variant="primary" leadingIcon={<Plus className="size-4" />} onClick={() => { setPendingInitialBody(""); setImportWarnings([]); setShowCreateDoc(true); }}>
+              New policy
+            </Button>
+          </div>
         }
       />
 
@@ -433,6 +497,7 @@ export function PolicyCenterPage() {
         }
       >
         <div className="space-y-4">
+          {pendingInitialBody.trim() && <Alert tone="info" title="Document imported">Create this policy document first. The converted Markdown will then open for review before you publish version 1.0.</Alert>}
           <Input
             label="Title"
             required
@@ -506,6 +571,12 @@ export function PolicyCenterPage() {
               onChange={(e) => setPvEffectiveDate(e.target.value)}
             />
           </div>
+          <div className="flex justify-end">
+            <Button size="sm" variant="outline" leadingIcon={<FileUp className="size-3.5" />} busy={importing} onClick={() => beginImport("version")}>
+              Import DOC, DOCX, or PDF
+            </Button>
+          </div>
+          {importWarnings.length > 0 && <Alert tone="warning" title="Imported document requires review">{importWarnings.join(" ")}</Alert>}
           <Textarea
             label="Policy content (Markdown)"
             required

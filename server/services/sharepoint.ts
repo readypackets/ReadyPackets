@@ -646,7 +646,7 @@ async function resolveOrderStageFolder(orderId: number, phase: string, graphConf
   const order = rows[0];
   if (!order) throw new Error("Order not found for SharePoint synchronization.");
   const customer = await getUserById(order.userId);
-  const customerFolder = customer?.customerNumber ?? `RP-CUST-${String(order.userId).padStart(6, "0")}`;
+  const customerFolder = customer?.customerNumber ?? "RP-CUS-UNKNOWN0";
   const stageRows = order.workflowId ? await db.select({ stages: orderWorkflows.stages }).from(orderWorkflows).where(eq(orderWorkflows.id, order.workflowId)).limit(1) : [];
   const stages = Array.isArray(stageRows[0]?.stages) ? stageRows[0]!.stages as WorkflowSharePointStage[] : [];
   const stageKey = workflowStageKeyForPhase(phase);
@@ -760,7 +760,7 @@ export async function exportIntakeMarkdownToPhaseTwo(orderId: number, markdown: 
 
   const order = orderRows[0];
   const customer = await getUserById(order.userId);
-  const customerFolder = customer?.customerNumber ?? `RP-CUST-${String(order.userId).padStart(6, "0")}`;
+  const customerFolder = customer?.customerNumber ?? "RP-CUS-UNKNOWN0";
   const customerPublicId = customer?.publicId ?? customerFolder;
   const intakeFileName = buildOrderFileName({ customerPublicId, orderNumber: order.orderNumber, sourceName: "INTAKE_ANSWERS.md" });
   const { folderPath } = await resolveOrderStageFolder(orderId, "phase_2_synthesis", graphConfig, "document");
@@ -1022,7 +1022,7 @@ async function jobAttachPlaceholders(orderId: number, phase: string): Promise<vo
   if (orderRows.length === 0) return;
   const orderNumber = orderRows[0]!.orderNumber;
   const customer = await getUserById(orderRows[0]!.userId);
-  const customerFolder = customer?.customerNumber ?? `RP-CUST-${String(orderRows[0]!.userId).padStart(6, "0")}`;
+  const customerFolder = customer?.customerNumber ?? "RP-CUS-UNKNOWN0";
   const customerPublicId = customer?.publicId ?? customerFolder;
 
   const placeholders = DEFAULT_PLACEHOLDERS[phase] ?? [];
@@ -1097,7 +1097,7 @@ export async function jobNotifyWebhooks(orderId: number, phase: string): Promise
   const order = orderRows[0]!;
 
   const customer = await getUserById(order.userId);
-  const customerId = customer?.customerNumber ?? `RP-CUST-${String(order.userId).padStart(6, "0")}`;
+  const customerId = customer?.customerNumber ?? "RP-CUS-UNKNOWN0";
 
   const isP101 = phase === "phase_1_intake";
   const isP201 = phase === "phase_2_synthesis";
@@ -1195,7 +1195,7 @@ async function rebuildPhaseStartPayload(orderId: number, eventType: "P101" | "P2
   const [order] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
   if (!order) throw new Error("Order no longer exists for this phase-start webhook delivery.");
   const customer = await getUserById(order.userId);
-  const customerId = customer?.customerNumber ?? `RP-CUST-${String(order.userId).padStart(6, "0")}`;
+  const customerId = customer?.customerNumber ?? "RP-CUS-UNKNOWN0";
   const minimalPayload = {
     customer_id: customerId,
     order_id: order.orderNumber,

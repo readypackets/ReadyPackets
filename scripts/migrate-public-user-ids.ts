@@ -1,20 +1,20 @@
 import { eq } from "drizzle-orm";
 import { closeDatabase, db } from "../server/db/client.js";
 import { siteSettings, users } from "../server/db/schema.js";
-import { generatePublicUserId } from "../server/security/crypto.js";
+import { generateCustomerNumber } from "../server/security/crypto.js";
 
 /**
  * One-time public account reference migration.
  *
- * Internal numeric user IDs and legacy customer numbers remain untouched. Only
- * the externally displayed `users.public_id` value changes. The database unique
- * index is the collision authority; each update retries a randomly generated
- * candidate if necessary. All data changes occur in one transaction.
+ * Internal numeric user IDs remain untouched. The externally displayed
+ * `users.customer_number` and compatibility `users.public_id` are both aligned
+ * to one opaque RP-CUS reference. The database unique indexes are the collision
+ * authority; each update retries a randomly generated candidate if necessary.
  */
 async function main(): Promise<void> {
   const migrated = await db.transaction(async (tx) => {
     const rows = await tx
-      .select({ id: users.id, createdAt: users.createdAt, publicId: users.publicId })
+      .select({ id: users.id, publicId: users.publicId, customerNumber: users.customerNumber })
       .from(users)
       .orderBy(users.id);
 
@@ -24,10 +24,11 @@ async function main(): Promise<void> {
       let assigned = false;
       let lastError: unknown;
       for (let attempt = 0; attempt < 10 && !assigned; attempt += 1) {
-        const publicId = generatePublicUserId(row.createdAt);
+        const publicId = generateCustomerNumber();
         try {
-          await tx.update(users).set({ publicId }).where(eq(users.id, row.id));
+          await tx.update(users).set({ customerNumber: publicId, publicId }).where(eq(users.id, row.id));
           if (row.publicId) legacyToNew.set(row.publicId.toUpperCase(), publicId);
+          if (row.customerNumber) legacyToNew.set(row.customerNumber.toUpperCase(), publicId);
           assigned = true;
           updated += 1;
         } catch (error) {
@@ -66,14 +67,14 @@ async function main(): Promise<void> {
   });
 
   const verification = await db
-    .select({ id: users.id, publicId: users.publicId })
+    .select({ id: users.id, publicId: users.publicId, customerNumber: users.customerNumber })
     .from(users);
   const unique = new Set(verification.map((row) => row.publicId));
-  if (verification.some((row) => !row.publicId) || unique.size !== verification.length) {
-    throw new Error("Customer-ID migration verification failed; duplicate or missing public IDs detected.");
+  if (verification.some((row) => !row.publicId || !row.customerNumber || row.publicId !== row.customerNumber || !/^RP-CUS-[A-Z0-9]{6,8}$/.test(row.publicId)) || unique.size !== verification.length) {
+    throw new Error("Customer-ID migration verification failed; duplicate, missing, or invalid RP-CUS IDs detected.");
   }
 
-  console.log(JSON.stringify({ migrated, verified: verification.length, format: "RPYY-XXXXXXXX" }));
+  console.log(JSON.stringify({ migrated, verified: verification.length, format: "RP-CUS-XXXXXXXX" }));
 }
 
 void main()

@@ -9,7 +9,7 @@
 import { and, desc, eq, isNull, like, or, sql } from "drizzle-orm";
 import { db } from "./client.js";
 import { users, userProfileValues } from "./schema.js";
-import { blindIndex, decryptField, encryptField, generatePublicUserId } from "../security/crypto.js";
+import { blindIndex, decryptField, encryptField, generateCustomerNumber } from "../security/crypto.js";
 import type { UserRole } from "../../shared/domain.js";
 import { insertedId } from "./result.js";
 
@@ -130,7 +130,6 @@ export async function createUser(input: CreateUserInput): Promise<DecryptedUser>
 
   const userId = insertedId(inserted);
   const aad = `user:${userId}`;
-  const customerNumber = `RP-CUST-${String(userId).padStart(6, '0')}`;
   const basePatch = {
     emailEnc: encryptField(email, aad) ?? "",
     firstNameEnc: encryptField(input.firstName ?? null, aad),
@@ -142,7 +141,6 @@ export async function createUser(input: CreateUserInput): Promise<DecryptedUser>
     phoneEnc: encryptField(input.phone ?? null, aad),
     addressEnc: encryptField(input.address ?? null, aad),
     notesEnc: encryptField(input.notes ?? null, aad),
-    customerNumber,
   };
 
   // The database unique index is authoritative. Retrying a collision keeps the
@@ -151,9 +149,10 @@ export async function createUser(input: CreateUserInput): Promise<DecryptedUser>
   let lastError: unknown;
   for (let attempt = 0; attempt < 5 && !persisted; attempt += 1) {
     try {
+      const customerNumber = generateCustomerNumber();
       await db
         .update(users)
-        .set({ ...basePatch, publicId: generatePublicUserId() })
+        .set({ ...basePatch, customerNumber, publicId: customerNumber })
         .where(eq(users.id, userId));
       persisted = true;
     } catch (error) {

@@ -36,6 +36,7 @@ import { resolveClientIp } from "./security/ipAddress.js";
 import { createDownloadRouter } from "./http/downloads.js";
 import { createInvoiceDownloadRouter } from "./http/invoiceDownloads.js";
 import { createUploadRouter } from "./http/uploads.js";
+import { createPolicyImportRouter } from "./http/policyImports.js";
 import { createAvatarRouter } from "./http/avatar.js";
 import { createSharePointDelegatedAuthRouter } from "./http/sharepointDelegatedAuth.js";
 import { logger } from "./observability/logger.js";
@@ -310,6 +311,7 @@ export function createApp(): Express {
 
   app.use("/api/files", createDownloadRouter());
   app.use("/api/files", createUploadRouter());
+  app.use("/api/policies", createPolicyImportRouter());
   app.use("/api/invoices", createInvoiceDownloadRouter());
   app.use("/api/avatar", createAvatarRouter());
 

@@ -177,20 +177,30 @@ export function generateBackupCode(): string {
   return `${pick()}-${pick()}`;
 }
 
-/** Sequential-looking but unguessable order number.
- * When customerNumber is supplied (e.g. RP-CUST-000002) the order number
- * embeds the customer ID: RP-C000002-2608-4F7QK2
+const PUBLIC_REFERENCE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+/**
+ * Opaque customer reference. This is deliberately unrelated to the internal
+ * database key and contains no sequential customer number.
+ *
+ * Example: RP-CUS-7K4M2QPX
+ */
+export function generateCustomerNumber(length = 8): string {
+  const safeLength = Math.max(6, Math.min(8, Math.floor(length)));
+  const token = Array.from({ length: safeLength }, () => PUBLIC_REFERENCE_ALPHABET[randomInt(0, PUBLIC_REFERENCE_ALPHABET.length)]).join("");
+  return `RP-CUS-${token}`;
+}
+
+/**
+ * Opaque public order reference. New orders include the owning customer’s
+ * RP-CUS token without exposing an internal ID or the retired RP-C0000XX form.
  */
 export function generateOrderNumber(date = new Date(), customerNumber?: string | null): string {
   const year = String(date.getUTCFullYear()).slice(2);
   const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const suffix = randomBytes(4).toString("hex").toUpperCase().slice(0, 6);
-  if (customerNumber) {
-    // Extract the numeric part from RP-CUST-000002 → C000002
-    const custPart = customerNumber.replace(/^RP-CUST-/, "C");
-    return `RP-${custPart}-${year}${month}-${suffix}`;
-  }
-  return `RP-${year}${month}-${suffix}`;
+  const suffix = Array.from({ length: 6 }, () => PUBLIC_REFERENCE_ALPHABET[randomInt(0, PUBLIC_REFERENCE_ALPHABET.length)]).join("");
+  const token = customerNumber?.match(/^RP-CUS-([A-Z0-9]{6,8})$/)?.[1];
+  return token ? `RP-ORD-${token}-${year}${month}-${suffix}` : `RP-ORD-${year}${month}-${suffix}`;
 }
 
 /**
