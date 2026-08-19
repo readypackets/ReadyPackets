@@ -71,6 +71,7 @@ async function main(): Promise<void> {
   // but leaves it in the shell history and, briefly, the process table. It is
   // therefore opt-in and warned about rather than the default path.
   const passwordArg = readFlag(args, "password");
+  const passwordStdin = args.includes("--password-stdin");
   const generate = args.includes("--generate-password");
 
   const email = (emailArg ?? (await ask("Administrator email address: "))).trim().toLowerCase();
@@ -101,6 +102,20 @@ async function main(): Promise<void> {
       "\nWarning: the password was supplied on the command line, so it is now in your\n" +
         "shell history. Clear it, or prefer --generate-password.\n",
     );
+  } else if (passwordStdin) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+    password = Buffer.concat(chunks).toString("utf8").trim();
+    const policy = await getPasswordPolicy();
+    const result = evaluatePassword(password, policy, {
+      email,
+      names: [firstName, lastName],
+    });
+    if (!result.valid) {
+      console.error("The password read from standard input does not meet the policy:");
+      for (const problem of result.problems) console.error(`  - ${problem}`);
+      process.exit(1);
+    }
   } else if (generate || !process.stdin.isTTY) {
     password = generatePassword();
     console.log("\nGenerated password (store it now; it will not be shown again):");

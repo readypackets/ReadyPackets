@@ -1,80 +1,74 @@
-# ReadyPackets One-Click Autoinstall
+# ReadyPackets Guided Fresh-VPS Installer
 
-`deploy/one-click-install.sh` is the non-interactive installer for a **fresh** Ubuntu or Debian server. It displays progress throughout the installation, clones the public ReadyPackets source, selects native VPS or Docker installation through a variable, configures TLS, and can optionally restore the latest encrypted configuration-vault bundle from a separate private GitHub repository.
+The ReadyPackets guided installer provisions a **fresh Ubuntu or Debian VPS** from the latest public GitHub `main` commit by default. It asks only for deployment values that cannot be safely inferred, displays a redacted configuration review, and does not change the server until the operator types the final confirmation phrase.
 
-> Do not run this installer on a server that already contains a ReadyPackets project directory. It deliberately refuses to overwrite an existing deployment.
+> The installer is intended for a fresh server. It refuses to overwrite an existing project directory. Before running it, point the public hostname you plan to use to the server and ensure SSH access is available.
 
-## One pasted command: Native VPS
+## Start a guided installation
 
-First create an A record for the intended hostname that points to the server. Then, as `root` or a sudo-capable user, paste one command and replace the bracketed values:
+Log in to the fresh server as a sudo-capable user and run:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/readypackets/ReadyPackets/main/deploy/one-click-install.sh && \
+curl -fsSLO https://raw.githubusercontent.com/readypackets/ReadyPackets/main/deploy/one-click-install.sh \
+  && chmod 0700 one-click-install.sh \
+  && sudo ./one-click-install.sh
+```
+
+The script downloads the latest public `main` source only after you complete the final review. It prints the resolved commit SHA at completion, so the installed version can be recorded independently.
+
+## Guided prompt sequence
+
+| Prompt group | Required? | What it controls |
+|---|---:|---|
+| Installation type | Yes | Native VPS, existing Docker, or Docker bootstrap. Native VPS is the recommended default. |
+| Public website hostname | Yes | The hostname used for TLS, CSP/origin protection, sessions, email links, and the health check. |
+| Website display name | Optional | Browser titles and public metadata; defaults to `ReadyPackets`. |
+| TLS method | Yes | Let’s Encrypt, Cloudflare Origin CA, or explicitly confirmed HTTP-only mode. |
+| Let’s Encrypt email | Conditional | Required only if Let’s Encrypt is selected. |
+| Cloudflare PEM paths | Conditional | Required only when Cloudflare Origin CA is selected. The certificate and private key are not displayed. |
+| Public source repository | Optional | Defaults to `readypackets/ReadyPackets` and the latest `main` commit. Advanced operators can choose a public fork, branch, or reviewed 40-character commit SHA. |
+| Configuration-vault recovery | Optional | Retrieves the newest encrypted backup from a private GitHub vault after receiving a fine-grained token and recovery passphrase through masked prompts. |
+| Nightly local backup timer | Optional | Defaults to enabled on the native VPS path. |
+| Initial administrator | Required on a new installation without vault recovery | Collects administrator email and full name, then either generates a one-time password or accepts a masked password over standard input. MFA remains mandatory after first sign-in. |
+| Final review | Yes | Redacts secrets, summarizes choices, and requires `INSTALL READY PACKETS` before package installation or any configuration change. |
+
+## Latest commit or a reviewed release
+
+The guided installer uses the latest `main` commit by default. To install a reviewed immutable release instead, choose the advanced source option when prompted and provide the complete 40-character Git commit SHA.
+
+## Fully unattended use
+
+Automation systems can skip all prompts by providing the documented environment variables and the explicit confirmation value. For example:
+
+```bash
 sudo env \
   RP_DOMAIN='portal.example.com' \
   RP_EMAIL='operations@example.com' \
-  RP_SITE_NAME='ReadyPackets' \
   RP_MODE='native' \
   RP_TLS_PROVIDER='letsencrypt' \
+  RP_SITE_NAME='ReadyPackets' \
+  RP_ADMIN_EMAIL='admin@example.com' \
+  RP_ADMIN_NAME='Platform Administrator' \
+  RP_ADMIN_GENERATE_PASSWORD='yes' \
+  RP_AUTO_CONFIRM='INSTALL_READY_PACKETS' \
   bash one-click-install.sh
 ```
 
-The command visibly reports package setup, source retrieval, installer execution, and the final health check. It installs MySQL, Node.js, nginx, systemd, TLS renewal, and the ReadyPackets portal directly on the server.
-
-## Select the installation type
-
-| Value for `RP_MODE` | Result |
-|---|---|
-| `native` | Installs the production VPS stack directly on the host. This is the recommended option. |
-| `docker` | Uses a Docker Engine and Docker Compose installation that already exists. |
-| `docker-bootstrap` | Installs Docker Engine and Docker Compose first, then deploys the application container stack. |
-
-For example, replace `RP_MODE='native'` with `RP_MODE='docker-bootstrap'` to create a Docker-based installation on a fresh server.
-
-## Cloudflare Origin CA
-
-When Cloudflare proxies the hostname, create an Origin Certificate for the hostname, transfer the certificate/key to a root-only directory, and set Cloudflare SSL/TLS mode to **Full (strict)**. Use the following variables instead of Let’s Encrypt:
-
-```bash
-RP_TLS_PROVIDER='cloudflare-origin' \
-RP_CLOUDFLARE_ORIGIN_CERT='/root/readypackets-tls/origin-cert.pem' \
-RP_CLOUDFLARE_ORIGIN_KEY='/root/readypackets-tls/origin-key.pem'
-```
-
-## Optional latest GitHub configuration-vault recovery
-
-This restores platform configuration, application encryption keys, and integration secrets from the latest passphrase-encrypted configuration-vault archive. It retains the **new server’s database credentials** and does not import customer data, orders, uploaded files, sessions, or logs.
-
-Add these variables to the same `sudo env` command only when a private GitHub configuration-vault backup already exists:
-
-```bash
-RP_GITHUB_CONFIG_REPOSITORY='owner/private-readypackets-vault' \
-RP_GITHUB_CONFIG_BRANCH='main' \
-RP_GITHUB_CONFIG_FOLDER='readypackets-platform-config' \
-RP_GITHUB_CONFIG_TOKEN='github_pat_REPLACE_WITH_TOKEN' \
-RP_GITHUB_CONFIG_PASSPHRASE='REPLACE_WITH_16_OR_MORE_CHARACTER_RECOVERY_PASSPHRASE'
-```
-
-The vault repository must be private. The script verifies repository privacy and the downloaded archive’s SHA-256 manifest before applying the encrypted bundle. It writes the token and passphrase only to temporary root-only files, removes them before exit, and never prints either value.
-
-## Pin a reviewed release
-
-For a production installation, pin the script and source checkout to a reviewed immutable 40-character commit SHA rather than a moving branch tip. Replace `main` in the download URL with the approved SHA and add:
-
-```bash
-RP_COMMIT='40_CHARACTER_APPROVED_COMMIT_SHA'
-```
+The generated initial administrator password is printed once to the secured terminal. Store it in an offline password manager immediately. Use `RP_ADMIN_PASSWORD` only in protected automation where exposure through the execution environment is understood and controlled; the guided flow never places a typed password in shell history or command-line arguments.
 
 ## Verification
 
-On a Let’s Encrypt deployment, the script completes only after this public health check succeeds:
+After installation, verify the returned public health endpoint:
 
 ```bash
 curl -fsS https://portal.example.com/api/health
 ```
 
-For Cloudflare Origin CA, it validates the local nginx-to-application listener during installation; then verify through Cloudflare once the DNS proxy is active.
+For a native VPS, confirm the service, reverse proxy, and backup timer:
 
-## Security boundaries
+```bash
+sudo systemctl status readypackets nginx mysql
+sudo systemctl status readypackets-backup.timer
+```
 
-Never place a private vault token, vault recovery passphrase, `.env` file, Cloudflare private key, database dump, or application-secret configuration bundle in a public repository. Environment variables can be read by privileged users while the process runs; use this one-time mechanism only in a trusted root shell, and avoid recording the command in shared shell history when it carries vault recovery inputs.
+The installer’s progress output identifies the installed source commit and portal URL. Keep that commit value with the server’s operational records.
