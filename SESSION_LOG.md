@@ -3279,3 +3279,12 @@ Secret-inclusive publication is intentional, manual, and fail-closed. Each backu
 **Safe recovery:** The guided bootstrap supports the failed-fresh-install resume path. On the affected server, re-download the current bootstrap and rerun it with `RP_RESUME_FAILED_INSTALL=yes`; it fetches the latest selected `main` source into the existing `/srv/readypackets` Git checkout, refuses to run if `readypackets.service` is active, preserves existing generated secrets in `/etc/readypackets/portal.env`, rebuilds the required runners, and then resumes migrations/seed/configuration. This path must not be used on a live portal.
 
 **No new source correction was required:** The latest release already includes the repair in commit `431425f`; this incident was added to the session log and will be published with the next log-only commit.
+
+
+## 2026-08-19 — Installer migration-boundary fallback repair
+
+**Follow-up user report:** The failed-fresh-install resume path again reached `Applying database migrations` with `dist/seed.js` and `dist/create-admin.js` present, but `/opt/readypackets/dist/migrate.js` missing. The console therefore continued to match the historical missing-runner condition despite the earlier artifact-build safeguard.
+
+**Additional repair:** Native `deploy/install.sh` now has `ensure_migration_runner()` immediately before schema execution. If `dist/migrate.js` is missing or empty at that exact boundary, the installer rebuilds it directly from the checked-out `scripts/migrate.ts` source using the local pnpm/esbuild toolchain, restores root-owned non-writable permissions, confirms the bundle exists, and validates it with Node before any service-account database command runs. It fails with a targeted source/build error only if reconstruction cannot succeed. This makes a clean schema initialization resilient to runner removal between the original build and migration phases.
+
+**Validation:** All three bootstrap/native scripts passed Bash syntax checking. An isolated application tree without `dist/migrate.js` successfully rebuilt the runner from `scripts/migrate.ts`; the resulting 11.8 KB bundle passed Node 22 syntax validation. The resume command will be pinned to the release commit so both the downloaded bootstrap and the checked-out source must use this repair.
