@@ -3118,3 +3118,12 @@ The user asked for an NDA for a potential partner who may work on building the R
 - Standard visual review rendered all five pages; the cover, section hierarchy, flow, signature blocks, and branded footer were legible and balanced.
 - The PDF and editable Typst source are archived in private GitHub under `docs/legal/ReadyPackets_Prospective_Partner_MNDA_Draft.pdf` and `.typ`.
 - This is a working legal draft, not legal advice, and must be reviewed by qualified counsel before signature or reliance.
+
+
+## 2026-08-18 — Editable DOCX and Markdown partner MNDA versions
+
+The user requested editable Word (`.docx`) and Markdown versions of the branded prospective platform-development partner MNDA. The finalized five-page attorney-review PDF draft was used as the single content source.
+
+A branded DOCX was generated with the ReadyPackets document logo, navy/teal/gold presentation, cover-page confidentiality and attorney-review notice, agreement title, placeholder fields, complete ten-section agreement body, and dual signature blocks. The DOCX content was read back after generation and corrected to remove a duplicate agreement-reference line; the resulting document preserves every operative section and the signature fields.
+
+A matching Markdown source was created with the same bracketed completion fields, attorney-review warning, platform/security and data-protection language, Maryland governing-law provision, and editable signature table. Both files are archived in `docs/legal/ReadyPackets_Prospective_Partner_MNDA_Draft.docx` and `.md` alongside the previously published PDF and Typst source. These files are legal working drafts and remain subject to qualified attorney review before use or signature.
