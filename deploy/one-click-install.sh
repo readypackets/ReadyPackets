@@ -8,6 +8,26 @@ set -Eeuo pipefail
 umask 077
 
 readonly DEFAULT_REPOSITORY="readypackets/ReadyPackets"
+SETTINGS_FILE="${RP_SETTINGS_FILE:-}"
+
+# A failed fresh installation can safely reuse a root-owned, non-secret profile
+# rather than prompting an operator to re-enter the selected deployment shape.
+# Secrets (passwords, tokens, private keys, vault passphrases) are deliberately
+# rejected from this profile and must continue to use protected interactive or
+# temporary-file paths.
+if [[ -n "$SETTINGS_FILE" ]]; then
+  [[ $EUID -eq 0 ]] || { printf '%s\n' 'RP_SETTINGS_FILE may be loaded only by root.' >&2; exit 1; }
+  [[ -f "$SETTINGS_FILE" ]] || { printf 'RP_SETTINGS_FILE was not found: %s\n' "$SETTINGS_FILE" >&2; exit 1; }
+  [[ "$(stat -c '%U' "$SETTINGS_FILE")" == "root" && "$(stat -c '%a' "$SETTINGS_FILE")" == "600" ]] \
+    || { printf 'RP_SETTINGS_FILE must be owned by root with mode 0600: %s\n' "$SETTINGS_FILE" >&2; exit 1; }
+  if grep -Eq '^(RP_ADMIN_PASSWORD|RP_GITHUB_CONFIG_TOKEN|RP_GITHUB_CONFIG_PASSPHRASE|RP_CLOUDFLARE_ORIGIN_KEY)=' "$SETTINGS_FILE"; then
+    printf '%s\n' 'RP_SETTINGS_FILE must not contain passwords, tokens, passphrases, or private keys.' >&2
+    exit 1
+  fi
+  # shellcheck disable=SC1090
+  set -a; source "$SETTINGS_FILE"; set +a
+fi
+
 REPOSITORY="${RP_REPOSITORY:-$DEFAULT_REPOSITORY}"
 REF="${RP_REF:-main}"
 COMMIT="${RP_COMMIT:-}"

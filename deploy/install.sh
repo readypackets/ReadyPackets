@@ -293,9 +293,17 @@ cp -a "${APP_DIR}/scripts/data/." "${APP_DIR}/dist/data/"
 # pruning only after the runtime has been initialized keeps a fresh install
 # deterministic and prevents an absent migration artifact from blocking setup.
 
-# The service account needs to read the build but must not be able to modify it.
-chown -R root:root "$APP_DIR"
-chmod -R go-w "$APP_DIR"
+# The runtime tree contains application code and dependencies, not environment
+# secrets. The service account must be able to traverse directories and read its
+# root-owned runtime modules. Preserve existing owner/execute bits while adding
+# only the read/traverse rights required by the dedicated service group.
+grant_runtime_read_access() {
+  chown -R root:"$APP_USER" "$APP_DIR"
+  find "$APP_DIR" -type d -exec chmod g+rx {} +
+  find "$APP_DIR" -type f -exec chmod g+r {} +
+  chmod -R go-w "$APP_DIR"
+}
+grant_runtime_read_access
 
 # ---------------------------------------------------------------------------
 # Environment file
@@ -390,6 +398,7 @@ rebuild_migration_runner() {
     || die "The service account cannot read the database migration runner: $artifact"
 }
 rebuild_migration_runner
+grant_runtime_read_access
 
 log "Applying database migrations"
 runuser -u "$APP_USER" -- env $(grep -v '^#' "$ENV_FILE" | xargs) node "${APP_DIR}/dist/migrate.js"
@@ -406,6 +415,7 @@ pnpm prune --prod
 for runtime_artifact in dist/server.js dist/migrate.js dist/seed.js dist/create-admin.js; do
   [[ -s "$runtime_artifact" ]] || die "Production dependency pruning removed a required artifact: ${APP_DIR}/${runtime_artifact}."
 done
+grant_runtime_read_access
 
 if [[ -n "$GITHUB_CONFIG_REPOSITORY" ]]; then
   log "Downloading the latest encrypted configuration vault bundle from private GitHub."
