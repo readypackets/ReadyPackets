@@ -23,6 +23,21 @@ const MIGRATIONS_DIR = path.resolve(process.cwd(), "drizzle", "migrations");
  */
 const legacyMigrationLedgerInsert = /^INSERT\s+(?:IGNORE\s+)?INTO\s+`?schema_migrations`?\b/i;
 
+/** Remove only leading SQL comments before classifying a legacy statement. */
+function stripLeadingSqlComments(statement: string): string {
+  let remaining = statement.trimStart();
+  while (remaining.startsWith("--") || remaining.startsWith("/*")) {
+    if (remaining.startsWith("--")) {
+      const newline = remaining.indexOf("\n");
+      remaining = newline < 0 ? "" : remaining.slice(newline + 1).trimStart();
+      continue;
+    }
+    const end = remaining.indexOf("*/", 2);
+    remaining = end < 0 ? "" : remaining.slice(end + 2).trimStart();
+  }
+  return remaining;
+}
+
 /**
  * One historic migration supplied its own fixed ledger checksum. Accept that
  * known, immutable value without relaxing checksum checks for any other file.
@@ -144,7 +159,7 @@ async function main(): Promise<void> {
     }
 
     const statements = splitStatements(sql).filter(
-      (statement) => !legacyMigrationLedgerInsert.test(statement),
+      (statement) => !legacyMigrationLedgerInsert.test(stripLeadingSqlComments(statement)),
     );
     process.stdout.write(`Applying ${filename} (${statements.length} statements)... `);
     await connection.beginTransaction();
