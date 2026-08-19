@@ -9,7 +9,7 @@
  * argv vector, settings record, browser response, audit event, or log output.
  */
 import net from "node:net";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -22,6 +22,11 @@ const TLS_INCLUDE = `${TLS_DIRECTORY}/nginx-tls.conf`;
 const NGINX = "/usr/sbin/nginx";
 const SYSTEMCTL = "/usr/bin/systemctl";
 const OPENSSL = "/usr/bin/openssl";
+const CERTBOT = "/usr/bin/certbot";
+const CURL = "/usr/bin/curl";
+const APP_ENV = "/etc/readypackets/portal.env";
+const NGINX_SITE = "/etc/nginx/sites-available/readypackets";
+const READY_PACKETS_SERVICE = "readypackets";
 const MAX_MESSAGE_BYTES = 96 * 1024;
 const MAX_PEM_BYTES = 32 * 1024;
 const HOSTNAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
@@ -44,9 +49,11 @@ function run(command, args, stdin = "", timeoutMs = 20_000) {
 }
 function safeRead(path) { try { return readFileSync(path, "utf8"); } catch { return ""; } }
 function writeAtomic(path, contents, mode) {
+  const existing = existsSync(path) ? statSync(path) : null;
   const staged = `${path}.new-${process.pid}`;
   writeFileSync(staged, contents, { encoding: "utf8", mode });
   chmodSync(staged, mode);
+  if (existing) chownSync(staged, existing.uid, existing.gid);
   renameSync(staged, path);
 }
 function includeFor(provider, certificate, key) {
@@ -126,6 +133,66 @@ async function installCloudflare(input) {
   await reloadNginxWithRollback(previousInclude, backup);
   return { ...(await status()), backup };
 }
+function escapeRegExp(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function validEmail(value) { return typeof value === "string" && value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value); }
+function envValue(contents, key) { return contents.match(new RegExp(`^${escapeRegExp(key)}=(.*)$`, "m"))?.[1]?.trim() ?? ""; }
+function setEnvValue(contents, key, value) {
+  const line = `${key}=${value}`;
+  const pattern = new RegExp(`^${escapeRegExp(key)}=.*$`, "m");
+  return pattern.test(contents) ? contents.replace(pattern, line) : `${contents.replace(/\s*$/, "")}\n${line}\n`;
+}
+function currentHostname() {
+  const appUrl = envValue(safeRead(APP_ENV), "APP_URL");
+  try { return new URL(appUrl).hostname.toLowerCase(); } catch { return ""; }
+}
+function rewriteNginxHostname(contents, hostname) {
+  const escaped = hostname.replace(/\./g, "\\.");
+  let next = contents.replace(/^\s*server_name\s+[^;]+;/gm, (line) => `${line.slice(0, line.indexOf("server_name"))}server_name ${hostname};`);
+  next = next.replace(/(if \(\$host !~\* \^\()[^)]+(\)\$\) \{)/, `$1${escaped}$2`);
+  if (next === contents || /__RP_/.test(next)) deny("The active nginx configuration is not a supported ReadyPackets configuration.");
+  return next;
+}
+function certNameFor(hostname) { return `readypackets-${hostname.replace(/[^a-z0-9]/gi, "-").slice(0, 48)}`; }
+function backupDomainMaterial() {
+  const backup = `/var/backups/readypackets/domain-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  mkdirSync(backup, { recursive: true, mode: 0o700 });
+  for (const source of [APP_ENV, NGINX_SITE, TLS_INCLUDE]) if (existsSync(source)) copyFileSync(source, join(backup, source.split("/").pop()));
+  return backup;
+}
+async function updateDomainLetsEncrypt(input) {
+  if (!HOSTNAME.test(input.hostname) || !validEmail(input.email)) deny("Invalid hostname or certificate contact email.");
+  const oldHostname = currentHostname();
+  if (!oldHostname) deny("The current APP_URL is invalid; use the server deployment procedure to repair it.");
+  if (oldHostname === input.hostname) deny("The requested hostname is already the portal domain.");
+  if (!existsSync(CERTBOT) || !existsSync(APP_ENV) || !existsSync(NGINX_SITE)) deny("The protected domain-control prerequisites are unavailable on this server.");
+  const backup = backupDomainMaterial();
+  const previousEnv = safeRead(APP_ENV); const previousNginx = safeRead(NGINX_SITE); const previousInclude = safeRead(TLS_INCLUDE);
+  try {
+    writeAtomic(NGINX_SITE, rewriteNginxHostname(previousNginx, input.hostname), 0o640);
+    await run(NGINX, ["-t"]); await run(SYSTEMCTL, ["reload", "nginx"]);
+    const certName = certNameFor(input.hostname);
+    await run(CERTBOT, ["certonly", "--webroot", "-w", "/var/www/html", "--non-interactive", "--agree-tos", "--email", input.email, "--cert-name", certName, "--keep-until-expiring", "-d", input.hostname], "", 150_000);
+    const certificate = `/etc/letsencrypt/live/${certName}/fullchain.pem`; const key = `/etc/letsencrypt/live/${certName}/privkey.pem`;
+    if (!existsSync(certificate) || !existsSync(key)) deny("Let's Encrypt did not create the expected certificate files.");
+    const hostnameCheck = await run(OPENSSL, ["x509", "-in", certificate, "-noout", "-checkhost", input.hostname]);
+    if (!hostnameCheck.includes("does match certificate")) deny("The new Let's Encrypt certificate does not match the requested hostname.");
+    writeAtomic(TLS_INCLUDE, includeFor("letsencrypt", certificate, key), 0o640);
+    let nextEnv = setEnvValue(previousEnv, "APP_URL", `https://${input.hostname}`);
+    nextEnv = setEnvValue(nextEnv, "ALLOWED_ORIGINS", `https://${input.hostname}`);
+    writeAtomic(APP_ENV, nextEnv, 0o640);
+    await run(NGINX, ["-t"]); await run(SYSTEMCTL, ["reload", "nginx"]); await run(SYSTEMCTL, ["restart", READY_PACKETS_SERVICE]);
+    await run(CURL, ["-fsS", "--max-time", "20", "--resolve", `${input.hostname}:443:127.0.0.1`, "-k", `https://${input.hostname}/api/health`]);
+    return { ...(await status()), previousHostname: oldHostname, hostname: input.hostname, backup };
+  } catch (error) {
+    writeAtomic(APP_ENV, previousEnv, 0o640); writeAtomic(NGINX_SITE, previousNginx, 0o640); writeAtomic(TLS_INCLUDE, previousInclude, 0o640);
+    await run(NGINX, ["-t"]).catch(() => undefined); await run(SYSTEMCTL, ["reload", "nginx"]).catch(() => undefined); await run(SYSTEMCTL, ["restart", READY_PACKETS_SERVICE]).catch(() => undefined);
+    throw error;
+  }
+}
+async function domainStatus() {
+  const appUrl = envValue(safeRead(APP_ENV), "APP_URL");
+  return { appUrl, hostname: currentHostname() || null, certificate: await status() };
+}
 async function activateLetsEncrypt(input) {
   const certificate = `/etc/letsencrypt/live/${input.hostname}/fullchain.pem`;
   const key = `/etc/letsencrypt/live/${input.hostname}/privkey.pem`;
@@ -140,6 +207,7 @@ async function activateLetsEncrypt(input) {
 function validateRequest(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) deny("Request must be an object.");
   if (value.action === "status") return { action: "status" };
+  if (value.action === "domain-status") return { action: "domain-status" };
   if (value.action === "install-cloudflare-origin") {
     const { hostname, certificate, privateKey, caRoot = "" } = value;
     if (typeof hostname !== "string" || !isPem(certificate, "BEGIN CERTIFICATE") || !isPem(privateKey, "BEGIN") || (caRoot && !isPem(caRoot, "BEGIN CERTIFICATE"))) deny("Invalid Cloudflare Origin CA payload.");
@@ -148,6 +216,10 @@ function validateRequest(value) {
   if (value.action === "activate-letsencrypt") {
     if (typeof value.hostname !== "string" || value.confirmation !== "USE LETS ENCRYPT") deny("Invalid Let's Encrypt activation confirmation.");
     return { action: value.action, hostname: value.hostname };
+  }
+  if (value.action === "update-domain-letsencrypt") {
+    if (typeof value.hostname !== "string" || !validEmail(value.email) || value.confirmation !== "CHANGE DOMAIN AND REQUEST CERTIFICATE") deny("Invalid domain change confirmation.");
+    return { action: value.action, hostname: value.hostname.toLowerCase(), email: value.email, confirmation: value.confirmation };
   }
   deny("Unsupported certificate action.");
 }
@@ -162,7 +234,7 @@ const daemon = net.createServer((socket) => {
     const newline = data.indexOf("\n"); if (newline < 0) return;
     try {
       const request = validateRequest(JSON.parse(data.slice(0, newline)));
-      const action = request.action === "status" ? status() : request.action === "install-cloudflare-origin" ? installCloudflare(request) : activateLetsEncrypt(request);
+      const action = request.action === "status" ? status() : request.action === "domain-status" ? domainStatus() : request.action === "install-cloudflare-origin" ? installCloudflare(request) : request.action === "update-domain-letsencrypt" ? updateDomainLetsEncrypt(request) : activateLetsEncrypt(request);
       action.then((output) => send(socket, { ok: true, output })).catch((error) => send(socket, { ok: false, error: String(error.message ?? error).slice(0, 4000) }));
     } catch (error) { send(socket, { ok: false, error: String(error.message ?? error).slice(0, 1000) }); }
   }); socket.on("error", () => undefined);

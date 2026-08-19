@@ -11,6 +11,7 @@ import {
   Activity,
   Database,
   Flag,
+  Globe2,
   KeyRound,
   LockKeyhole,
   Plus,
@@ -55,6 +56,7 @@ export function AdminSystemPage() {
           { id: "keys", label: "API keys" },
           { id: "saml", label: "SAML" },
           { id: "certificates", label: "Certificates" },
+          { id: "domain", label: "Domain & URL" },
           { id: "maintenance", label: "Housekeeping" },
           { id: "launch", label: "Launch countdown" },
           { id: "intake", label: "Intake controls" },
@@ -69,6 +71,7 @@ export function AdminSystemPage() {
         {tab === "keys" ? <ApiKeysPanel /> : null}
         {tab === "saml" ? <SamlPanel /> : null}
         {tab === "certificates" ? <CertificatePanel /> : null}
+        {tab === "domain" ? <DomainPanel /> : null}
         {tab === "maintenance" ? <><AdministratorOnlyAccessPanel /><MaintenanceAccessPanel /><MaintenancePanel /></> : null}
         {tab === "launch" ? <LaunchCountdownPanel /> : null}
         {tab === "intake" ? <IntakeControlsPanel /> : null}
@@ -212,6 +215,56 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
       <dd className="text-right font-medium text-ink">{value}</dd>
     </div>
   );
+}
+
+function DomainPanel() {
+  const toast = useToast();
+  const status = trpc.adminSecurity.domainStatus.useQuery();
+  const [open, setOpen] = useState(false);
+  const [hostname, setHostname] = useState("");
+  const [email, setEmail] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const update = trpc.adminSecurity.updateDomainAndRequestLetsEncrypt.useMutation({
+    async onSuccess(result) {
+      await status.refetch();
+      setOpen(false); setConfirmation("");
+      toast.success("Portal domain updated", `Let's Encrypt is active for ${result.hostname}. Opening the new portal address.`);
+      window.setTimeout(() => window.location.assign(`https://${result.hostname}`), 1_000);
+    },
+    onError(error) { toast.error("Domain change was not applied", errorMessage(error)); },
+  });
+  const current = status.data;
+  const currentHostname = current?.hostname ?? window.location.hostname;
+
+  return <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+    <Card>
+      <CardHeader title={<span className="flex items-center gap-2"><Globe2 className="size-4 text-teal" aria-hidden="true" />Public portal domain</span>} description="The canonical HTTPS origin used for authentication, CSRF checks, outbound email links, and browser metadata." actions={<Button size="sm" variant="outline" busy={status.isFetching} onClick={() => void status.refetch()} leadingIcon={<RefreshCw className="size-4" />}>Refresh</Button>} />
+      {status.isLoading ? <Skeleton className="mt-5 h-40 w-full" /> : <dl className="mt-5 space-y-3 text-sm">
+        <Row label="Canonical URL" value={<code className="text-xs">{current?.appUrl ?? "—"}</code>} />
+        <Row label="Active hostname" value={currentHostname} />
+        <Row label="Certificate provider" value={<Badge tone={current?.certificate.provider === "letsencrypt" ? "success" : "warning"}>{current?.certificate.provider === "letsencrypt" ? "Let's Encrypt" : current?.certificate.provider ?? "unknown"}</Badge>} />
+        <Row label="Certificate expiry" value={current?.certificate.notAfter ?? "—"} />
+      </dl>}
+    </Card>
+
+    <Card>
+      <CardHeader title="Change domain and request Let’s Encrypt" description="Use only after the requested hostname’s public DNS record points to this server and port 80 is reachable for ACME validation." />
+      <Alert tone="warning" className="mt-5" title="High-impact operation">This updates nginx, `APP_URL`, allowed browser origins, email-link destinations, and the active certificate. Existing sessions on the former hostname will need a new sign-in. A root-only rollback snapshot is created before the change.</Alert>
+      <div className="mt-5 flex flex-wrap gap-3">
+        <Button variant="danger" onClick={() => { setHostname(""); setEmail(""); setConfirmation(""); setOpen(true); }} leadingIcon={<Globe2 className="size-4" />}>Change domain and request certificate</Button>
+      </div>
+      <p className="mt-4 text-xs leading-relaxed text-muted">The portal uses HTTP-01 validation through the existing nginx ACME location. Keep the DNS record reachable and do not enable an incompatible Cloudflare certificate mode during issuance.</p>
+    </Card>
+
+    <Modal open={open} onClose={() => { if (!update.isPending) setOpen(false); }} title="Change the public portal domain" description="The action first validates nginx, requests a certificate for the new hostname, validates that certificate, applies the new application origin, reloads nginx, restarts the portal, and rolls back all modified server files if any step fails." footer={<><Button variant="outline" disabled={update.isPending} onClick={() => setOpen(false)}>Cancel</Button><Button variant="danger" busy={update.isPending} disabled={!hostname.trim() || !email.trim() || confirmation !== "CHANGE DOMAIN AND REQUEST CERTIFICATE"} onClick={() => update.mutate({ hostname: hostname.trim().toLowerCase(), email: email.trim(), confirmation: "CHANGE DOMAIN AND REQUEST CERTIFICATE" })}>Request certificate and change domain</Button></>}>
+      <div className="mt-4 space-y-4">
+        <Alert tone="info" title="Before continuing">Create the DNS record for the new hostname first. If Cloudflare proxies it, use Full (strict) and ensure the ACME challenge can reach this server. The prior hostname remains recoverable through the protected rollback snapshot, but the portal will begin issuing links on the new hostname immediately after success.</Alert>
+        <Input label="New public hostname" type="text" autoComplete="off" value={hostname} onChange={(event) => setHostname(event.target.value)} placeholder="www.example.com" required />
+        <Input label="Let’s Encrypt certificate-contact email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="operations@example.com" required />
+        <Input label="Type to confirm" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="CHANGE DOMAIN AND REQUEST CERTIFICATE" required />
+      </div>
+    </Modal>
+  </div>;
 }
 
 function CertificatePanel() {

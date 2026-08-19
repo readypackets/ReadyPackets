@@ -80,7 +80,19 @@ type CertificateControlStatus = {
   backup?: string;
 };
 
-function runCertificateControl(payload: Record<string, unknown>): Promise<CertificateControlStatus> {
+type DomainControlStatus = {
+  appUrl: string;
+  hostname: string | null;
+  certificate: CertificateControlStatus;
+};
+
+type DomainCutoverResult = CertificateControlStatus & {
+  previousHostname: string;
+  hostname: string;
+  backup: string;
+};
+
+function runCertificateControl<T = CertificateControlStatus>(payload: Record<string, unknown>): Promise<T> {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ path: CERTIFICATE_CONTROL_SOCKET });
     let response = "";
@@ -93,7 +105,7 @@ function runCertificateControl(payload: Record<string, unknown>): Promise<Certif
       clearTimeout(timer);
       try {
         const result = JSON.parse(response.trim()) as { ok?: boolean; output?: CertificateControlStatus; error?: string };
-        result.ok && result.output ? resolve(result.output) : reject(new Error(result.error ?? "Certificate control rejected the request."));
+        result.ok && result.output ? resolve(result.output as T) : reject(new Error(result.error ?? "Certificate control rejected the request."));
       } catch { reject(new Error("Certificate control returned an invalid response.")); }
     });
   });
@@ -884,8 +896,68 @@ export const adminSecurityRouter = router({
     }),
 
   /* ---------------------------------------------------------------- */
-  /* TLS certificates                                                  */
+  /* Domain and TLS certificates                                       */
   /* ---------------------------------------------------------------- */
+
+  domainStatus: adminProcedure.query(async () => {
+    try {
+      return await runCertificateControl<DomainControlStatus>({ action: "domain-status" });
+    } catch (error) {
+      return {
+        appUrl: env.appUrl,
+        hostname: new URL(env.appUrl).hostname,
+        certificate: {
+          provider: "unknown" as const,
+          configured: false,
+          rootPresent: false,
+          certificatePath: null,
+          subject: null,
+          issuer: null,
+          notBefore: null,
+          notAfter: null,
+          fingerprint: null,
+          san: null,
+          controlError: error instanceof Error ? error.message : "Domain control is unavailable.",
+        },
+      };
+    }
+  }),
+
+  updateDomainAndRequestLetsEncrypt: adminProcedure
+    .input(z.object({
+      hostname: z.string().trim().toLowerCase().min(4).max(253).regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i, "Enter a valid fully-qualified hostname."),
+      email: z.string().trim().email().max(254),
+      confirmation: z.literal("CHANGE DOMAIN AND REQUEST CERTIFICATE"),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const result = await runCertificateControl<DomainCutoverResult>({
+        action: "update-domain-letsencrypt",
+        hostname: input.hostname,
+        email: input.email,
+        confirmation: input.confirmation,
+      });
+      void recordSecurityEvent({
+        eventType: "settings.changed",
+        severity: "warning",
+        outcome: "success",
+        message: `Administrator changed the public portal domain from ${result.previousHostname} to ${result.hostname}`,
+        userId: ctx.session.user.id,
+        ipAddress: ctx.clientIp,
+        metadata: { previousHostname: result.previousHostname, hostname: result.hostname, certificateFingerprint: result.fingerprint, certificateNotAfter: result.notAfter, rollbackBackup: result.backup },
+      });
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: "admin",
+        action: "domain.letsencrypt_cutover",
+        entityType: "portal_domain",
+        entityId: result.hostname,
+        severity: "warning",
+        summary: `Changed public portal domain from ${result.previousHostname} to ${result.hostname} and requested a Let's Encrypt certificate`,
+        changes: { previousHostname: result.previousHostname, hostname: result.hostname, certificateFingerprint: result.fingerprint, certificateNotAfter: result.notAfter, rollbackBackup: result.backup },
+        ipAddress: ctx.clientIp,
+      });
+      return result;
+    }),
 
   tlsCertificateStatus: adminProcedure.query(async () => {
     try {
