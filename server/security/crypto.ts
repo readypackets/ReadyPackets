@@ -136,21 +136,16 @@ export function randomToken(bytes = 32): string {
 }
 
 /**
- * Opaque, non-sequential customer-facing account reference, e.g. RP26-2UH4D3OT.
- * The two-digit UTC creation year provides an operational cohort marker; the
- * eight-character Crockford-style suffix is generated from cryptographically
- * secure randomness and excludes visually ambiguous characters.
+ * Opaque, non-sequential customer-facing account reference, e.g.
+ * RP-CUS-2UH4D3OT. Public IDs were migrated to the same visible standard as
+ * customer numbers; accepting the retired RPYY-XXXXXXXX form would make
+ * administrator allowlists silently diverge from actual customer records.
  */
-const PUBLIC_USER_ID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-export const PUBLIC_USER_ID_PATTERN = /^RP\d{2}-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/i;
+export const PUBLIC_USER_ID_PATTERN = /^RP-CUS-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6,8}$/i;
 
-export function generatePublicUserId(date = new Date()): string {
-  const year = String(date.getUTCFullYear()).slice(-2);
-  let suffix = "";
-  for (let index = 0; index < 8; index += 1) {
-    suffix += PUBLIC_USER_ID_ALPHABET[randomInt(0, PUBLIC_USER_ID_ALPHABET.length)];
-  }
-  return `RP${year}-${suffix}`;
+/** Compatibility export for older call sites; new accounts use RP-CUS IDs. */
+export function generatePublicUserId(_date = new Date()): string {
+  return generateCustomerNumber(8);
 }
 
 export function isPublicUserId(value: string): boolean {

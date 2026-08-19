@@ -20,6 +20,7 @@ import {
   orderNotes,
   orderQuestions,
   orderPhaseLocks,
+  orderWorkflowAdvances,
   orderWorkflows,
   orderShares,
   orders,
@@ -158,14 +159,20 @@ export const ordersRouter = router({
           .orderBy(desc(files.createdAt));
 
         const workflowProgress = await getOrderWorkflowProgress(input.orderId);
-        const phaseLocks = await db
-          .select({
-            phaseKey: orderPhaseLocks.phaseKey,
-            acknowledgementText: orderPhaseLocks.acknowledgementText,
-            lockedAt: orderPhaseLocks.lockedAt,
-          })
-          .from(orderPhaseLocks)
-          .where(and(eq(orderPhaseLocks.orderId, input.orderId), isNull(orderPhaseLocks.unlockedAt)));
+        const [phaseLocks, workflowAdvances] = await Promise.all([
+          db
+            .select({
+              phaseKey: orderPhaseLocks.phaseKey,
+              acknowledgementText: orderPhaseLocks.acknowledgementText,
+              lockedAt: orderPhaseLocks.lockedAt,
+            })
+            .from(orderPhaseLocks)
+            .where(and(eq(orderPhaseLocks.orderId, input.orderId), isNull(orderPhaseLocks.unlockedAt))),
+          db
+            .select({ phaseKey: orderWorkflowAdvances.phaseKey, advancedAt: orderWorkflowAdvances.advancedAt })
+            .from(orderWorkflowAdvances)
+            .where(eq(orderWorkflowAdvances.orderId, input.orderId)),
+        ]);
 
         // Customers see shared notes only; internal notes never leave the admin panel.
         const notes = await db
@@ -212,6 +219,7 @@ export const ordersRouter = router({
           workflow: workflowRows[0] ?? null,
           workflowProgress,
           phaseLocks,
+          workflowAdvances,
           items: detail.items.map((item) => ({
             id: item.id,
             sku: item.sku,
@@ -277,8 +285,14 @@ export const ordersRouter = router({
       }
       const [orderWorkflow] = await db.select({ workflowId: orders.workflowId }).from(orders).where(eq(orders.id, input.orderId)).limit(1);
       const [workflow] = orderWorkflow?.workflowId ? await db.select({ stages: orderWorkflows.stages }).from(orderWorkflows).where(eq(orderWorkflows.id, orderWorkflow.workflowId)).limit(1) : [];
-      const stages = Array.isArray(workflow?.stages) ? workflow.stages as { key?: unknown; customerAcknowledgement?: unknown }[] : [];
-      const configuredPolicy = stages.find((stage) => stage.key === input.phaseKey)?.customerAcknowledgement;
+      const stages = Array.isArray(workflow?.stages) ? workflow.stages as { key?: unknown; customerAcknowledgement?: unknown; advanceMode?: unknown }[] : [];
+      const configuredStage = stages.find((stage) => stage.key === input.phaseKey)
+        ?? (input.phaseKey === "phase_1" ? stages.find((stage) => stage.key === "phase_1_intake") : undefined)
+        ?? (input.phaseKey === "phase_2" ? stages.find((stage) => stage.key === "phase_2_synthesis") : undefined);
+      if (configuredStage?.advanceMode === "next") {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "This workflow phase is configured to continue with Next and cannot be submitted as an irreversible lock." });
+      }
+      const configuredPolicy = configuredStage?.customerAcknowledgement;
       const acknowledgementPolicy = configuredPolicy === "none" || configuredPolicy === "optional" || configuredPolicy === "required" ? configuredPolicy : "required";
       if (acknowledgementPolicy === "required" && (!input.acknowledged || !input.acknowledgementText)) {
         throw new TRPCError({ code: "PRECONDITION_FAILED", message: "A customer acknowledgement is required before this phase can be submitted." });
@@ -297,6 +311,46 @@ export const ordersRouter = router({
       const workflowProgress = await syncOrderWorkflowProgress(input.orderId);
       void recordActivity({ actorUserId: ctx.session.user.id, actorRole: ctx.session.user.role, action: "order.phase_submitted", entityType: "order", entityId: input.orderId, summary: `Customer submitted and locked workflow phase ${input.phaseKey}`, changes: { phaseKey: input.phaseKey, acknowledgementPolicy, acknowledged: input.acknowledged, workflowProgress }, ipAddress: ctx.clientIp });
       return { ok: true as const, lockedAt, workflowProgress };
+    }),
+
+  advanceWorkflowStage: protectedProcedure
+    .input(z.object({ orderId: z.number().int().positive(), phaseKey: z.string().trim().regex(/^[a-z0-9_]+$/).max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.session.user.role !== "customer") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Only customers can advance a workflow stage." });
+      }
+      try {
+        await assertOrderAccess(input.orderId, ctx.session.user.id, ctx.session.user.role);
+        const access = await assertCustomerWorkflowStageAccess(input.orderId, input.phaseKey);
+        if (access.completed) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "This workflow phase has already been completed." });
+        }
+        if (access.stage.advanceMode !== "next") {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "This workflow phase requires Submit and lock before the next phase can open." });
+        }
+      } catch (error) {
+        if (error instanceof TRPCError) throw error;
+        toTrpcError(error);
+      }
+      const advancedAt = new Date();
+      await db.insert(orderWorkflowAdvances).values({
+        orderId: input.orderId,
+        phaseKey: input.phaseKey,
+        advancedByUserId: ctx.session.user.id,
+        advancedAt,
+      }).onDuplicateKeyUpdate({ set: { advancedByUserId: ctx.session.user.id, advancedAt } });
+      const workflowProgress = await syncOrderWorkflowProgress(input.orderId);
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: ctx.session.user.role,
+        action: "order.phase_advanced",
+        entityType: "order",
+        entityId: input.orderId,
+        summary: `Customer continued from workflow phase ${input.phaseKey} without locking it`,
+        changes: { phaseKey: input.phaseKey, advanceMode: "next", workflowProgress },
+        ipAddress: ctx.clientIp,
+      });
+      return { ok: true as const, advancedAt, workflowProgress };
     }),
 
   workflowStageAccess: protectedProcedure

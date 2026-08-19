@@ -102,7 +102,7 @@ export const platformSetupRouter = router({
     return { ok: true as const, ids };
   }),
 
-  saveAccess: adminProcedure.input(z.object({ ipPatterns: z.array(z.string().trim().min(3).max(64)).max(25), loginWhitelistEnabled: z.boolean(), loginWhitelistPublicIds: z.array(z.string().trim().refine(isPublicUserId, "Enter IDs in the form RPYY-XXXXXXXX.")).max(200) })).mutation(async ({ ctx, input }) => {
+  saveAccess: adminProcedure.input(z.object({ ipPatterns: z.array(z.string().trim().min(3).max(64)).max(25), loginWhitelistEnabled: z.boolean(), loginWhitelistPublicIds: z.array(z.string().trim().refine(isPublicUserId, "Enter IDs in the form RP-CUS-XXXXXXXX.")).max(200) })).mutation(async ({ ctx, input }) => {
     for (const pattern of input.ipPatterns) if (!validIpPattern(pattern)) throw new TRPCError({ code: "BAD_REQUEST", message: `Invalid IP allowlist entry: ${pattern}` });
     const ids = [...new Set(input.loginWhitelistPublicIds.map((value) => value.toUpperCase()))];
     if (input.loginWhitelistEnabled && ids.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Choose at least one public customer ID before enabling the login whitelist." });

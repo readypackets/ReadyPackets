@@ -162,11 +162,12 @@ describe("token and identifier generation", () => {
     const ids = new Set(Array.from({ length: 500 }, () => generatePublicUserId(createdAt)));
     expect(ids.size).toBe(500);
     for (const id of ids) {
-      expect(id).toMatch(/^RP26-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/);
+      expect(id).toMatch(/^RP-CUS-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/);
       expect(isPublicUserId(id)).toBe(true);
     }
     expect(isPublicUserId("RP-U-7F3A9D2C8B1E")).toBe(false);
-    expect(isPublicUserId("RP26-2UH4D3OT")).toBe(true);
+    expect(isPublicUserId("RP26-2UH4D3OT")).toBe(false);
+    expect(isPublicUserId("RP-CUS-2UH4D3AT")).toBe(true);
   });
 
   it("generates readable, unique backup codes", () => {
@@ -183,7 +184,7 @@ describe("token and identifier generation", () => {
     // customers' orders, so the suffix is random rather than a counter.
     expect(new Set(numbers).size).toBeGreaterThan(190);
     for (const number of numbers) {
-      expect(number).toMatch(/^RP-\d{4}-[0-9A-F]{6}$/);
+      expect(number).toMatch(/^RP-ORD-\d{4}-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/);
     }
   });
 

@@ -1592,6 +1592,21 @@ export const orderPhaseLocks = mysqlTable(
   }),
 );
 
+export const orderWorkflowAdvances = mysqlTable(
+  "order_workflow_advances",
+  {
+    id: id(),
+    orderId: int("order_id").notNull(),
+    phaseKey: varchar("phase_key", { length: 64 }).notNull(),
+    advancedByUserId: int("advanced_by_user_id").notNull(),
+    advancedAt: timestamp("advanced_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    orderPhaseUnique: uniqueIndex("order_workflow_advances_order_phase_unique").on(table.orderId, table.phaseKey),
+    orderIdx: index("order_workflow_advances_order_idx").on(table.orderId, table.advancedAt),
+  }),
+);
+
 export const workflowStageRuns = mysqlTable(
   "workflow_stage_runs",
   {

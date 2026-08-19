@@ -15,6 +15,7 @@ import {
   mndaAcceptances,
   orderItems,
   orderPhaseLocks,
+  orderWorkflowAdvances,
   orderQuestions,
   orderWorkflows,
   workflowStageRuns,
@@ -302,12 +303,20 @@ export async function applyOrderAutomationRules(
   }
 }
 
-type WorkflowProgressStage = { key?: unknown; capabilities?: unknown };
-type CustomerWorkflowProgressStage = {
-  key: string;
+type WorkflowProgressStage = {
+  key?: unknown;
   label?: unknown;
   order?: unknown;
+  capabilities?: unknown;
+  advanceMode?: unknown;
+  customerMessage?: unknown;
+};
+type CustomerWorkflowProgressStage = {
+  key: string;
+  label: string;
+  order: number;
   capabilities: unknown[];
+  advanceMode: "next" | "submit_lock";
 };
 
 export type WorkflowProgress = {
@@ -318,37 +327,49 @@ export type WorkflowProgress = {
   currentStageLabel: string | null;
 };
 
+function hasCustomerMessage(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const bodyMarkdown = (value as Record<string, unknown>).bodyMarkdown;
+  return typeof bodyMarkdown === "string" && bodyMarkdown.trim().length > 0;
+}
+
 /**
  * A paid order has satisfied the workflow's automatic payment-confirmation stage
- * even though that system event does not create a customer phase lock. Historical
- * Phase 1/2 lock keys are also recognized during the long-running migration path.
+ * even though that system event does not create a customer phase lock. A customer
+ * choosing Next records a separate completed transition; only Submit and lock
+ * creates an immutable phase lock. Historical Phase 1/2 lock aliases persist.
  */
 function isStageComplete(
   stageKey: string,
-  completedKeys: Set<string>,
+  lockedKeys: Set<string>,
+  advancedKeys: Set<string>,
   paymentStatus?: string,
 ): boolean {
-  if (completedKeys.has(stageKey)) return true;
-  if (stageKey === "phase_1_intake") return completedKeys.has("phase_1");
-  if (stageKey === "phase_2_synthesis") return completedKeys.has("phase_2");
+  if (advancedKeys.has(stageKey) || lockedKeys.has(stageKey)) return true;
+  if (stageKey === "phase_1_intake") return lockedKeys.has("phase_1");
+  if (stageKey === "phase_2_synthesis") return lockedKeys.has("phase_2");
   if (stageKey === "new") return paymentStatus === "paid" || paymentStatus === "partially_refunded" || paymentStatus === "refunded";
   return false;
 }
 
-function normalizeCustomerWorkflowStages(rawStages: unknown): Array<{ key: string; label: string; order: number; capabilities: unknown[] }> {
+function normalizeCustomerWorkflowStages(rawStages: unknown): CustomerWorkflowProgressStage[] {
   if (!Array.isArray(rawStages)) return [];
   return (rawStages as WorkflowProgressStage[])
-    .filter((stage): stage is CustomerWorkflowProgressStage => typeof stage?.key === "string" && Array.isArray(stage.capabilities) && stage.capabilities.length > 0)
+    .filter((stage): stage is WorkflowProgressStage & { key: string } =>
+      typeof stage?.key === "string" &&
+      (Array.isArray(stage.capabilities) && stage.capabilities.length > 0 || hasCustomerMessage(stage.customerMessage)),
+    )
     .map((stage, index) => ({
       key: stage.key,
       label: typeof stage.label === "string" ? stage.label : stage.key.replaceAll("_", " "),
       order: typeof stage.order === "number" ? stage.order : index + 1,
-      capabilities: stage.capabilities,
+      capabilities: Array.isArray(stage.capabilities) ? stage.capabilities : [],
+      advanceMode: (stage.advanceMode === "next" ? "next" : "submit_lock") as "next" | "submit_lock",
     }))
     .sort((left, right) => left.order - right.order || left.key.localeCompare(right.key));
 }
 
-/** Calculates customer-completed workflow stages without relying on UI state. */
+/** Calculates customer-completed workflow stages without relying on browser state. */
 export async function getOrderWorkflowProgress(orderId: number): Promise<WorkflowProgress | null> {
   const orderRows = await db.select({ workflowId: orders.workflowId, paymentStatus: orders.paymentStatus }).from(orders).where(and(eq(orders.id, orderId), isNull(orders.deletedAt))).limit(1);
   const order = orderRows[0];
@@ -356,10 +377,14 @@ export async function getOrderWorkflowProgress(orderId: number): Promise<Workflo
   const workflowRows = await db.select({ stages: orderWorkflows.stages }).from(orderWorkflows).where(eq(orderWorkflows.id, order.workflowId)).limit(1);
   const stages = normalizeCustomerWorkflowStages(workflowRows[0]?.stages);
   if (stages.length === 0) return null;
-  const locks = await db.select({ phaseKey: orderPhaseLocks.phaseKey }).from(orderPhaseLocks).where(and(eq(orderPhaseLocks.orderId, orderId), isNull(orderPhaseLocks.unlockedAt)));
-  const completedKeys = new Set(locks.map((lock) => lock.phaseKey));
-  const completedStages = stages.filter((stage) => isStageComplete(stage.key, completedKeys, order.paymentStatus)).length;
-  const currentStage = stages.find((stage) => !isStageComplete(stage.key, completedKeys, order.paymentStatus)) ?? null;
+  const [locks, advances] = await Promise.all([
+    db.select({ phaseKey: orderPhaseLocks.phaseKey }).from(orderPhaseLocks).where(and(eq(orderPhaseLocks.orderId, orderId), isNull(orderPhaseLocks.unlockedAt))),
+    db.select({ phaseKey: orderWorkflowAdvances.phaseKey }).from(orderWorkflowAdvances).where(eq(orderWorkflowAdvances.orderId, orderId)),
+  ]);
+  const lockedKeys = new Set(locks.map((lock) => lock.phaseKey));
+  const advancedKeys = new Set(advances.map((advance) => advance.phaseKey));
+  const completedStages = stages.filter((stage) => isStageComplete(stage.key, lockedKeys, advancedKeys, order.paymentStatus)).length;
+  const currentStage = stages.find((stage) => !isStageComplete(stage.key, lockedKeys, advancedKeys, order.paymentStatus)) ?? null;
   return {
     totalStages: stages.length,
     completedStages,
@@ -369,7 +394,7 @@ export async function getOrderWorkflowProgress(orderId: number): Promise<Workflo
   };
 }
 
-/** Updates the dashboard/list progress when a customer submits a workflow phase. */
+/** Updates the dashboard/list progress when a customer finishes any workflow stage. */
 export async function syncOrderWorkflowProgress(orderId: number): Promise<WorkflowProgress | null> {
   const progress = await getOrderWorkflowProgress(orderId);
   if (!progress) return null;
@@ -386,6 +411,7 @@ export interface CustomerWorkflowStage {
   label: string;
   order: number;
   capabilities: unknown[];
+  advanceMode: "next" | "submit_lock";
 }
 
 /** Resolves the current stage and prevents customers from working ahead in a guided workflow. */
@@ -393,19 +419,18 @@ export async function assertCustomerWorkflowStageAccess(orderId: number, stageKe
   const [order] = await db.select({ workflowId: orders.workflowId, paymentStatus: orders.paymentStatus }).from(orders).where(and(eq(orders.id, orderId), isNull(orders.deletedAt))).limit(1);
   if (!order?.workflowId) throw new OrderStateError("This order does not have an assigned workflow.");
   const [workflow] = await db.select({ stages: orderWorkflows.stages, customerPresentation: orderWorkflows.customerPresentation }).from(orderWorkflows).where(eq(orderWorkflows.id, order.workflowId)).limit(1);
-  const raw = Array.isArray(workflow?.stages) ? workflow.stages as Array<{ key?: unknown; label?: unknown; order?: unknown; capabilities?: unknown }> : [];
-  const stages = raw
-    .filter((stage): stage is { key: string; label?: unknown; order?: number; capabilities: unknown[] } => typeof stage.key === "string" && Array.isArray(stage.capabilities) && stage.capabilities.length > 0)
-    .map((stage, index) => ({ key: stage.key, label: typeof stage.label === "string" ? stage.label : stage.key, order: typeof stage.order === "number" ? stage.order : index + 1, capabilities: stage.capabilities }))
-    .sort((a, b) => a.order - b.order || a.key.localeCompare(b.key));
+  const stages = normalizeCustomerWorkflowStages(workflow?.stages);
   const stage = stages.find((candidate) => candidate.key === stageKey);
   if (!stage) throw new OrderStateError("This phase is not part of the assigned workflow.");
-  const locks = await db.select({ phaseKey: orderPhaseLocks.phaseKey }).from(orderPhaseLocks).where(and(eq(orderPhaseLocks.orderId, orderId), isNull(orderPhaseLocks.unlockedAt)));
-  const completedKeys = new Set(locks.map((lock) => lock.phaseKey));
-  const completed = isStageComplete(stage.key, completedKeys, order.paymentStatus);
-  const current = stages.find((candidate) => !isStageComplete(candidate.key, completedKeys, order.paymentStatus));
-  // Card presentation deliberately preserves non-linear customer access. Wizard
-  // presentation is enforced server side rather than trusting route visibility.
+  const [locks, advances] = await Promise.all([
+    db.select({ phaseKey: orderPhaseLocks.phaseKey }).from(orderPhaseLocks).where(and(eq(orderPhaseLocks.orderId, orderId), isNull(orderPhaseLocks.unlockedAt))),
+    db.select({ phaseKey: orderWorkflowAdvances.phaseKey }).from(orderWorkflowAdvances).where(eq(orderWorkflowAdvances.orderId, orderId)),
+  ]);
+  const lockedKeys = new Set(locks.map((lock) => lock.phaseKey));
+  const advancedKeys = new Set(advances.map((advance) => advance.phaseKey));
+  const completed = isStageComplete(stage.key, lockedKeys, advancedKeys, order.paymentStatus);
+  const current = stages.find((candidate) => !isStageComplete(candidate.key, lockedKeys, advancedKeys, order.paymentStatus));
+  // Wizard presentation is enforced server side rather than trusting route visibility.
   if (workflow?.customerPresentation === "wizard" && !completed && current && current.key !== stage.key) {
     throw new OrderStateError(`Complete ${current.label} before opening ${stage.label}.`);
   }
@@ -893,11 +918,22 @@ export async function listOrdersForUser(userId: number): Promise<OrderSummary[]>
     keys.add(lock.phaseKey);
     locksByOrder.set(lock.orderId, keys);
   }
+  const workflowAdvances = await db
+    .select({ orderId: orderWorkflowAdvances.orderId, phaseKey: orderWorkflowAdvances.phaseKey })
+    .from(orderWorkflowAdvances)
+    .where(inArray(orderWorkflowAdvances.orderId, rows.map((row) => row.id)));
+  const advancesByOrder = new Map<number, Set<string>>();
+  for (const advance of workflowAdvances) {
+    const keys = advancesByOrder.get(advance.orderId) ?? new Set<string>();
+    keys.add(advance.phaseKey);
+    advancesByOrder.set(advance.orderId, keys);
+  }
 
   return rows.map((row) => {
     const stages = row.workflowId ? workflowMap.get(row.workflowId) ?? [] : [];
-    const completedKeys = locksByOrder.get(row.id) ?? new Set<string>();
-    const currentStage = stages.find((stage) => !isStageComplete(stage.key, completedKeys, row.paymentStatus)) ?? null;
+    const lockedKeys = locksByOrder.get(row.id) ?? new Set<string>();
+    const advancedKeys = advancesByOrder.get(row.id) ?? new Set<string>();
+    const currentStage = stages.find((stage) => !isStageComplete(stage.key, lockedKeys, advancedKeys, row.paymentStatus)) ?? null;
     return {
     id: row.id,
     orderNumber: row.orderNumber,
