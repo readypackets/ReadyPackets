@@ -54,6 +54,7 @@ import { adminProcedure, router } from "../trpc/trpc.js";
 import { RATE_LIMIT_CATEGORIES } from "../../shared/domain.js";
 import { affectedRows } from "../db/result.js";
 import { formatBusinessAddress, getBusinessProfile, saveBusinessProfile } from "../services/businessProfile.js";
+import { getConsentConfig, getConsentOverview } from "../services/cookieConsent.js";
 
 const ipPatternSchema = z
   .string()
@@ -594,6 +595,36 @@ export const adminSecurityRouter = router({
   /* ---------------------------------------------------------------- */
 
   businessProfile: adminProcedure.query(async () => getBusinessProfile()),
+
+  cookieConsent: adminProcedure.query(async () => ({
+    config: await getConsentConfig(),
+    overview: await getConsentOverview(),
+  })),
+
+  updateCookieConsentConfig: adminProcedure
+    .input(z.object({
+      analyticsTrackingEnabled: z.boolean(),
+      marketingTrackingEnabled: z.boolean(),
+      confirm: z.literal("UPDATE COOKIE CONSENT SETTINGS"),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await Promise.all([
+        setSetting("privacy.analytics_tracking_enabled", String(input.analyticsTrackingEnabled), { category: "privacy", valueType: "boolean", userId: ctx.session.user.id }),
+        setSetting("privacy.marketing_tracking_enabled", String(input.marketingTrackingEnabled), { category: "privacy", valueType: "boolean", userId: ctx.session.user.id }),
+      ]);
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: "admin",
+        action: "privacy.cookie_consent_configured",
+        entityType: "privacy",
+        entityId: "cookie_consent",
+        severity: "warning",
+        summary: `Cookie consent tracking categories updated: analytics ${input.analyticsTrackingEnabled ? "available" : "disabled"}; marketing ${input.marketingTrackingEnabled ? "available" : "disabled"}`,
+        changes: { analyticsTrackingEnabled: input.analyticsTrackingEnabled, marketingTrackingEnabled: input.marketingTrackingEnabled },
+        ipAddress: ctx.clientIp,
+      });
+      return { config: await getConsentConfig(), overview: await getConsentOverview() };
+    }),
 
   updateBusinessProfile: adminProcedure
     .input(z.object({

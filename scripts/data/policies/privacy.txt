@@ -78,11 +78,17 @@ Right to Access, Correct, Delete, and Obtain a copy of your personal data
 Right to Opt Out of targeted advertising, sale of data, and profiling
 6.4 Exercising Your Rights
 To exercise any of these rights, contact us at info@readypackets.com with the subject line "Privacy Rights Request." We will respond within 30 days (or as required by applicable law). We may request identity verification before fulfilling your request.
-7. COOKIES AND TRACKING TECHNOLOGIES
-Essential Cookies: Required for website functionality, portal login sessions, and security. Cannot be disabled.
-Preference Cookies: Remember your settings (theme, language). Can be disabled.
-Analytics Cookies: Help us understand usage patterns. Require your consent.
-You can manage cookie preferences through your browser settings or our cookie consent banner. Disabling essential cookies may affect website functionality.
+7. COOKIES, BROWSER STORAGE, AND PRIVACY PREFERENCES
+7.1 Essential Cookies and Storage
+We use strictly necessary cookies and related browser storage to operate and secure the website and customer portal. These include the portal session cookie, a CSRF security token, load-balancing or security controls where applicable, and functional storage needed to preserve an in-progress order or authentication state. These technologies are required to deliver the service you request and cannot be disabled through our preference center. Disabling them in your browser may prevent sign-in, checkout, order intake, or other portal functions from working.
+7.2 Preference Technologies
+With your permission, we may store optional preferences such as visual theme or other convenience settings. You may allow or withdraw preference storage at any time through Manage cookie preferences in the website footer or platform preference center.
+7.3 Analytics Technologies
+ReadyPackets does not activate analytics cookies or analytics tags unless the applicable analytics category is enabled by the Company and you provide consent through the preference center. You may decline or withdraw analytics consent at any time without affecting essential portal services.
+7.4 Marketing Technologies
+ReadyPackets does not activate marketing or advertising cookies, pixels, or similar tracking technologies unless the applicable marketing category is enabled by the Company and you provide consent through the preference center. You may decline or withdraw marketing consent at any time without affecting essential portal services.
+7.5 Your Choices and Consent Records
+When you first visit ReadyPackets, you can accept all optional categories, reject all optional categories, or choose categories individually. We record your choice using a protected browser token and a versioned consent record. We retain a privacy-preserving record of the consent decision, category choices, consent-policy version, time of decision, and limited security evidence; we do not store your raw IP address or raw user-agent in the consent record. You can reopen and change your choices at any time through Manage cookie preferences.
 8. DATA SECURITY
 We implement industry-standard security measures to protect your information:
 SSL/TLS encryption for all data in transit

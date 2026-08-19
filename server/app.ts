@@ -37,6 +37,7 @@ import { createDownloadRouter } from "./http/downloads.js";
 import { createInvoiceDownloadRouter } from "./http/invoiceDownloads.js";
 import { createUploadRouter } from "./http/uploads.js";
 import { createPolicyImportRouter } from "./http/policyImports.js";
+import { getCookieConsent, savePublicCookieConsent } from "./http/cookieConsent.js";
 import { createAvatarRouter } from "./http/avatar.js";
 import { createSharePointDelegatedAuthRouter } from "./http/sharepointDelegatedAuth.js";
 import { logger } from "./observability/logger.js";
@@ -294,6 +295,9 @@ export function createApp(): Express {
    * unsafe request remains subject to Origin and CSRF validation; the anonymous
    * token grants no authenticated capability.
    */
+  app.get("/api/privacy/consent", getCookieConsent);
+  app.post("/api/privacy/consent", savePublicCookieConsent);
+
   app.get("/api/security/csrf", async (req: Request, res: Response) => {
     const session = await resolveSession(req);
     const csrfToken = session ? session.csrfSecret : generateCsrfToken();

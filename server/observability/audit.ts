@@ -56,7 +56,8 @@ export type SecurityEventType =
   | "login.blocked_administrator_only"
   | "magic_link.blocked_administrator_only"
   | "register.blocked_administrator_only"
-  | "session.revoked_administrator_only";
+  | "session.revoked_administrator_only"
+  | "privacy.cookie_consent_saved";
 
 interface SecurityEventInput {
   eventType: SecurityEventType;

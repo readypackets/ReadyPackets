@@ -6,6 +6,7 @@
  * system preference on first visit.
  */
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { useCookieConsent } from "@/components/privacy/CookieConsent";
 
 type Theme = "light" | "dark" | "system";
 
@@ -25,7 +26,8 @@ const ThemeContext = createContext<ThemeContextValue>({
 
 const STORAGE_KEY = "rp-theme";
 
-function getStoredTheme(): Theme {
+function getStoredTheme(allowPersistence = false): Theme {
+  if (!allowPersistence) return "system";
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored === "light" || stored === "dark" || stored === "system") return stored;
@@ -54,10 +56,19 @@ function applyTheme(resolved: "light" | "dark") {
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(getStoredTheme);
-  const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(() =>
-    resolveTheme(getStoredTheme()),
-  );
+  const { preferences } = useCookieConsent();
+  const preferenceStorageAllowed = preferences?.preferences === true;
+  const [theme, setThemeState] = useState<Theme>("system");
+  const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(() => resolveTheme("system"));
+
+  useEffect(() => {
+    if (preferences === null) return;
+    if (preferenceStorageAllowed) {
+      setThemeState(getStoredTheme(true));
+      return;
+    }
+    try { localStorage.removeItem(STORAGE_KEY); } catch { /* storage may be unavailable */ }
+  }, [preferences, preferenceStorageAllowed]);
 
   // Apply theme on mount and whenever it changes.
   useEffect(() => {
@@ -82,7 +93,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   function setTheme(next: Theme) {
     setThemeState(next);
     try {
-      localStorage.setItem(STORAGE_KEY, next);
+      if (preferenceStorageAllowed) localStorage.setItem(STORAGE_KEY, next);
     } catch {
       // ignore
     }
@@ -106,8 +117,7 @@ export function useTheme() {
 /** Inline script to apply theme before React hydrates (prevents flash). */
 export const themeInitScript = `
 (function(){
-  var t=localStorage.getItem('rp-theme');
-  var d=(t==='dark')||(t!=='light'&&window.matchMedia('(prefers-color-scheme:dark)').matches);
+  var d=window.matchMedia('(prefers-color-scheme:dark)').matches;
   if(d)document.documentElement.classList.add('dark');
 })();
 `;

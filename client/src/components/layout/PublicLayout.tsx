@@ -11,6 +11,7 @@ import { Mail, MapPin } from "lucide-react";
 import { BRAND, BRAND_ASSETS } from "@shared/brand";
 import { useSession } from "@/lib/session";
 import { Alert } from "@/components/ui/Surface";
+import { useCookieConsent } from "@/components/privacy/CookieConsent";
 import { PublicHeader } from "./PublicHeader";
 
 const FOOTER_SECTIONS = [
@@ -47,6 +48,7 @@ const FOOTER_SECTIONS = [
 
 export function PublicLayout({ children }: { children: ReactNode }) {
   const { maintenance, businessProfile } = useSession();
+  const { openPreferences } = useCookieConsent();
   const showBanner = maintenance?.enabled && maintenance.showOnHomepage;
   const businessAddress = businessProfile
     ? [businessProfile.addressLine1, businessProfile.addressLine2, `${businessProfile.city}, ${businessProfile.state} ${businessProfile.postalCode}`].filter(Boolean).join(", ")
@@ -136,6 +138,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
 
           <div className="mt-10 flex flex-col gap-3 border-t border-white/12 pt-6 text-xs text-white/55 sm:flex-row sm:items-center sm:justify-between">
             <p>{BRAND.copyright()}</p>
+            <button type="button" onClick={openPreferences} className="w-fit text-left text-white/70 underline underline-offset-4 hover:text-white">Manage cookie preferences</button>
             <p>
               {BRAND.wordmark} and “{BRAND.taglinePlain}” are trademarks of{" "}
               {BRAND.companyLegalName}.

@@ -865,6 +865,29 @@ export const policyVersions = mysqlTable(
   }),
 );
 
+export const cookieConsentRecords = mysqlTable(
+  "cookie_consent_records",
+  {
+    id: id(),
+    /** SHA-256 digest of the opaque, HttpOnly browser consent token. */
+    consentTokenHash: char("consent_token_hash", { length: 64 }).notNull(),
+    userId: int("user_id"),
+    consentVersion: varchar("consent_version", { length: 32 }).notNull(),
+    preferencesAllowed: boolean("preferences_allowed").notNull().default(false),
+    analyticsAllowed: boolean("analytics_allowed").notNull().default(false),
+    marketingAllowed: boolean("marketing_allowed").notNull().default(false),
+    action: mysqlEnum("action", ["accepted_all", "rejected_optional", "saved_preferences"]).notNull(),
+    /** HMAC digests provide evidence without retaining raw IP or user-agent strings. */
+    ipHash: char("ip_hash", { length: 64 }),
+    userAgentHash: char("user_agent_hash", { length: 64 }),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    tokenIdx: index("cookie_consent_token_idx").on(table.consentTokenHash, table.createdAt),
+    userIdx: index("cookie_consent_user_idx").on(table.userId, table.createdAt),
+  }),
+);
+
 export const policyAcceptances = mysqlTable(
   "policy_acceptances",
   {

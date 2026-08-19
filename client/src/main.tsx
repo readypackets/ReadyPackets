@@ -12,6 +12,7 @@ import { trpc, createTrpcClient } from "@/lib/trpc";
 import { SessionProvider } from "@/lib/session";
 import { ThemeProvider } from "@/lib/theme";
 import { ToastProvider } from "@/components/ui/Toast";
+import { CookieConsentProvider } from "@/components/privacy/CookieConsent";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { App } from "@/App";
 import "@/styles/index.css";
@@ -47,17 +48,19 @@ if (!container) {
 createRoot(container).render(
   <StrictMode>
     <ErrorBoundary>
-      <ThemeProvider>
-        <trpc.Provider client={trpcClient} queryClient={queryClient}>
-          <QueryClientProvider client={queryClient}>
-            <ToastProvider>
-              <SessionProvider>
-                <App />
-              </SessionProvider>
-            </ToastProvider>
-          </QueryClientProvider>
-        </trpc.Provider>
-      </ThemeProvider>
+      <trpc.Provider client={trpcClient} queryClient={queryClient}>
+        <QueryClientProvider client={queryClient}>
+          <CookieConsentProvider>
+            <ThemeProvider>
+              <ToastProvider>
+                <SessionProvider>
+                  <App />
+                </SessionProvider>
+              </ToastProvider>
+            </ThemeProvider>
+          </CookieConsentProvider>
+        </QueryClientProvider>
+      </trpc.Provider>
     </ErrorBoundary>
   </StrictMode>,
 );
