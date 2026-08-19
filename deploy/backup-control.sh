@@ -23,6 +23,10 @@ safe_name() {
   [[ "$1" =~ ^readypackets-[0-9TZ-]+\.tar\.gz(\.age|\.gpg)?$ ]] || { echo "Invalid backup filename" >&2; exit 1; }
 }
 
+safe_config_export_name() {
+  [[ "$1" =~ ^readypackets-config-github-secrets-[0-9TZ-]+\.rpconfig$ ]] || { echo "Invalid protected configuration export filename" >&2; exit 1; }
+}
+
 archive_path() {
   safe_name "$1"
   local path="$BACKUP_DIR/$1"
@@ -246,15 +250,25 @@ EOF
   restore-status)
     restore_status
     ;;
-  export-config)
+  export-config|export-config-secrets)
     passphrase="$(head -n 1 | tr -d '\r\n')"
     [[ ${#passphrase} -ge 16 ]] || { echo "Configuration export passphrase must be at least 16 characters" >&2; exit 1; }
     passfile="$(mktemp)"; trap 'rm -f "$passfile"' EXIT
     printf '%s\n' "$passphrase" > "$passfile"; chmod 0600 "$passfile"
-    output="$EXPORT_DIR/readypackets-config-$(date -u +%Y%m%dT%H%M%SZ).rpconfig"
-    RP_APP_ROOT="$APP_ROOT" RP_CONFIG_BACKUP_DIR="$EXPORT_DIR" bash "$APP_ROOT/deploy/config-migration.sh" export --output "$output" --passphrase-file "$passfile" >/dev/null
+    if [[ "$1" == "export-config-secrets" ]]; then
+      output="$EXPORT_DIR/readypackets-config-github-secrets-$(date -u +%Y%m%dT%H%M%SZ).rpconfig"
+      RP_APP_ROOT="$APP_ROOT" RP_CONFIG_BACKUP_DIR="$EXPORT_DIR" bash "$APP_ROOT/deploy/config-migration.sh" export --output "$output" --passphrase-file "$passfile" --include-secrets >/dev/null
+    else
+      output="$EXPORT_DIR/readypackets-config-$(date -u +%Y%m%dT%H%M%SZ).rpconfig"
+      RP_APP_ROOT="$APP_ROOT" RP_CONFIG_BACKUP_DIR="$EXPORT_DIR" bash "$APP_ROOT/deploy/config-migration.sh" export --output "$output" --passphrase-file "$passfile" >/dev/null
+    fi
     chmod 0640 "$output"
     basename "$output"
+    ;;
+  delete-export)
+    filename="${2:-}"; safe_config_export_name "$filename"
+    rm -f -- "$EXPORT_DIR/$filename"
+    printf 'deleted=%s\n' "$filename"
     ;;
   prepare-download)
     safe_name "${2:-}"
@@ -264,7 +278,7 @@ EOF
     basename "$output"
     ;;
   *)
-    echo "Usage: $0 {start|status|schedule HH:MM|configure-remote|test-target DESTINATION|configure-targets|verify-archive FILENAME|start-restore FILENAME|restore-status|export-config|prepare-download FILENAME}" >&2
+    echo "Usage: $0 {start|status|schedule HH:MM|configure-remote|test-target DESTINATION|configure-targets|verify-archive FILENAME|start-restore FILENAME|restore-status|export-config|export-config-secrets|delete-export FILENAME|prepare-download FILENAME}" >&2
     exit 2
     ;;
 esac

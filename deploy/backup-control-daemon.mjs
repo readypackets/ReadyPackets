@@ -19,6 +19,7 @@ const MAX_OUTPUT_BYTES = 256 * 1024;
 const TIMEOUT_MS = 5 * 60 * 1000;
 const SAFE_TARGET = /^[A-Za-z0-9._-]+:.+$/;
 const SAFE_FILENAME = /^readypackets-[0-9TZ-]+\.tar\.gz(?:\.(?:age|gpg))?$/;
+const SAFE_CONFIG_EXPORT = /^readypackets-config-github-secrets-[0-9TZ-]+\.rpconfig$/;
 
 if (process.getuid?.() !== 0) throw new Error("backup-control daemon must run as root");
 
@@ -44,8 +45,10 @@ function validateRequest(value) {
       if (args.length !== 1 || !SAFE_FILENAME.test(args[0]) || stdin !== `RESTORE ${args[0]}\n`) deny("Invalid restore confirmation."); break;
     case "test-target":
       if (args.length !== 1 || !SAFE_TARGET.test(args[0]) || stdin) deny("Invalid cloud target."); break;
-    case "configure-targets": case "configure-remote": case "export-config":
+    case "configure-targets": case "configure-remote": case "export-config": case "export-config-secrets":
       if (args.length !== 0 || !stdin) deny("This action requires a configuration payload."); break;
+    case "delete-export":
+      if (args.length !== 1 || !SAFE_CONFIG_EXPORT.test(args[0]) || stdin) deny("Invalid protected configuration export filename."); break;
     default: deny("Unsupported backup action.");
   }
   return { action, args, stdin };

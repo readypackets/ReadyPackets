@@ -20,8 +20,10 @@ PBKDF2_ITERATIONS="600000"
 
 # Only platform configuration. Operational, customer, order, file, session, and
 # log tables are deliberately excluded from configuration migrations. Secret
-# site-settings are exported only with --include-secrets, which is intentionally
-# unavailable through the administrator-facing export control.
+# site-settings are exported only with --include-secrets. The ordinary browser
+# export remains secret-free; the sole administrator-facing exception is the
+# explicit private GitHub vault action, which requires a new recovery passphrase
+# and typed confirmation for each secret-inclusive encrypted publication.
 CONFIG_TABLES=(
   feature_flags rate_limit_configs registration_fields
   email_templates email_automations webhook_endpoints phase_kickoff_configs
@@ -53,14 +55,17 @@ Examples:
 Optional: --passphrase-file /root/readypackets-migration.pass (must be mode 600)
 Safety:  --replace-config is mandatory for import.
          --include-secrets --apply-env together enable root-console-only
-         break-glass secret restoration; they are never used by the
-         administrator-facing export control.
+         break-glass secret restoration. The private GitHub vault can create a
+         secret-inclusive encrypted export, but it cannot import or apply one.
          --dry-run validates a bundle without changing the system.
          --force skips the explicit import confirmation for controlled automation.
 
 Default bundles deliberately omit application keys, database credentials, and
-integration secrets—including Microsoft Graph/SharePoint client secrets. Store
-all bundles offline; never email, commit, or place them in a shared directory.
+integration secrets—including Microsoft Graph/SharePoint client secrets. The
+private GitHub vault is an explicit exception: it creates a passphrase-encrypted
+secret-inclusive bundle and writes only ciphertext plus a non-secret manifest to
+a configured private repository. Store recovery passphrases offline and never
+email, commit, or place them in a shared directory.
 USAGE
 }
 

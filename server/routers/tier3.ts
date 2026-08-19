@@ -42,6 +42,7 @@ import { encryptField, decryptField } from "../security/crypto.js";
 import { adminProcedure, staffProcedure, protectedProcedure, router } from "../trpc/trpc.js";
 import { recordActivity } from "../observability/audit.js";
 import { setFeatureFlag } from "../services/settings.js";
+import { configureGitHubVault, getGitHubVaultStatus, publishGitHubVaultBackup, testGitHubVault } from "../services/githubConfigVault.js";
 
 // ── Subscription plans ────────────────────────────────────────────────────────
 const subscriptionRouter = router({
@@ -646,6 +647,36 @@ const systemBackupsRouter = router({
     const filename = await runBackupControl(["export-config"], `${input.passphrase}\\n`);
     void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "backup.configuration_exported", entityType: "backup", entityId: 0, severity: "warning", summary: "Administrator exported an encrypted configuration migration bundle", ipAddress: ctx.clientIp });
     return readProtectedExport(filename);
+  }),
+  githubVaultStatus: adminProcedure.query(async () => getGitHubVaultStatus()),
+  configureGitHubVault: adminProcedure.input(z.object({
+    repository: z.string().trim().min(3).max(201),
+    branch: z.string().trim().min(1).max(255),
+    folder: z.string().trim().min(1).max(240),
+    enabled: z.boolean().default(false),
+    token: z.string().trim().min(20).max(4096).optional(),
+  })).mutation(async ({ ctx, input }) => {
+    const result = await configureGitHubVault({ ...input, updatedByUserId: ctx.session.user.id });
+    void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "backup.github_vault_configured", entityType: "backup", entityId: 0, severity: "warning", summary: `Administrator ${input.enabled ? "enabled" : "saved"} the private GitHub configuration vault`, changes: { repository: result.repository, branch: result.branch, folder: result.folder, tokenConfigured: result.tokenConfigured }, ipAddress: ctx.clientIp });
+    return result;
+  }),
+  testGitHubVault: adminProcedure.mutation(async ({ ctx }) => {
+    const result = await testGitHubVault();
+    void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "backup.github_vault_tested", entityType: "backup", entityId: 0, summary: `Administrator validated private GitHub configuration vault ${result.repository}`, changes: { repository: result.repository, branch: result.branch, folder: result.folder }, ipAddress: ctx.clientIp });
+    return result;
+  }),
+  publishGitHubVault: adminProcedure.input(z.object({
+    passphrase: z.string().min(16).max(512),
+    confirmation: z.literal("BACKUP SECRETS TO GITHUB"),
+  })).mutation(async ({ ctx, input }) => {
+    const filename = await runBackupControl(["export-config-secrets"], `${input.passphrase}\n`);
+    try {
+      const result = await publishGitHubVaultBackup({ filename, releasedAt: new Date().toISOString() });
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "backup.github_vault_published", entityType: "backup", entityId: 0, severity: "warning", summary: `Administrator published an encrypted secret-inclusive configuration vault backup to ${result.repository}`, changes: { repository: result.repository, branch: result.branch, archivePath: result.archivePath, manifestPath: result.manifestPath, sha256: result.sha256, sizeBytes: result.sizeBytes }, ipAddress: ctx.clientIp });
+      return result;
+    } finally {
+      await runBackupControl(["delete-export", filename]).catch(() => undefined);
+    }
   }),
   download: adminProcedure.input(z.object({ filename: z.string().regex(BACKUP_FILENAME, "Invalid backup filename.") })).mutation(async ({ ctx, input }) => {
     const filename = await runBackupControl(["prepare-download", input.filename]);
