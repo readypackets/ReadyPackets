@@ -3157,3 +3157,13 @@ Secret-inclusive publication is intentional, manual, and fail-closed. Each backu
 **Website name:** Added the optional `SITE_NAME` environment variable for server-rendered public page titles and descriptions, documented it in `.env.example`, and passes it to Docker containers. This changes public browser metadata without replacing ReadyPackets logo and brand assets.
 
 **Validation:** Bash syntax checks passed for all affected install/recovery scripts. Focused GitHub vault tests passed (6/6); TypeScript validation, client build, server bundle build, installer help checks, a malicious-vault-path rejection check, and `git diff --check` all passed. Updated `docs/PUBLIC_GITHUB_AUTOINSTALL.md` with the new configuration-vault restoration and website-name options.
+
+## 2026-08-19 — One-click unattended installer with visible progress
+
+**User report and request:** The prior installer appeared to do nothing. The user requested a script that installs the application automatically without requiring interactive choices.
+
+**Diagnosis:** The existing unified installer is intentionally interactive when it has a terminal and intentionally requires explicit mode/domain/TLS values without one. A copied or piped command without required flags can therefore exit before any installation work. The new entry point removes that ambiguity by rejecting absent/invalid values with a single clear error before changing the server, and by emitting step messages during normal execution.
+
+**Implementation:** Added `deploy/one-click-install.sh` and `docs/ONE_CLICK_AUTOINSTALL.md`. The script uses `RP_*` variables for its limited required inputs, defaults to native VPS mode, clones the selected public source repository, invokes the non-interactive unified installer, prints package/source/installer/health-check progress, and verifies the final health endpoint. It supports `RP_MODE=native|docker|docker-bootstrap`, website naming, Let’s Encrypt or Cloudflare Origin CA, branch or immutable commit pinning, and optional latest encrypted private GitHub configuration-vault recovery. It refuses to overwrite an existing project directory and removes temporary vault token/passphrase files on exit.
+
+**Validation:** Script syntax passed. Root-context preflight tests confirmed missing `RP_DOMAIN` and invalid `RP_MODE` both exit immediately with actionable visible messages before any package, source, or server installation action. Repository whitespace validation passed.
