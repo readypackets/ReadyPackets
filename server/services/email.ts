@@ -17,6 +17,7 @@ import { raiseAlert } from "../observability/audit.js";
 import { getSetting } from "./settings.js";
 import { BRAND, BRAND_COLORS } from "../../shared/brand.js";
 import { isGraphEmailEnabled, sendViaGraph } from "./emailGraph.js";
+import { formatBusinessAddress, getBusinessProfile } from "./businessProfile.js";
 import { invoicePdfFileName, renderInvoicePdf } from "./invoicePdf.js";
 
 let transporter: Transporter | null = null;
@@ -112,6 +113,9 @@ export function assertValidEmailLinks(html: string): void {
   }
 }
 
+const BUSINESS_PROFILE_LEGAL_NAME_TOKEN = "__RP_BUSINESS_PROFILE_LEGAL_NAME__";
+const BUSINESS_PROFILE_ADDRESS_TOKEN = "__RP_BUSINESS_PROFILE_ADDRESS__";
+
 /** Brand-consistent HTML wrapper; the logo is served from the app's own origin. */
 export function wrapHtmlBody(title: string, innerHtml: string): string {
   const logoUrl = `${env.appUrl}/brand/dark/readypackets_dark_email_header.png`;
@@ -131,7 +135,7 @@ ${innerHtml}
 </td></tr>
 <tr><td style="padding:20px 32px 28px 32px;border-top:1px solid #e2e8f0;font-size:12px;line-height:1.6;color:${BRAND_COLORS.grayDark};">
 <p style="margin:0 0 6px 0;">${escapeHtml(BRAND.tagline)}</p>
-<p style="margin:0 0 6px 0;">${escapeHtml(BRAND.companyLegalName)} &middot; ${escapeHtml(BRAND.address)}</p>
+<p style="margin:0 0 6px 0;">${BUSINESS_PROFILE_LEGAL_NAME_TOKEN} &middot; ${BUSINESS_PROFILE_ADDRESS_TOKEN}</p>
 <p style="margin:0;">${escapeHtml(BRAND.copyright())}</p>
 </td></tr>
 </table>
@@ -170,14 +174,31 @@ function normalizeAttachments(attachments: EmailAttachmentManifest[] | undefined
     }));
 }
 
+async function applyBusinessProfileToEmail(input: QueueEmailInput): Promise<{ html: string; text: string | null }> {
+  const profile = await getBusinessProfile();
+  const legalName = escapeHtml(profile.legalName);
+  const address = escapeHtml(formatBusinessAddress(profile));
+  return {
+    html: input.html
+      .replaceAll(BUSINESS_PROFILE_LEGAL_NAME_TOKEN, legalName)
+      .replaceAll(BUSINESS_PROFILE_ADDRESS_TOKEN, address),
+    text: input.text
+      ? input.text
+        .replaceAll(BUSINESS_PROFILE_LEGAL_NAME_TOKEN, profile.legalName)
+        .replaceAll(BUSINESS_PROFILE_ADDRESS_TOKEN, formatBusinessAddress(profile))
+      : null,
+  };
+}
+
 export async function queueEmail(input: QueueEmailInput): Promise<void> {
-  assertValidEmailLinks(input.html);
+  const rendered = await applyBusinessProfileToEmail(input);
+  assertValidEmailLinks(rendered.html);
   await db.insert(emailQueue).values({
     toAddressEnc: encryptField(input.to, "email:queue") ?? "",
     templateKey: input.templateKey ?? null,
     subject: input.subject.slice(0, 255),
-    bodyHtml: input.html,
-    bodyText: input.text ?? null,
+    bodyHtml: rendered.html,
+    bodyText: rendered.text,
     attachmentManifest: normalizeAttachments(input.attachments),
   });
 }

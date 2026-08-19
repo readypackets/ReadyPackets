@@ -2,7 +2,7 @@
 
 ReadyPackets Consulting LLC
 
-Last Updated: March 2026
+Last Updated: August 19, 2026
 
 At Ready Packets Consulting, we stand behind the quality of our work. This Refund Policy outlines the circumstances under which refunds may be issued. We strive to be fair and transparent in all refund decisions.
 
@@ -96,6 +96,6 @@ We reserve the right to modify this Refund Policy at any time. Changes apply to 
 
 Ready Packets Consulting LLC
 
-347 5th Ave Ste 1402-158, New York, NY 10016
+7404 Executive Pl, Lanham, MD 20706
 
 Email: info@readypackets.com

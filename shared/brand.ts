@@ -10,7 +10,7 @@ export const BRAND = {
   wordmark: "ReadyPackets\u2122",
   tagline: "Your Business, Professionally Packeted\u2122",
   taglinePlain: "Your Business, Professionally Packeted",
-  address: "347 5th Ave Ste 1402-158, New York, NY 10016",
+  address: "7404 Executive Pl, Lanham, MD 20706",
   emails: {
     general: "info@readypackets.com",
     compliance: "compliance@readypackets.com",

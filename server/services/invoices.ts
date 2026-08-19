@@ -6,6 +6,7 @@ import { decryptField } from "../security/crypto.js";
 import { insertedId } from "../db/result.js";
 import { button, queueEmail, wrapHtmlBody } from "./email.js";
 import { env } from "../config/env.js";
+import { formatBusinessAddress, getBusinessProfile } from "./businessProfile.js";
 
 export type InvoiceLine = { description: string; quantity: number; unitPriceCents: number; lineTotalCents: number };
 
@@ -34,7 +35,7 @@ export type ReadyPacketsInvoice = {
   customerVisible: boolean;
   publishedAt: Date | null;
   emailQueuedAt: Date | null;
-  brand: { companyName: string; logoPath: string; supportUrl: string };
+  brand: { companyName: string; legalName?: string; address?: string; logoPath: string; supportUrl: string };
 };
 
 export function invoiceNumberFor(invoiceId: number, issuedAt: Date): string {
@@ -80,12 +81,13 @@ export async function getOrCreatePaidOrderInvoice(orderId: number): Promise<Read
     throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Invoices can only be generated after a payment has been confirmed." });
   }
 
-  const [customerRows, items, existingInvoice, payment, coupon] = await Promise.all([
+  const [customerRows, items, existingInvoice, payment, coupon, businessProfile] = await Promise.all([
     db.select({ id: users.id, publicId: users.publicId, firstNameEnc: users.firstNameEnc, lastNameEnc: users.lastNameEnc, companyEnc: users.companyEnc }).from(users).where(eq(users.id, order.userId)).limit(1),
     db.select({ name: orderItems.name, tier: orderItems.tier, quantity: orderItems.quantity, unitPriceCents: orderItems.unitPriceCents, lineTotalCents: orderItems.lineTotalCents }).from(orderItems).where(eq(orderItems.orderId, orderId)),
     db.select().from(invoices).where(eq(invoices.orderId, orderId)).orderBy(desc(invoices.createdAt)).limit(1),
     db.select({ provider: payments.provider, providerReference: payments.providerReference, amountCents: payments.amountCents, receivedAt: payments.receivedAt }).from(payments).where(and(eq(payments.orderId, orderId), eq(payments.status, "succeeded"))).orderBy(desc(payments.receivedAt)),
     db.select({ code: couponRedemptions.codeSnapshot, discountCents: couponRedemptions.discountCents }).from(couponRedemptions).where(eq(couponRedemptions.orderId, orderId)).limit(1),
+    getBusinessProfile(),
   ]);
   const user = customerRows[0];
   if (!user?.publicId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "The customer reference is unavailable for this order." });
@@ -167,7 +169,7 @@ export async function getOrCreatePaidOrderInvoice(orderId: number): Promise<Read
     customerVisible: invoice.customerVisible,
     publishedAt: invoice.publishedAt,
     emailQueuedAt: invoice.emailQueuedAt,
-    brand: { companyName: "ReadyPackets", logoPath: "/brand/light/readypackets_light_document.png", supportUrl: "https://www.readypackets.com" },
+    brand: { companyName: businessProfile.publicName, legalName: businessProfile.legalName, address: formatBusinessAddress(businessProfile), logoPath: "/brand/light/readypackets_light_document.png", supportUrl: "https://www.readypackets.com" },
   };
 }
 

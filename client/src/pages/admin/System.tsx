@@ -14,6 +14,7 @@ import {
   Globe2,
   KeyRound,
   LockKeyhole,
+  MapPin,
   Plus,
   RefreshCw,
   Save,
@@ -66,7 +67,7 @@ export function AdminSystemPage() {
       />
       <div className="mt-6">
         {tab === "health" ? <HealthPanel /> : null}
-        {tab === "settings" ? <SettingsPanel /> : null}
+        {tab === "settings" ? <><BusinessProfilePanel /><SettingsPanel /></> : null}
         {tab === "flags" ? <FlagsPanel /> : null}
         {tab === "keys" ? <ApiKeysPanel /> : null}
         {tab === "saml" ? <SamlPanel /> : null}
@@ -215,6 +216,51 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
       <dd className="text-right font-medium text-ink">{value}</dd>
     </div>
   );
+}
+
+function BusinessProfilePanel() {
+  const toast = useToast();
+  const profile = trpc.adminSecurity.businessProfile.useQuery();
+  const [form, setForm] = useState({ legalName: "", publicName: "", addressLine1: "", addressLine2: "", city: "", state: "", postalCode: "", country: "US" });
+  useEffect(() => {
+    if (!profile.data) return;
+    setForm({
+      legalName: profile.data.legalName,
+      publicName: profile.data.publicName,
+      addressLine1: profile.data.addressLine1,
+      addressLine2: profile.data.addressLine2 ?? "",
+      city: profile.data.city,
+      state: profile.data.state,
+      postalCode: profile.data.postalCode,
+      country: profile.data.country,
+    });
+  }, [profile.data]);
+  const update = trpc.adminSecurity.updateBusinessProfile.useMutation({
+    async onSuccess() {
+      await profile.refetch();
+      toast.success("Business profile updated", "The new address is now used by public pages, future emails, invoices, and generated documents.");
+    },
+    onError(error) { toast.error("Business profile was not updated", errorMessage(error)); },
+  });
+  const set = (key: keyof typeof form, value: string) => setForm((current) => ({ ...current, [key]: value }));
+
+  return <Card className="mb-6">
+    <CardHeader title={<span className="flex items-center gap-2"><MapPin className="size-4 text-teal" aria-hidden="true" />Business profile and mailing address</span>} description="This is the single source for the address displayed on the public website and used in future email footers, invoices, and generated business documents." actions={<Button size="sm" variant="outline" busy={profile.isFetching} onClick={() => void profile.refetch()} leadingIcon={<RefreshCw className="size-4" />}>Refresh</Button>} />
+    {profile.isLoading ? <Skeleton className="mt-5 h-48 w-full" /> : <>
+      <Alert tone="info" className="mt-5" title="Future-use content updates automatically">Saving this profile updates new website responses, emails, and invoices immediately. Previously issued invoices, sent emails, accepted policies, and signed documents retain their historical address as evidence.</Alert>
+      <div className="mt-5 grid gap-4 md:grid-cols-2">
+        <Input label="Legal entity name" value={form.legalName} onChange={(event) => set("legalName", event.target.value)} required />
+        <Input label="Public business name" value={form.publicName} onChange={(event) => set("publicName", event.target.value)} required />
+        <Input label="Address line 1" value={form.addressLine1} onChange={(event) => set("addressLine1", event.target.value)} required />
+        <Input label="Address line 2" value={form.addressLine2} onChange={(event) => set("addressLine2", event.target.value)} />
+        <Input label="City" value={form.city} onChange={(event) => set("city", event.target.value)} required />
+        <Input label="State or region" value={form.state} onChange={(event) => set("state", event.target.value)} required />
+        <Input label="Postal code" value={form.postalCode} onChange={(event) => set("postalCode", event.target.value)} required />
+        <Input label="Country" value={form.country} onChange={(event) => set("country", event.target.value)} required />
+      </div>
+      <div className="mt-5 flex justify-end"><Button busy={update.isPending} onClick={() => update.mutate({ ...form, addressLine2: form.addressLine2.trim() || null })} leadingIcon={<Save className="size-4" />}>Save business profile</Button></div>
+    </>}
+  </Card>;
 }
 
 function DomainPanel() {

@@ -157,22 +157,23 @@ function PublicRoutes() {
     };
     const page = pages[location] ?? { title: "ReadyPackets", description: "ReadyPackets provides structured business documentation and strategy support." };
     const origin = typeof window === "undefined" ? "https://myportal.readypackets.com" : window.location.origin;
+    const businessProfile = session.businessProfile;
     const organization = {
       "@context": "https://schema.org",
       "@type": "Organization",
-      name: BRAND.companyShortName,
-      legalName: BRAND.companyLegalName,
+      name: businessProfile?.publicName ?? BRAND.companyShortName,
+      legalName: businessProfile?.legalName ?? BRAND.companyLegalName,
       url: origin,
       logo: `${origin}${BRAND_ASSETS.light.webStandard}`,
       email: BRAND.emails.general,
-      address: { "@type": "PostalAddress", streetAddress: "347 5th Ave Ste 1402-158", addressLocality: "New York", addressRegion: "NY", postalCode: "10016", addressCountry: "US" },
+      address: { "@type": "PostalAddress", streetAddress: [businessProfile?.addressLine1, businessProfile?.addressLine2].filter(Boolean).join(", ") || BRAND.address, addressLocality: businessProfile?.city ?? "Lanham", addressRegion: businessProfile?.state ?? "MD", postalCode: businessProfile?.postalCode ?? "20706", addressCountry: businessProfile?.country ?? "US" },
       contactPoint: { "@type": "ContactPoint", contactType: "Customer Service", email: BRAND.emails.general },
     };
     const visibleFaqs = publicFaqs.data ?? [];
-    if (location === "/") return { ...page, structuredData: { "@context": "https://schema.org", "@graph": [organization, { "@type": "WebSite", name: BRAND.companyShortName, url: origin }] } };
+    if (location === "/") return { ...page, structuredData: { "@context": "https://schema.org", "@graph": [organization, { "@type": "WebSite", name: businessProfile?.publicName ?? BRAND.companyShortName, url: origin }] } };
     if (location === "/faq" && visibleFaqs.length > 0) return { ...page, structuredData: { "@context": "https://schema.org", "@type": "FAQPage", mainEntity: visibleFaqs.map((faq) => ({ "@type": "Question", name: faq.question, acceptedAnswer: { "@type": "Answer", text: faq.answerMarkdown } })) } };
     return page;
-  }, [location, publicFaqs.data]);
+  }, [location, publicFaqs.data, session.businessProfile]);
 
   const maintenanceLocked =
     session.maintenance?.enabled === true &&

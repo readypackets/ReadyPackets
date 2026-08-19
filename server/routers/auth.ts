@@ -82,6 +82,7 @@ import { fireAutomations } from "../services/emailAutomations.js";
 import { affectedRows } from "../db/result.js";
 import { getMfaPolicyForRole, mfaRequirement } from "../auth/mfaPolicy.js";
 import { isAdministratorOnlyAccessEnabled, isRoleBlockedByAdministratorOnlyAccess } from "../auth/adminOnlyAccess.js";
+import { getBusinessProfile } from "../services/businessProfile.js";
 import { publicProcedure, protectedProcedure, router, sessionProcedure } from "../trpc/trpc.js";
 
 /** The single message returned for every credential failure. */
@@ -156,11 +157,12 @@ async function issueVerificationEmail(userId: number, email: string, name: strin
 export const authRouter = router({
   /** Bootstrap payload for the client: session state plus public configuration. */
   session: publicProcedure.query(async ({ ctx }) => {
-    const [maintenance, registrationEnabled, policy, ssoRows] = await Promise.all([
+    const [maintenance, registrationEnabled, policy, ssoRows, businessProfile] = await Promise.all([
       getMaintenanceState(),
       isFeatureEnabled("registration", true),
       getPasswordPolicy(),
       db.select({ name: samlConfigs.name }).from(samlConfigs).where(eq(samlConfigs.enabled, true)).limit(1),
+      getBusinessProfile(),
     ]);
     const sso = { enabled: ssoRows.length > 0, name: ssoRows[0]?.name ?? null };
 
@@ -175,6 +177,7 @@ export const authRouter = router({
         sso,
         passwordPolicy: policy,
         csrfToken: null as string | null,
+        businessProfile,
       };
     }
 
@@ -202,6 +205,7 @@ export const authRouter = router({
       sso,
       passwordPolicy: policy,
       csrfToken: ctx.session.csrfSecret,
+      businessProfile,
     };
   }),
 

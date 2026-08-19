@@ -53,6 +53,7 @@ import { pingDatabase } from "../db/client.js";
 import { adminProcedure, router } from "../trpc/trpc.js";
 import { RATE_LIMIT_CATEGORIES } from "../../shared/domain.js";
 import { affectedRows } from "../db/result.js";
+import { formatBusinessAddress, getBusinessProfile, saveBusinessProfile } from "../services/businessProfile.js";
 
 const ipPatternSchema = z
   .string()
@@ -591,6 +592,45 @@ export const adminSecurityRouter = router({
   /* ---------------------------------------------------------------- */
   /* Settings and flags                                                */
   /* ---------------------------------------------------------------- */
+
+  businessProfile: adminProcedure.query(async () => getBusinessProfile()),
+
+  updateBusinessProfile: adminProcedure
+    .input(z.object({
+      legalName: z.string().trim().min(2).max(160),
+      publicName: z.string().trim().min(2).max(120),
+      addressLine1: z.string().trim().min(2).max(160),
+      addressLine2: z.string().trim().max(160).nullable().optional(),
+      city: z.string().trim().min(2).max(100),
+      state: z.string().trim().min(2).max(64),
+      postalCode: z.string().trim().min(3).max(32),
+      country: z.string().trim().min(2).max(64),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const profile = await saveBusinessProfile({ ...input, addressLine2: input.addressLine2?.trim() || null }, ctx.session.user.id);
+      const address = formatBusinessAddress(profile);
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: "admin",
+        action: "business_profile.updated",
+        entityType: "business_profile",
+        entityId: "primary",
+        severity: "warning",
+        summary: `Updated business profile mailing address to ${address}`,
+        changes: { legalName: profile.legalName, publicName: profile.publicName, address },
+        ipAddress: ctx.clientIp,
+      });
+      void recordSecurityEvent({
+        eventType: "settings.changed",
+        severity: "notice",
+        outcome: "success",
+        message: "Administrator updated the business profile address used by future public pages, emails, invoices, and templates.",
+        userId: ctx.session.user.id,
+        ipAddress: ctx.clientIp,
+        metadata: { address },
+      });
+      return profile;
+    }),
 
   settings: adminProcedure.query(async () => {
     const rows = await db.select().from(siteSettings).orderBy(siteSettings.settingKey);

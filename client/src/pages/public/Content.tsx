@@ -33,8 +33,14 @@ import {
   Skeleton,
 } from "@/components/ui/Surface";
 import { PageSection } from "@/components/layout/PublicLayout";
+import { useSession } from "@/lib/session";
 
 export function AboutPage() {
+  const { businessProfile } = useSession();
+  const businessAddress = businessProfile
+    ? [businessProfile.addressLine1, businessProfile.addressLine2, `${businessProfile.city}, ${businessProfile.state} ${businessProfile.postalCode}`].filter(Boolean).join(", ")
+    : BRAND.address;
+  const legalName = businessProfile?.legalName ?? BRAND.companyLegalName;
   return (
     <>
       <div className="border-b border-line bg-navy py-16 text-white">
@@ -46,7 +52,7 @@ export function AboutPage() {
             We turn an idea into something that holds up under scrutiny.
           </h1>
           <p className="mt-5 max-w-3xl text-lg leading-relaxed text-white/75">
-            {BRAND.companyLegalName} exists because most founders lose momentum in the same place:
+            {legalName} exists because most founders lose momentum in the same place:
             the gap between a concept they can explain and a package a lawyer, investor, or
             manufacturer can act on. We close that gap with structure rather than volume.
           </p>
@@ -111,11 +117,11 @@ export function AboutPage() {
               <dl className="mt-4 space-y-3 text-sm">
                 <div>
                   <dt className="text-xs uppercase tracking-wide text-muted">Legal entity</dt>
-                  <dd className="mt-0.5 text-ink">{BRAND.companyLegalName}</dd>
+                  <dd className="mt-0.5 text-ink">{legalName}</dd>
                 </div>
                 <div>
                   <dt className="text-xs uppercase tracking-wide text-muted">Registered address</dt>
-                  <dd className="mt-0.5 text-ink">{BRAND.address}</dd>
+                  <dd className="mt-0.5 text-ink">{businessAddress}</dd>
                 </div>
                 <div>
                   <dt className="text-xs uppercase tracking-wide text-muted">General enquiries</dt>

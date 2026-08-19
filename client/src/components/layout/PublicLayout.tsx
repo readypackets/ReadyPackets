@@ -46,8 +46,11 @@ const FOOTER_SECTIONS = [
 ] as const;
 
 export function PublicLayout({ children }: { children: ReactNode }) {
-  const { maintenance } = useSession();
+  const { maintenance, businessProfile } = useSession();
   const showBanner = maintenance?.enabled && maintenance.showOnHomepage;
+  const businessAddress = businessProfile
+    ? [businessProfile.addressLine1, businessProfile.addressLine2, `${businessProfile.city}, ${businessProfile.state} ${businessProfile.postalCode}`].filter(Boolean).join(", ")
+    : BRAND.address;
 
   return (
     <div className="flex min-h-screen flex-col bg-white">
@@ -96,7 +99,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
               <div className="mt-5 space-y-2 text-sm">
                 <p className="flex items-start gap-2 text-white/70">
                   <MapPin className="mt-0.5 size-4 shrink-0 text-teal-light" aria-hidden="true" />
-                  <span>{BRAND.address}</span>
+                  <span>{businessAddress}</span>
                 </p>
                 <p className="flex items-start gap-2">
                   <Mail className="mt-0.5 size-4 shrink-0 text-teal-light" aria-hidden="true" />

@@ -2,7 +2,7 @@
 
 Ready Packets Consulting LLC
 
-Last Updated: March 2026
+Last Updated: August 19, 2026
 
 This Privacy Policy describes how Ready Packets Consulting LLC ("Company," "we," "us," or "our"), collects, uses, discloses, and protects your personal information when you visit our website, use our customer portal, or engage in our services. This policy applies to all visitors, customers, and users of our services.
 
@@ -198,6 +198,6 @@ We may update this Privacy Policy from time to time. Changes will be posted on t
 **For privacy questions, data requests, or complaints:**
 
 - Ready Packets Consulting LLC
-- 347 5th Ave Ste 1402-158, New York, NY 10016
+- 7404 Executive Pl, Lanham, MD 20706
 - Email: compliance@readypackets.com
 - For GDPR-related inquiries, you may also contact your local data protection authority.

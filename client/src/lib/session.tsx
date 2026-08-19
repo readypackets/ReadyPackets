@@ -23,6 +23,17 @@ import { trpc } from "./trpc";
 
 export type UserRole = "customer" | "staff" | "admin";
 
+export interface BusinessProfile {
+  legalName: string;
+  publicName: string;
+  addressLine1: string;
+  addressLine2: string | null;
+  city: string;
+  state: string;
+  postalCode: string;
+  country: string;
+}
+
 export interface SessionUser {
   id: number;
   email: string;
@@ -57,6 +68,7 @@ interface SessionContextValue {
     estimatedCompletion: string | null;
   } | null;
   registrationEnabled: boolean;
+  businessProfile: BusinessProfile | null;
   sso: { enabled: boolean; name: string | null };
   passwordPolicy: {
     minLength: number;
@@ -130,6 +142,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       restricted: data?.restricted ?? false,
       maintenance: data?.maintenance ?? null,
       registrationEnabled: data?.registrationEnabled ?? true,
+      businessProfile: data?.businessProfile ?? null,
       sso: data?.sso ?? { enabled: false, name: null },
       passwordPolicy: data?.passwordPolicy ?? null,
       refresh,

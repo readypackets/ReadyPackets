@@ -51,7 +51,7 @@
     #v(3em)
     #text(size: 9.5pt, fill: muted)[Prepared for ReadyPackets™]
     #v(0.35em)
-    #text(size: 9pt, fill: muted)[Ready Packets Consulting LLC · New York, New York]
+    #text(size: 9pt, fill: muted)[Ready Packets Consulting LLC · Lanham, Maryland]
   ]
 ]
 
@@ -70,7 +70,7 @@
 
 #v(1.2em)
 
-This Mutual Non-Disclosure Agreement (this *Agreement*) is entered into as of the Effective Date by and between *Ready Packets Consulting LLC*, doing business as *ReadyPackets* (*ReadyPackets*), with an address at 347 5th Avenue, Suite 1402-158, New York, NY 10016, and *[PARTNER LEGAL NAME]*, a [STATE/COUNTRY AND ENTITY TYPE] with an address at [PARTNER BUSINESS ADDRESS] (*Partner*). ReadyPackets and Partner are each a *Party* and collectively the *Parties*.
+This Mutual Non-Disclosure Agreement (this *Agreement*) is entered into as of the Effective Date by and between *Ready Packets Consulting LLC*, doing business as *ReadyPackets* (*ReadyPackets*), with an address at 7404 Executive Pl, Lanham, MD 20706, and *[PARTNER LEGAL NAME]*, a [STATE/COUNTRY AND ENTITY TYPE] with an address at [PARTNER BUSINESS ADDRESS] (*Partner*). ReadyPackets and Partner are each a *Party* and collectively the *Parties*.
 
 The Parties wish to evaluate and, if mutually agreed in a later written agreement, potentially pursue a business relationship involving platform strategy, design, software engineering, infrastructure, security, integrations, operations, support, or related professional services (the *Purpose*). In connection with the Purpose, either Party may disclose Confidential Information to the other Party. The Parties agree as follows.
 

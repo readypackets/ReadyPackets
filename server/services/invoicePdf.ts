@@ -55,8 +55,8 @@ export function renderInvoicePdf(invoice: ReadyPacketsInvoice): Buffer {
   content += rect(0, 735, pageWidth, 57, navy);
   content += rect(margin, 752, 20, 20, teal);
   content += rect(margin + 6, 758, 8, 8, gold);
-  content += text("F2", 19, margin + 30, 757, "ReadyPackets", white);
-  content += text("F1", 8, margin + 30, 744, "Business readiness, packaged with clarity.", "0.84 0.89 0.93 rg");
+  content += text("F2", 19, margin + 30, 757, invoice.brand.companyName || "ReadyPackets", white);
+  content += text("F1", 8, margin + 30, 744, invoice.brand.address ?? "Business readiness, packaged with clarity.", "0.84 0.89 0.93 rg");
   content += text("F2", 20, 432, 758, "INVOICE", white);
   content += text("F1", 9, 432, 744, invoice.invoiceNumber, "0.84 0.89 0.93 rg");
 
@@ -126,8 +126,8 @@ export function renderInvoicePdf(invoice: ReadyPacketsInvoice): Buffer {
   y -= 78;
 
   content += line(margin, 76, pageWidth - margin, 76);
-  content += text("F1", 8, margin, 58, "ReadyPackets · This invoice records the order value, adjustments, and actual customer payment evidence.", muted);
-  content += text("F1", 8, margin, 45, "For order history and a current copy, sign in to the ReadyPackets customer portal.", muted);
+  content += text("F1", 8, margin, 58, `${invoice.brand.legalName ?? invoice.brand.companyName} · ${invoice.brand.address ?? ""}`.trim(), muted);
+  content += text("F1", 8, margin, 45, `${invoice.brand.companyName} invoice records the order value, adjustments, and actual customer payment evidence.`, muted);
 
   const stream = content;
   const objects = [

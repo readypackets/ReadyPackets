@@ -17,6 +17,7 @@ import { Checkbox, Input, Select, Textarea } from "@/components/ui/Field";
 import { Alert, Card, SectionHeading } from "@/components/ui/Surface";
 import { useToast } from "@/components/ui/Toast";
 import { PageSection } from "@/components/layout/PublicLayout";
+import { useSession } from "@/lib/session";
 
 const TOPICS = [
   { value: "general", label: "General enquiry" },
@@ -49,6 +50,10 @@ const EMPTY: FormState = {
 
 export function ContactPage() {
   const toast = useToast();
+  const { businessProfile } = useSession();
+  const businessAddress = businessProfile
+    ? [businessProfile.addressLine1, businessProfile.addressLine2, `${businessProfile.city}, ${businessProfile.state} ${businessProfile.postalCode}`].filter(Boolean).join(", ")
+    : BRAND.address;
   const [form, setForm] = useState<FormState>(EMPTY);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [sent, setSent] = useState(false);
@@ -257,7 +262,7 @@ export function ContactPage() {
                   <dt className="text-xs uppercase tracking-wide text-muted">Registered address</dt>
                   <dd className="mt-0.5 flex items-start gap-2">
                     <MapPin className="mt-0.5 size-4 shrink-0 text-teal" aria-hidden="true" />
-                    <span>{BRAND.address}</span>
+                    <span>{businessAddress}</span>
                   </dd>
                 </div>
               </dl>
