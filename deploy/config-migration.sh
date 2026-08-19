@@ -54,9 +54,10 @@ Examples:
 
 Optional: --passphrase-file /root/readypackets-migration.pass (must be mode 600)
 Safety:  --replace-config is mandatory for import.
-         --include-secrets --apply-env together enable root-console-only
-         break-glass secret restoration. The private GitHub vault can create a
-         secret-inclusive encrypted export, but it cannot import or apply one.
+         --include-secrets --apply-env together enable break-glass secret
+         restoration. The unified installer can invoke this import only after it
+         verifies a private GitHub vault archive and obtains the operator's
+         recovery passphrase; target database credentials remain local.
          --dry-run validates a bundle without changing the system.
          --force skips the explicit import confirmation for controlled automation.
 
@@ -64,7 +65,9 @@ Default bundles deliberately omit application keys, database credentials, and
 integration secrets—including Microsoft Graph/SharePoint client secrets. The
 private GitHub vault is an explicit exception: it creates a passphrase-encrypted
 secret-inclusive bundle and writes only ciphertext plus a non-secret manifest to
-a configured private repository. Store recovery passphrases offline and never
+a configured private repository. The unified installer can restore a verified
+latest vault bundle to a newly provisioned server while retaining that server's
+database credentials. Store recovery passphrases offline and never
 email, commit, or place them in a shared directory.
 USAGE
 }
@@ -115,6 +118,21 @@ existing_tables() {
     if "$MYSQL_BIN" -N -e "SELECT 1 FROM information_schema.tables WHERE table_schema='${DB_NAME}' AND table_name='${table}' LIMIT 1" 2>/dev/null | grep -q 1; then
       printf '%s\n' "$table"
     fi
+  done
+}
+
+# Configuration bundles must restore application keys and integration secrets,
+# but a fresh target has its own provisioned database instance and credentials.
+# Retaining those target connection values prevents an imported environment from
+# pointing the new application at an unreachable old database.
+preserve_target_database_connection() {
+  local source="$1" target="$2" key line
+  [[ -f "$source" ]] || return 0
+  for key in DATABASE_URL DB_NAME DB_USER DB_PASSWORD MYSQL_DATABASE MYSQL_USER MYSQL_PASSWORD MYSQL_ROOT_PASSWORD; do
+    line="$(grep -E "^${key}=" "$source" | tail -n 1 || true)"
+    [[ -n "$line" ]] || continue
+    sed -i -E "/^${key}=.*/d" "$target"
+    printf '%s\n' "$line" >> "$target"
   done
 }
 
@@ -253,13 +271,16 @@ import_bundle() {
   fi
   if [[ "$INCLUDE_SECRETS" == "true" ]]; then
     # Environment is restored first because encrypted DB rows depend on the original key.
+    # The target database was freshly provisioned by the installer, so retain its
+    # connection credentials rather than point it at the source host database.
     cp "$EXTRACTED_DIR/portal.env" "$ENV_FILE"
+    [[ -n "${previous_env:-}" ]] && preserve_target_database_connection "$previous_env" "$ENV_FILE"
     chmod 640 "$ENV_FILE"
     if getent group readypackets >/dev/null 2>&1; then chown root:readypackets "$ENV_FILE"; else chown root:root "$ENV_FILE"; fi
   fi
   "$MYSQL_BIN" "$DB_NAME" < "$EXTRACTED_DIR/configuration.sql"
   if [[ "$INCLUDE_SECRETS" == "true" ]]; then
-    log "Configuration tables and protected environment restored under break-glass mode."
+    log "Configuration tables and protected environment restored under break-glass mode; the target server database connection credentials were retained."
   else
     log "Non-secret configuration restored; target environment and secret settings were preserved."
   fi

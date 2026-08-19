@@ -19,6 +19,10 @@
 #   --cloudflare-origin-root <path>  Optional PEM Cloudflare Origin CA root/chain
 #   --no-seed           Skip catalogue seeding (use when restoring a backup)
 #   --skip-packages     Assume Node, MySQL and nginx are already installed
+#   --site-name <name>  Website name used for public page metadata
+#   --github-config-repository owner/repository  Restore latest encrypted vault configuration
+#   --github-config-branch <branch> --github-config-folder <path>
+#   --github-config-token-file <root-only file> --github-config-passphrase-file <root-only file>
 
 set -Eeuo pipefail
 
@@ -38,6 +42,12 @@ CLOUDFLARE_ORIGIN_KEY=""
 CLOUDFLARE_ORIGIN_ROOT=""
 WANT_SEED="true"
 SKIP_PACKAGES="false"
+SITE_NAME="ReadyPackets"
+GITHUB_CONFIG_REPOSITORY=""
+GITHUB_CONFIG_BRANCH="main"
+GITHUB_CONFIG_FOLDER="readypackets-platform-config"
+GITHUB_CONFIG_TOKEN_FILE=""
+GITHUB_CONFIG_PASSPHRASE_FILE=""
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m warn\033[0m %s\n' "$*" >&2; }
@@ -59,6 +69,12 @@ while [[ $# -gt 0 ]]; do
     --cloudflare-origin-root) CLOUDFLARE_ORIGIN_ROOT="${2:-}"; shift 2 ;;
     --no-seed)       WANT_SEED="false"; shift ;;
     --skip-packages) SKIP_PACKAGES="true"; shift ;;
+    --site-name) SITE_NAME="${2:-}"; shift 2 ;;
+    --github-config-repository) GITHUB_CONFIG_REPOSITORY="${2:-}"; shift 2 ;;
+    --github-config-branch) GITHUB_CONFIG_BRANCH="${2:-}"; shift 2 ;;
+    --github-config-folder) GITHUB_CONFIG_FOLDER="${2:-}"; shift 2 ;;
+    --github-config-token-file) GITHUB_CONFIG_TOKEN_FILE="${2:-}"; shift 2 ;;
+    --github-config-passphrase-file) GITHUB_CONFIG_PASSPHRASE_FILE="${2:-}"; shift 2 ;;
     -h|--help)       sed -n '2,25p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *)               die "Unknown option: $1" ;;
   esac
@@ -66,6 +82,12 @@ done
 
 [[ $EUID -eq 0 ]] || die "This installer must run as root (use sudo)."
 [[ -n "$DOMAIN" ]] || die "--domain is required."
+[[ "$SITE_NAME" != *$'\n'* && ${#SITE_NAME} -le 100 ]] || die "--site-name must be 1 to 100 characters and contain no line breaks."
+[[ -n "$SITE_NAME" ]] || die "--site-name must not be empty."
+if [[ -n "$GITHUB_CONFIG_REPOSITORY" || -n "$GITHUB_CONFIG_TOKEN_FILE" || -n "$GITHUB_CONFIG_PASSPHRASE_FILE" ]]; then
+  [[ "$GITHUB_CONFIG_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "--github-config-repository must be owner/repository."
+  [[ -f "$GITHUB_CONFIG_TOKEN_FILE" && -f "$GITHUB_CONFIG_PASSPHRASE_FILE" ]] || die "GitHub configuration recovery requires root-only token and passphrase files."
+fi
 
 # Interactive operators choose the certificate model explicitly. Noninteractive
 # automation must pass --tls-provider to avoid an unattended prompt.
@@ -286,6 +308,7 @@ DB_PASSWORD=${DB_PASSWORD}
 SESSION_SECRET=${SESSION_SECRET}
 DATA_ENCRYPTION_KEY=${DATA_ENCRYPTION_KEY}
 EMAIL_INDEX_KEY=${EMAIL_INDEX_KEY}
+SITE_NAME=$(printf '%q' "$SITE_NAME")
 
 # nginx on this host is the only proxy in front of the application.
 # BEHIND_CLOUDFLARE=true tells the app to read CF-Connecting-IP for real client IPs.
@@ -339,6 +362,21 @@ runuser -u "$APP_USER" -- env $(grep -v '^#' "$ENV_FILE" | xargs) node "${APP_DI
 if [[ "$WANT_SEED" == "true" ]]; then
   log "Seeding catalogue, policies and settings"
   runuser -u "$APP_USER" -- env $(grep -v '^#' "$ENV_FILE" | xargs) node "${APP_DIR}/dist/seed.js"
+fi
+
+if [[ -n "$GITHUB_CONFIG_REPOSITORY" ]]; then
+  log "Downloading the latest encrypted configuration vault bundle from private GitHub."
+  vault_bundle="/root/readypackets-github-vault.rpconfig"
+  bash "${APP_DIR}/deploy/github-config-vault-restore.sh" \
+    --repository "$GITHUB_CONFIG_REPOSITORY" --branch "$GITHUB_CONFIG_BRANCH" --folder "$GITHUB_CONFIG_FOLDER" \
+    --token-file "$GITHUB_CONFIG_TOKEN_FILE" --output "$vault_bundle"
+  bash "${APP_DIR}/deploy/config-migration.sh" import --input "$vault_bundle" \
+    --passphrase-file "$GITHUB_CONFIG_PASSPHRASE_FILE" --replace-config --include-secrets --apply-env --force
+  rm -f -- "$vault_bundle"
+  # The explicit installer choice wins for the new public site identity.
+  sed -i -E '/^SITE_NAME=.*/d' "$ENV_FILE"
+  printf 'SITE_NAME=%q\n' "$SITE_NAME" >> "$ENV_FILE"
+  chown root:"$APP_USER" "$ENV_FILE"; chmod 0640 "$ENV_FILE"
 fi
 
 # ---------------------------------------------------------------------------

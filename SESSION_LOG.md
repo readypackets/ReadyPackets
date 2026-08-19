@@ -3145,3 +3145,15 @@ Secret-inclusive publication is intentional, manual, and fail-closed. Each backu
 **User request:** Provide instructions for installing ReadyPackets through an autoinstall script if the repository becomes public.
 
 **Response:** Verified the current non-interactive unified installer and GitHub bootstrap inputs, then added `docs/PUBLIC_GITHUB_AUTOINSTALL.md`. The guide provides a copy-and-paste fresh-server flow that retrieves the public repository over HTTPS, fetches and verifies a reviewed immutable 40-character commit SHA, rejects an existing project directory and a modified checkout, and runs `deploy/unified-install.sh` in native, Docker, or Docker-bootstrap mode. It covers DNS, Let’s Encrypt, Cloudflare Origin CA with Full (strict), health checks, and the no-secrets-in-public-source operating constraint. It intentionally does not recommend `curl | bash` or installing a moving `main` branch tip.
+
+## 2026-08-19 — Unified installer: website name and latest GitHub vault recovery
+
+**User request:** Create a unified installer that retrieves the latest configuration from GitHub, offers a website-name setting, and lets the operator choose VPS or Docker installation.
+
+**Implementation:** Extended `deploy/unified-install.sh` with an interactive website-name prompt, existing Native VPS / existing Docker / Docker-bootstrap mode selection, and optional private GitHub configuration-vault recovery. Non-interactive operation supports `--site-name` plus `--github-config-repository`, `--github-config-branch`, `--github-config-folder`, `--github-config-token-file`, and `--github-config-passphrase-file`.
+
+**Recovery safeguards:** Added `deploy/github-config-vault-restore.sh`. It accepts only an `owner/repository` private destination, requires owner-only token input, finds the newest dated vault archive, verifies repository privacy through GitHub’s API, checks the encrypted archive against its non-secret SHA-256 manifest, and never decrypts or logs the token/passphrase. The installer then invokes the established encrypted configuration import under explicit secret-inclusive recovery mode, while preserving newly provisioned target database credentials and applying the explicit website name last. Interactive credentials are written to root-only temporary files and removed at installer exit. Docker recovery uses constrained MySQL adapter scripts and recreates only the application container after restoration.
+
+**Website name:** Added the optional `SITE_NAME` environment variable for server-rendered public page titles and descriptions, documented it in `.env.example`, and passes it to Docker containers. This changes public browser metadata without replacing ReadyPackets logo and brand assets.
+
+**Validation:** Bash syntax checks passed for all affected install/recovery scripts. Focused GitHub vault tests passed (6/6); TypeScript validation, client build, server bundle build, installer help checks, a malicious-vault-path rejection check, and `git diff --check` all passed. Updated `docs/PUBLIC_GITHUB_AUTOINSTALL.md` with the new configuration-vault restoration and website-name options.

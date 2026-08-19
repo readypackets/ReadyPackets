@@ -11,6 +11,13 @@ TLS_PROVIDER=""
 CLOUDFLARE_ORIGIN_CERT=""
 CLOUDFLARE_ORIGIN_KEY=""
 CLOUDFLARE_ORIGIN_ROOT=""
+SITE_NAME=""
+GITHUB_CONFIG_REPOSITORY=""
+GITHUB_CONFIG_BRANCH="main"
+GITHUB_CONFIG_FOLDER="readypackets-platform-config"
+GITHUB_CONFIG_TOKEN_FILE=""
+GITHUB_CONFIG_PASSPHRASE_FILE=""
+TEMP_GITHUB_SECRET_FILES=()
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
@@ -30,6 +37,10 @@ TLS options:
   --cloudflare-origin-key <PEM path>
   --cloudflare-origin-root <PEM path>  Optional Cloudflare Origin CA root/chain
   --no-tls  Configure HTTP only / preserve certificate configuration.
+  --site-name <name>  Website name used in public browser titles.
+  --github-config-repository <owner/repository>  Restore latest encrypted configuration vault.
+  --github-config-branch <branch> --github-config-folder <folder>
+  --github-config-token-file <root-only file> --github-config-passphrase-file <root-only file>
 
 Modes:
   native             Installs directly on the VPS using systemd, nginx, and MySQL.
@@ -55,12 +66,42 @@ while [[ $# -gt 0 ]]; do
     --cloudflare-origin-key) CLOUDFLARE_ORIGIN_KEY="${2:-}"; shift 2 ;;
     --cloudflare-origin-root) CLOUDFLARE_ORIGIN_ROOT="${2:-}"; shift 2 ;;
     --no-tls) TLS_PROVIDER="none"; shift ;;
+    --site-name) SITE_NAME="${2:-}"; shift 2 ;;
+    --github-config-repository) GITHUB_CONFIG_REPOSITORY="${2:-}"; shift 2 ;;
+    --github-config-branch) GITHUB_CONFIG_BRANCH="${2:-}"; shift 2 ;;
+    --github-config-folder) GITHUB_CONFIG_FOLDER="${2:-}"; shift 2 ;;
+    --github-config-token-file) GITHUB_CONFIG_TOKEN_FILE="${2:-}"; shift 2 ;;
+    --github-config-passphrase-file) GITHUB_CONFIG_PASSPHRASE_FILE="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) fail "Unknown argument: $1" ;;
   esac
 done
 
 [[ $EUID -eq 0 ]] || fail "Run this installer as root."
+cleanup_installer_secrets() { for file in "${TEMP_GITHUB_SECRET_FILES[@]:-}"; do rm -f -- "$file"; done; }
+trap cleanup_installer_secrets EXIT
+if [[ -z "$SITE_NAME" && -t 0 ]]; then
+  read -r -p "Website name [ReadyPackets]: " SITE_NAME
+fi
+SITE_NAME="${SITE_NAME:-ReadyPackets}"
+[[ "$SITE_NAME" != *$'\n'* && ${#SITE_NAME} -le 100 ]] || fail "--site-name must be 1 to 100 characters and contain no line breaks."
+if [[ -z "$GITHUB_CONFIG_REPOSITORY" && -t 0 ]]; then
+  read -r -p "Restore the latest encrypted GitHub configuration vault backup? [y/N]: " restore_choice
+  if [[ "${restore_choice,,}" == "y" || "${restore_choice,,}" == "yes" ]]; then
+    read -r -p "Private GitHub vault repository (owner/repository): " GITHUB_CONFIG_REPOSITORY
+    read -r -p "Vault branch [main]: " GITHUB_CONFIG_BRANCH; GITHUB_CONFIG_BRANCH="${GITHUB_CONFIG_BRANCH:-main}"
+    read -r -p "Vault folder [readypackets-platform-config]: " GITHUB_CONFIG_FOLDER; GITHUB_CONFIG_FOLDER="${GITHUB_CONFIG_FOLDER:-readypackets-platform-config}"
+    GITHUB_CONFIG_TOKEN_FILE="$(mktemp /root/readypackets-github-token.XXXXXX)"; TEMP_GITHUB_SECRET_FILES+=("$GITHUB_CONFIG_TOKEN_FILE")
+    GITHUB_CONFIG_PASSPHRASE_FILE="$(mktemp /root/readypackets-github-passphrase.XXXXXX)"; TEMP_GITHUB_SECRET_FILES+=("$GITHUB_CONFIG_PASSPHRASE_FILE")
+    read -r -s -p "Fine-grained GitHub token: " token; printf '\n' >&2; printf '%s\n' "$token" > "$GITHUB_CONFIG_TOKEN_FILE"; unset token
+    read -r -s -p "Vault recovery passphrase: " passphrase; printf '\n' >&2; printf '%s\n' "$passphrase" > "$GITHUB_CONFIG_PASSPHRASE_FILE"; unset passphrase
+    chmod 0600 "$GITHUB_CONFIG_TOKEN_FILE" "$GITHUB_CONFIG_PASSPHRASE_FILE"
+  fi
+fi
+if [[ -n "$GITHUB_CONFIG_REPOSITORY" || -n "$GITHUB_CONFIG_TOKEN_FILE" || -n "$GITHUB_CONFIG_PASSPHRASE_FILE" ]]; then
+  [[ "$GITHUB_CONFIG_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail "--github-config-repository must be owner/repository."
+  [[ -f "$GITHUB_CONFIG_TOKEN_FILE" && -f "$GITHUB_CONFIG_PASSPHRASE_FILE" ]] || fail "GitHub configuration restore requires root-only token and passphrase files."
+fi
 
 # A human operator can omit --mode and select an installation method safely.
 # Non-interactive use must supply --mode so automation never blocks on stdin.
@@ -99,7 +140,12 @@ if [[ "$MODE" == "native" ]]; then
   [[ -n "$CLOUDFLARE_ORIGIN_CERT" ]] && args+=(--cloudflare-origin-cert "$CLOUDFLARE_ORIGIN_CERT")
   [[ -n "$CLOUDFLARE_ORIGIN_KEY" ]] && args+=(--cloudflare-origin-key "$CLOUDFLARE_ORIGIN_KEY")
   [[ -n "$CLOUDFLARE_ORIGIN_ROOT" ]] && args+=(--cloudflare-origin-root "$CLOUDFLARE_ORIGIN_ROOT")
-  exec bash "$REPO_ROOT/deploy/install.sh" "${args[@]}"
+  args+=(--site-name "$SITE_NAME")
+  if [[ -n "$GITHUB_CONFIG_REPOSITORY" ]]; then
+    args+=(--github-config-repository "$GITHUB_CONFIG_REPOSITORY" --github-config-branch "$GITHUB_CONFIG_BRANCH" --github-config-folder "$GITHUB_CONFIG_FOLDER" --github-config-token-file "$GITHUB_CONFIG_TOKEN_FILE" --github-config-passphrase-file "$GITHUB_CONFIG_PASSPHRASE_FILE")
+  fi
+  bash "$REPO_ROOT/deploy/install.sh" "${args[@]}"
+  exit 0
 fi
 
 PROJECT_DIR="${PROJECT_DIR:-$REPO_ROOT}"
@@ -133,17 +179,51 @@ MYSQL_ROOT_PASSWORD=${mysql_root_password}
 SESSION_SECRET=${session_secret}
 DATA_ENCRYPTION_KEY=${data_key}
 EMAIL_INDEX_KEY=${index_key}
+SITE_NAME=$(printf '%q' "$SITE_NAME")
 TRUST_PROXY_HOPS=1
 BEHIND_CLOUDFLARE=false
 ENV
   chmod 0600 "$ENV_FILE"
   log "Created $ENV_FILE with generated secrets. Store an encrypted offline copy before continuing production use."
 fi
+# The explicit installer website name is the local public-title override and is
+# retained independently from any optional imported configuration bundle.
+sed -i -E '/^SITE_NAME=.*/d' "$ENV_FILE"
+printf 'SITE_NAME=%q\n' "$SITE_NAME" >> "$ENV_FILE"
+chmod 0600 "$ENV_FILE"
 
 log "Building and starting Docker services."
 (cd "$PROJECT_DIR" && docker compose up --build -d)
 log "Running schema migrations and base seed inside the application container."
 (cd "$PROJECT_DIR" && docker compose exec -T app node dist/migrate.js && docker compose exec -T app node dist/seed.js)
+
+if [[ -n "$GITHUB_CONFIG_REPOSITORY" ]]; then
+  log "Downloading the latest encrypted configuration vault bundle from private GitHub."
+  vault_bundle="/root/readypackets-github-vault.rpconfig"
+  bash "$PROJECT_DIR/deploy/github-config-vault-restore.sh" \
+    --repository "$GITHUB_CONFIG_REPOSITORY" --branch "$GITHUB_CONFIG_BRANCH" --folder "$GITHUB_CONFIG_FOLDER" \
+    --token-file "$GITHUB_CONFIG_TOKEN_FILE" --output "$vault_bundle"
+  adapter_dir="$(mktemp -d /root/readypackets-config-db.XXXXXX)"; TEMP_GITHUB_SECRET_FILES+=("$adapter_dir")
+  cat > "$adapter_dir/mysql" <<EOF
+#!/bin/sh
+exec docker compose --project-directory "$PROJECT_DIR" --env-file "$PROJECT_DIR/.env" exec -T db mysql -uroot -p"\$MYSQL_ROOT_PASSWORD" "\$@"
+EOF
+  cat > "$adapter_dir/mysqldump" <<EOF
+#!/bin/sh
+exec docker compose --project-directory "$PROJECT_DIR" --env-file "$PROJECT_DIR/.env" exec -T db mysqldump -uroot -p"\$MYSQL_ROOT_PASSWORD" "\$@"
+EOF
+  chmod 0700 "$adapter_dir/mysql" "$adapter_dir/mysqldump"
+  set -a; source "$PROJECT_DIR/.env"; set +a
+  RP_APP_ROOT="$PROJECT_DIR" RP_ENV_FILE="$PROJECT_DIR/.env" RP_DB_NAME="${MYSQL_DATABASE:-readypackets}" \
+    MYSQL_BIN="$adapter_dir/mysql" MYSQLDUMP_BIN="$adapter_dir/mysqldump" \
+    bash "$PROJECT_DIR/deploy/config-migration.sh" import --input "$vault_bundle" \
+      --passphrase-file "$GITHUB_CONFIG_PASSPHRASE_FILE" --replace-config --include-secrets --apply-env --force
+  rm -f -- "$vault_bundle"; rm -rf -- "$adapter_dir"
+  sed -i -E '/^SITE_NAME=.*/d' "$PROJECT_DIR/.env"
+  printf 'SITE_NAME=%q\n' "$SITE_NAME" >> "$PROJECT_DIR/.env"
+  chmod 0600 "$PROJECT_DIR/.env"
+  (cd "$PROJECT_DIR" && docker compose up -d --force-recreate app)
+fi
 
 log "Installing host nginx reverse proxy for loopback-only Docker application access."
 apt-get update -qq

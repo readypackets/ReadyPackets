@@ -16,6 +16,12 @@ SSH_KEY="/root/.ssh/readypackets_deploy"
 CLOUDFLARE_CERT=""
 CLOUDFLARE_KEY=""
 CLOUDFLARE_ROOT=""
+SITE_NAME=""
+GITHUB_CONFIG_REPOSITORY=""
+GITHUB_CONFIG_BRANCH="main"
+GITHUB_CONFIG_FOLDER="readypackets-platform-config"
+GITHUB_CONFIG_TOKEN_FILE=""
+GITHUB_CONFIG_PASSPHRASE_FILE=""
 
 usage() {
   cat <<'USAGE'
@@ -28,7 +34,11 @@ Usage:
     [--mode native|docker|docker-bootstrap] \
     [--tls-provider letsencrypt|cloudflare-origin] \
     [--project-dir /srv/readypackets] \
-    [--ssh-key /root/.ssh/readypackets_deploy]
+    [--ssh-key /root/.ssh/readypackets_deploy] \
+    [--site-name "Website name"] \
+    [--github-config-repository owner/private-vault \
+     --github-config-branch main --github-config-folder readypackets-platform-config \
+     --github-config-token-file /root/vault.token --github-config-passphrase-file /root/vault.pass]
 
 For Cloudflare Origin CA also provide:
   --cloudflare-origin-cert /secure/origin-cert.pem
@@ -57,6 +67,12 @@ while [[ $# -gt 0 ]]; do
     --cloudflare-origin-cert) CLOUDFLARE_CERT="${2:-}"; shift 2 ;;
     --cloudflare-origin-key) CLOUDFLARE_KEY="${2:-}"; shift 2 ;;
     --cloudflare-origin-root) CLOUDFLARE_ROOT="${2:-}"; shift 2 ;;
+    --site-name) SITE_NAME="${2:-}"; shift 2 ;;
+    --github-config-repository) GITHUB_CONFIG_REPOSITORY="${2:-}"; shift 2 ;;
+    --github-config-branch) GITHUB_CONFIG_BRANCH="${2:-}"; shift 2 ;;
+    --github-config-folder) GITHUB_CONFIG_FOLDER="${2:-}"; shift 2 ;;
+    --github-config-token-file) GITHUB_CONFIG_TOKEN_FILE="${2:-}"; shift 2 ;;
+    --github-config-passphrase-file) GITHUB_CONFIG_PASSPHRASE_FILE="${2:-}"; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) fail "Unknown option: $1" ;;
   esac
@@ -70,6 +86,10 @@ done
 [[ "$MODE" =~ ^(native|docker|docker-bootstrap)$ ]] || fail "--mode must be native, docker, or docker-bootstrap."
 [[ "$TLS_PROVIDER" =~ ^(letsencrypt|cloudflare-origin)$ ]] || fail "--tls-provider must be letsencrypt or cloudflare-origin."
 [[ -r "$SSH_KEY" ]] || fail "Read-only GitHub deploy key not readable: $SSH_KEY"
+if [[ -n "$GITHUB_CONFIG_REPOSITORY" || -n "$GITHUB_CONFIG_TOKEN_FILE" || -n "$GITHUB_CONFIG_PASSPHRASE_FILE" ]]; then
+  [[ "$GITHUB_CONFIG_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail "--github-config-repository must be owner/repository."
+  [[ -f "$GITHUB_CONFIG_TOKEN_FILE" && -f "$GITHUB_CONFIG_PASSPHRASE_FILE" ]] || fail "GitHub configuration restore requires token and passphrase files."
+fi
 
 if [[ "$TLS_PROVIDER" == "cloudflare-origin" ]]; then
   [[ -r "$CLOUDFLARE_CERT" ]] || fail "--cloudflare-origin-cert must be readable."
@@ -104,6 +124,10 @@ installer=(
 )
 if [[ "$MODE" != "native" ]]; then
   installer+=(--project-dir "$PROJECT_DIR")
+fi
+installer+=(--site-name "${SITE_NAME:-ReadyPackets}")
+if [[ -n "$GITHUB_CONFIG_REPOSITORY" ]]; then
+  installer+=(--github-config-repository "$GITHUB_CONFIG_REPOSITORY" --github-config-branch "$GITHUB_CONFIG_BRANCH" --github-config-folder "$GITHUB_CONFIG_FOLDER" --github-config-token-file "$GITHUB_CONFIG_TOKEN_FILE" --github-config-passphrase-file "$GITHUB_CONFIG_PASSPHRASE_FILE")
 fi
 if [[ "$TLS_PROVIDER" == "cloudflare-origin" ]]; then
   installer+=(--cloudflare-origin-cert "$CLOUDFLARE_CERT" --cloudflare-origin-key "$CLOUDFLARE_KEY")

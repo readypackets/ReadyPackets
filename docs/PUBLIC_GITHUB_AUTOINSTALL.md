@@ -71,12 +71,38 @@ COREPACK_ENABLE_DOWNLOAD_PROMPT=0 bash deploy/unified-install.sh \
   --mode native \
   --domain "$RP_DOMAIN" \
   --email "$RP_EMAIL" \
-  --tls-provider letsencrypt
+  --tls-provider letsencrypt \
+  --site-name "ReadyPackets"
 ```
 
 The native VPS mode is the recommended production option. It installs the application behind nginx with systemd, MySQL, automatic TLS renewal, protected backup controls, and the recovery/rollback helpers.
 
-## 4. Cloudflare Origin CA alternative
+## 4. Optional: restore the latest encrypted GitHub configuration vault
+
+If you previously published a **Private GitHub configuration vault** backup from ReadyPackets, the unified installer can retrieve and restore its latest encrypted configuration bundle during the new installation. This restores platform configuration, application encryption keys, and integration secrets, while retaining the newly provisioned server’s database credentials. It does **not** restore customer data, orders, uploaded files, sessions, or logs.
+
+Create two root-only files on the new server: one holding the fine-grained token for the **private configuration-vault repository** and one holding the vault recovery passphrase. Do not use the public application-source repository for secret recovery material.
+
+```bash
+install -d -m 0700 /root/readypackets-vault
+printf '%s\n' 'github_pat_REPLACE_WITH_VAULT_TOKEN' > /root/readypackets-vault/token
+printf '%s\n' 'REPLACE_WITH_VAULT_RECOVERY_PASSPHRASE' > /root/readypackets-vault/passphrase
+chmod 0600 /root/readypackets-vault/token /root/readypackets-vault/passphrase
+```
+
+Append the following options to the final `deploy/unified-install.sh` command:
+
+```bash
+  --github-config-repository owner/private-readypackets-vault \
+  --github-config-branch main \
+  --github-config-folder readypackets-platform-config \
+  --github-config-token-file /root/readypackets-vault/token \
+  --github-config-passphrase-file /root/readypackets-vault/passphrase
+```
+
+The repository is checked through GitHub’s API and must be private. The installer verifies the downloaded archive against its non-secret SHA-256 manifest before it decrypts or applies anything. Remove the two root-only input files after a successful installation if they are not retained in a separate protected credential process.
+
+## 5. Cloudflare Origin CA alternative
 
 Use this method when the hostname stays proxied through Cloudflare. Before running the installation, create a Cloudflare Origin Certificate for the hostname, put the certificate and private key on the server under a root-only directory, and set Cloudflare SSL/TLS to **Full (strict)**.
 
@@ -99,7 +125,7 @@ COREPACK_ENABLE_DOWNLOAD_PROMPT=0 bash deploy/unified-install.sh \
   --cloudflare-origin-key /root/readypackets-tls/origin-key.pem
 ```
 
-## 5. Docker alternatives
+## 6. Docker alternatives
 
 The same immutable clone block works for Docker. Change only the final installer command.
 
@@ -120,7 +146,7 @@ COREPACK_ENABLE_DOWNLOAD_PROMPT=0 bash deploy/unified-install.sh \
   --tls-provider letsencrypt
 ```
 
-## 6. Verify the installation
+## 7. Verify the installation
 
 Run these commands after installation completes:
 
@@ -142,10 +168,10 @@ If the health check fails, inspect the service log before making any manual chan
 journalctl -u readypackets -n 150 --no-pager
 ```
 
-## 7. First-production steps
+## 8. First-production steps
 
 Complete the first administrator setup, enroll administrator MFA, configure email, Stripe, outbound webhooks, SharePoint if used, and protected backup targets before accepting customer data. Keep the configured encryption keys and backup-recovery material in an offline protected location. Do not re-run this first-install process on an existing deployment; use the platform update workflow or the approved rollback controls instead.
 
-## 8. Public-repository caution
+## 9. Public-repository caution
 
 Making source code public does **not** mean operational secrets should be public. Never commit `.env` files, `/etc/readypackets/portal.env`, GitHub tokens, Stripe keys, Microsoft Graph secrets, private certificates, database dumps, customer uploads, or configuration bundles containing recovery secrets. The installer generates or preserves those values on the server.

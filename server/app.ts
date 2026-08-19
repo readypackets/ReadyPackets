@@ -87,6 +87,7 @@ function escapeXml(value: string): string {
 }
 
 function pageMetadata(req: Request) {
+  const websiteName = (process.env.SITE_NAME?.trim() || "ReadyPackets").slice(0, 100);
   const pages: Record<string, { title: string; description: string }> = {
     "/": { title: "ReadyPackets — Your Business, Professionally Packeted", description: "ReadyPackets turns an idea into a defensible, documented business package: invention architecture, business foundation, operating design, and a launch system." },
     "/packets": { title: "Business packets | ReadyPackets", description: "Explore ReadyPackets business packet groups, selected tiers, and the All-In bundle for a structured business foundation." },
@@ -102,7 +103,8 @@ function pageMetadata(req: Request) {
   const publicPath = Boolean(pages[pathName]) || pathName.startsWith("/packets/") || pathName.startsWith("/legal/") || ["/privacy", "/terms", "/refunds", "/disclaimer", "/changelog"].includes(pathName);
   const page = pages[pathName] ?? (pathName.startsWith("/packets/") ? { title: "Business packet | ReadyPackets", description: "Review a ReadyPackets business packet group and its available service tiers." } : { title: "ReadyPackets", description: "ReadyPackets provides structured business documentation and strategy support." });
   return {
-    ...page,
+    title: page.title.replaceAll("ReadyPackets", websiteName),
+    description: page.description.replaceAll("ReadyPackets", websiteName),
     canonical: new URL(pathName, `https://${req.hostname}`).toString(),
     robots: publicPath ? "index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" : "noindex, nofollow",
   };
