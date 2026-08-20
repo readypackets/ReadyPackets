@@ -3470,3 +3470,50 @@ Secret-inclusive publication is intentional, manual, and fail-closed. Each backu
 **Repair:** `deploy/backup-control.sh` now treats configuration and full-backup import directories as installer-provisioned security boundaries. It verifies that each exists with exactly `root:readypackets` and `0730`, then refuses an unsafe/missing directory rather than attempting to mutate ownership at request time. The native installer continues to create the directories as root. The portal service account has write/traverse access but cannot list directory contents.
 
 **Validation:** Shell syntax passed. Production helper was installed and restarted. Both staging directories report `root:readypackets 730`. A service-account test successfully created and removed a random contract-conforming configuration-import filename within the restrictive directory; no archive/configuration data or passphrase was exposed. A rollback copy of the prior helper is retained under `/opt/readypackets/rollback-20260820083000-policy-backup-restore/backup-control-before-staging-fix.sh`.
+
+
+---
+
+## 64. Cookie-preference shortcut overlap repair — August 20, 2026
+
+### 64.1 Request
+
+> the manage cookie preferences is blocking the logout button and cant be exited
+
+The user supplied an administrator-portal screenshot showing the persistent **Manage cookie preferences** shortcut in the lower-left corner of the viewport. It occupied the same footer area as the administrator profile and logout action. The user clarified the operational requirement:
+
+> it should be able to be exited incase it interferes with some other feature
+>
+> or have a hide option
+
+### 64.2 Diagnosis
+
+The persistent shortcut in `client/src/components/privacy/CookieConsent.tsx` was rendered with `fixed bottom-4 left-4 z-40`. That placed it above the left-hand navigation footer at the exact position used by logout and account actions. The control had no dismiss mechanism, so it could block an underlying control indefinitely for the browser session.
+
+### 64.3 Resolution
+
+The control now renders in the lower-right corner using `fixed bottom-4 right-4`, leaving the portal navigation footer and logout controls clear. It also has a dedicated accessible close button with the visible `X` icon, the label **Hide cookie preferences shortcut for this browser session**, and a tooltip. Selecting that close control stores a session-only marker in `sessionStorage` and hides the floating shortcut immediately. The shortcut appears again in a new browser session. The existing footer and in-page **Manage cookie preferences** access paths remain available, so hiding the supplementary floating shortcut never prevents users from reviewing or changing consent choices.
+
+The implementation is defensive against restrictive browser privacy modes: if `sessionStorage` is unavailable, local state still hides the shortcut for the current page. The hide button and main preference button are distinct controls, preventing an accidental preference-dialog opening when the user intends to dismiss the shortcut.
+
+### 64.4 Verification and deployment
+
+TypeScript validation (`./node_modules/.bin/tsc --noEmit`) completed without errors. The production client bundle built successfully with `./node_modules/.bin/vite build`. The client-only archive was checksum-verified and inspected for an `index.html`, asset directory, and unsafe path entries before an atomic swap on the production VPS. The prior bundle was retained at:
+
+```text
+/opt/readypackets/client/dist.previous-20260820124701-cookie-shortcut
+```
+
+The deployed archive SHA-256 was:
+
+```text
+fb74e528af7fabda5286dbc51e6ba47d3a8ea9465ad868a02a7323427ceea30f
+```
+
+Public production health returned `{"status":"ok"}`. A browser inspection of `https://myportal.readypackets.com/login` confirmed that the floating control appears in the lower-right corner and exposes both **Manage cookie preferences** and the dedicated hide button. Selecting the hide button removed the floating control immediately, without affecting the page or sign-in form.
+
+### 64.5 Response delivered
+
+The user will be informed that the repair is live: the shortcut no longer overlaps the left navigation/logout region, and the `X` button hides it for the current browser session. A new browser session restores the optional shortcut; the standard portal controls remain available for changing cookie preferences.
+
+*This entry was appended, rather than replacing prior history, in accordance with the project logging requirement.*

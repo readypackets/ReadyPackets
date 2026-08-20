@@ -30,6 +30,24 @@ type ConsentContextValue = {
 
 const CookieConsentContext = createContext<ConsentContextValue | null>(null);
 
+const COOKIE_PREFERENCE_SHORTCUT_HIDDEN_KEY = "rp-cookie-preference-shortcut-hidden";
+
+function isCookiePreferenceShortcutHidden(): boolean {
+  try {
+    return window.sessionStorage.getItem(COOKIE_PREFERENCE_SHORTCUT_HIDDEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function hideCookiePreferenceShortcut(): void {
+  try {
+    window.sessionStorage.setItem(COOKIE_PREFERENCE_SHORTCUT_HIDDEN_KEY, "1");
+  } catch {
+    // Storage can be unavailable in restrictive privacy modes. Local state still hides the shortcut.
+  }
+}
+
 function consentAction(preferences: Omit<Preferences, "essential">): "accepted_all" | "rejected_optional" | "saved_preferences" {
   if (preferences.preferences && preferences.analytics && preferences.marketing) return "accepted_all";
   if (!preferences.preferences && !preferences.analytics && !preferences.marketing) return "rejected_optional";
@@ -62,6 +80,7 @@ export function CookieConsentProvider({ children }: { children: ReactNode }) {
   const [draft, setDraft] = useState<Omit<Preferences, "essential">>({ preferences: false, analytics: false, marketing: false });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [shortcutHidden, setShortcutHidden] = useState(() => isCookiePreferenceShortcutHidden());
 
   useEffect(() => {
     void requestJson<ConsentPayload>("/api/privacy/consent")
@@ -78,6 +97,11 @@ export function CookieConsentProvider({ children }: { children: ReactNode }) {
     setOpen(true);
     setError(null);
   }, [payload?.config.enabled]);
+
+  const dismissShortcut = useCallback(() => {
+    hideCookiePreferenceShortcut();
+    setShortcutHidden(true);
+  }, []);
 
   const save = useCallback(async (selection: Omit<Preferences, "essential">) => {
     setSaving(true);
@@ -145,7 +169,16 @@ export function CookieConsentProvider({ children }: { children: ReactNode }) {
           </section>
         </div>
       )}
-      {payload?.preferences && config?.enabled && !open && <button type="button" onClick={openPreferences} className="fixed bottom-4 left-4 z-40 inline-flex items-center gap-2 rounded-full border border-cyan-200/60 bg-slate-950 px-4 py-2.5 text-sm font-bold text-cyan-100 shadow-xl ring-1 ring-cyan-300/20 hover:bg-cyan-950" aria-label="Manage cookie preferences"><Settings2 className="h-4 w-4" /> Manage cookie preferences</button>}
+      {payload?.preferences && config?.enabled && !open && !shortcutHidden && (
+        <div className="fixed bottom-4 right-4 z-40 inline-flex items-center rounded-full border border-cyan-200/60 bg-slate-950 text-cyan-100 shadow-xl ring-1 ring-cyan-300/20">
+          <button type="button" onClick={openPreferences} className="inline-flex items-center gap-2 rounded-l-full px-4 py-2.5 text-sm font-bold hover:bg-cyan-950" aria-label="Manage cookie preferences">
+            <Settings2 className="h-4 w-4" /> Manage cookie preferences
+          </button>
+          <button type="button" onClick={dismissShortcut} className="mr-1 inline-flex h-8 w-8 items-center justify-center rounded-full text-cyan-100 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200" aria-label="Hide cookie preferences shortcut for this browser session" title="Hide for this browser session">
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      )}
     </CookieConsentContext.Provider>
   );
 }
