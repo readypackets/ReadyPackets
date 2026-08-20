@@ -691,7 +691,7 @@ export const phaseKickoffConfigs = mysqlTable(
     phase: varchar("phase", { length: 32 }).notNull(),
     createFolders: boolean("create_folders").notNull().default(true),
     folderTemplate: json("folder_template"),
-    attachPlaceholders: boolean("attach_placeholders").notNull().default(true),
+    attachPlaceholders: boolean("attach_placeholders").notNull().default(false),
     notifyCustomer: boolean("notify_customer").notNull().default(true),
     notifyWebhooks: boolean("notify_webhooks").notNull().default(false),
     emailTemplateKey: varchar("email_template_key", { length: 64 }),

@@ -314,7 +314,7 @@ function PhaseKickoffTab() {
       await upsert.mutateAsync({
         phase,
         createFolders: field === "createFolders" ? value : (existing?.createFolders ?? true),
-        attachPlaceholders: field === "attachPlaceholders" ? value : (existing?.attachPlaceholders ?? true),
+        attachPlaceholders: field === "attachPlaceholders" ? value : (existing?.attachPlaceholders ?? false),
         notifyCustomer: field === "notifyCustomer" ? value : (existing?.notifyCustomer ?? true),
         notifyWebhooks: field === "notifyWebhooks" ? value : (existing?.notifyWebhooks ?? false),
         completionPercent: (existing as any)?.completionPercent ?? 0,
@@ -332,7 +332,7 @@ function PhaseKickoffTab() {
       await upsert.mutateAsync({
         phase,
         createFolders: existing?.createFolders ?? true,
-        attachPlaceholders: existing?.attachPlaceholders ?? true,
+        attachPlaceholders: existing?.attachPlaceholders ?? false,
         notifyCustomer: existing?.notifyCustomer ?? true,
         notifyWebhooks: existing?.notifyWebhooks ?? false,
         completionPercent: value,
@@ -371,7 +371,7 @@ function PhaseKickoffTab() {
                 <label key={field} className="flex items-center gap-2">
                   <input
                     type="checkbox"
-                    checked={(config as any)?.[field] ?? (field === "notifyWebhooks" ? false : true)}
+                    checked={(config as any)?.[field] ?? (field === "notifyWebhooks" || field === "attachPlaceholders" ? false : true)}
                     onChange={e => toggle(key, field, e.target.checked)}
                     disabled={!config?.enabled && config !== undefined}
                   />

@@ -3560,3 +3560,63 @@ service: active
 Administrators can now export any workflow from its table row, upload a previously exported JSON file, assign a new workflow name, review its stage count and portability notice, type the import confirmation, and create it as an independent workflow. The standard Edit workflow view is used afterward to select any environment-specific webhook endpoint.
 
 *This entry was appended rather than replacing earlier history, as required by the ReadyPackets project instructions.*
+
+
+---
+
+## 66. MFA recovery-code display, configuration restore compatibility, and Phase Kickoff default — August 20, 2026
+
+### 66.1 Requests and evidence
+
+The administrator reported that MFA enrollment briefly showed recovery codes and then immediately navigated to the home screen. They also reported a configuration restore failure. The supplied restore notification identified the actionable database error:
+
+```text
+ERROR 1146 (42S02): Table 'readypackets.email_automations' doesn't exist
+```
+
+The user also requested that placeholder files be disabled by default and asked how to export/import work order workflow configurations.
+
+### 66.2 MFA recovery-code repair
+
+The MFA enrollment component generated and stored the one-time backup codes, but immediately refreshed the session. For a restricted administrator session, the refreshed session clears the restriction and the global route guard redirects away from the MFA setup route before the recovery-code screen can remain visible.
+
+The enrollment flow now keeps the backup-code screen visible after successful verification. It displays the recovery codes, provides **Copy codes**, and requires the user to select **I have saved my codes — continue** before refreshing the session and permitting route navigation. This applies both to mandatory administrator enrollment and voluntary security-page enrollment. The codes remain one-time secrets and are not logged or stored client-side beyond the active view.
+
+### 66.3 Configuration restore compatibility repair
+
+The encrypted configuration bundle was valid and authenticated during preflight. The apply step failed because the target self-hosted schema lacked the current `email_automations` table while the source bundle contained its configuration rows. The former legacy migration was not guaranteed to be part of the modern forward-only migration sequence.
+
+New forward-only migration `0047_email_automations_compat.sql` creates the required `email_automations` table if missing, using the current application-compatible structure and indexes. This corrects the target schema before configuration restore is attempted; it does not expose or import secrets. The applied deployment verification confirmed the table exists and migration `0047` is recorded.
+
+### 66.4 Placeholder files now opt-in by default
+
+The Phase Kickoff setting had `attach_placeholders` defaulted to enabled. The runtime schema and administrator UI fallbacks now default it to disabled, while preserving explicit existing phase choices. Forward-only migration `0048_phase_kickoff_placeholder_default.sql` changes the database default to `0`. A transaction-only production verification inserted a temporary test configuration, confirmed `attach_placeholders = 0`, and rolled the test row back.
+
+The earlier Phase Kickoff save repair is also included in this release: the update endpoint returns a serializable success result, retains omitted auxiliary settings rather than silently clearing them, and audits configuration changes. This removes the generic unexpected-error notification that could occur after a successful checkbox update.
+
+### 66.5 Workflow configuration procedure
+
+To export a workflow, use **Admin → Order workflows**, then select **Export** beside the required workflow. ReadyPackets downloads a portable, versioned JSON configuration. To import it, select **Import configuration** in the page header, choose the JSON file, enter a new workflow name, review the stage count, and type:
+
+```text
+IMPORT WORKFLOW CONFIGURATION
+```
+
+The importer creates a separate new workflow; it never overwrites an existing one or changes the default workflow. Webhook endpoint assignments are intentionally omitted because endpoint identifiers are environment-local. Review and select the correct enabled local endpoint after import.
+
+### 66.6 Validation and production deployment
+
+TypeScript validation passed. Production Vite and server bundle builds completed. Server/client/migration artifacts were SHA-256 verified before deployment. The production service applies migrations before starting; migration records `0047_email_automations_compat.sql` and `0048_phase_kickoff_placeholder_default.sql` were verified after restart. The production database confirmed `email_automations` exists and the placeholder default is `0`. Health checks passed:
+
+```text
+/api/health: {"status":"ok"}
+/api/health/ready: {"status":"ready"}
+```
+
+Rollback material is retained at:
+
+```text
+/opt/readypackets/rollback-20260820142632-mfa-restore-fix
+```
+
+*This entry was appended rather than replacing prior history, consistent with the project logging requirement.*

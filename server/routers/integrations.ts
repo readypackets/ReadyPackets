@@ -270,33 +270,35 @@ export const integrationsRouter = router({
         enabled: z.boolean(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      // Preserve auxiliary configuration when a simple toggle is saved by an older
+      // or partial administrator form. This prevents unrelated settings from being
+      // silently cleared during a checkbox update.
+      const [existing] = await db
+        .select({ id: phaseKickoffConfigs.id, folderTemplate: phaseKickoffConfigs.folderTemplate, emailTemplateKey: phaseKickoffConfigs.emailTemplateKey })
+        .from(phaseKickoffConfigs)
+        .where(eq(phaseKickoffConfigs.phase, input.phase))
+        .limit(1);
       const data = {
         createFolders: input.createFolders,
-        folderTemplate: input.folderTemplate ?? null,
+        folderTemplate: input.folderTemplate === undefined ? existing?.folderTemplate ?? null : input.folderTemplate,
         attachPlaceholders: input.attachPlaceholders,
         notifyCustomer: input.notifyCustomer,
         notifyWebhooks: input.notifyWebhooks,
-        emailTemplateKey: input.emailTemplateKey ?? null,
+        emailTemplateKey: input.emailTemplateKey === undefined ? existing?.emailTemplateKey ?? null : input.emailTemplateKey,
         completionPercent: input.completionPercent,
         enabled: input.enabled,
       };
 
-      // Upsert by phase.
-      const existing = await db
-        .select({ id: phaseKickoffConfigs.id })
-        .from(phaseKickoffConfigs)
-        .where(eq(phaseKickoffConfigs.phase, input.phase))
-        .limit(1);
-
-      if (existing.length > 0) {
-        await db
-          .update(phaseKickoffConfigs)
-          .set(data)
-          .where(eq(phaseKickoffConfigs.phase, input.phase));
+      let id = existing?.id;
+      if (existing) {
+        await db.update(phaseKickoffConfigs).set(data).where(eq(phaseKickoffConfigs.id, existing.id));
       } else {
-        await db.insert(phaseKickoffConfigs).values({ ...data, phase: input.phase });
+        const result = await db.insert(phaseKickoffConfigs).values({ ...data, phase: input.phase });
+        id = Number((result as unknown as { insertId?: number }).insertId ?? 0) || undefined;
       }
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "integration.phase_kickoff_updated", entityType: "phase_kickoff_config", entityId: id, summary: `Administrator updated Phase Kickoff configuration for ${input.phase}`, changes: { createFolders: data.createFolders, attachPlaceholders: data.attachPlaceholders, notifyCustomer: data.notifyCustomer, notifyWebhooks: data.notifyWebhooks, completionPercent: data.completionPercent, enabled: data.enabled }, ipAddress: ctx.clientIp });
+      return { ok: true as const, id: id ?? null };
     }),
 
   manualPhaseKickoff: staffProcedure

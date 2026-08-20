@@ -446,11 +446,11 @@ export function MfaEnrolment({ onComplete }: { onComplete?: () => void }) {
   });
 
   const confirm = trpc.auth.confirmMfa.useMutation({
-    async onSuccess(result) {
+    onSuccess(result) {
+      // Do not refresh the restricted session yet: the route guard would navigate
+      // away before the user has a chance to save these one-time recovery codes.
       setBackupCodes(result.backupCodes);
       setStage("codes");
-      await session.refresh();
-      onComplete?.();
     },
     onError(error) {
       setFormError(errorMessage(error));
@@ -558,17 +558,25 @@ export function MfaEnrolment({ onComplete }: { onComplete?: () => void }) {
           </li>
         ))}
       </ul>
-      <Button
-        className="mt-4"
-        variant="outline"
-        onClick={() => {
-          void navigator.clipboard.writeText(backupCodes.join("\n"));
-          toast.success("Copied to clipboard");
-        }}
-        leadingIcon={<Copy className="size-4" aria-hidden="true" />}
-      >
-        Copy codes
-      </Button>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          onClick={() => {
+            void navigator.clipboard.writeText(backupCodes.join("\n"));
+            toast.success("Copied to clipboard");
+          }}
+          leadingIcon={<Copy className="size-4" aria-hidden="true" />}
+        >
+          Copy codes
+        </Button>
+        <Button
+          onClick={() => {
+            void session.refresh().then(() => onComplete?.());
+          }}
+        >
+          I have saved my codes — continue
+        </Button>
+      </div>
     </div>
   );
 }
