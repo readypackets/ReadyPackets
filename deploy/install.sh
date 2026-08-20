@@ -462,12 +462,11 @@ server {
     server_tokens off;
     client_max_body_size 55m;
 
-    # `^~` keeps the ACME HTTP-01 exception ahead of hidden-file protections.
+    # The ^~ prefix keeps the ACME HTTP-01 exception ahead of hidden-file protections.
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/html;
         allow all;
         default_type "text/plain";
-        try_files \$uri =404;
     }
 
     location / {
