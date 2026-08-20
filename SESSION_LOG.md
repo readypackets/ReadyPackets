@@ -3377,3 +3377,14 @@ Secret-inclusive publication is intentional, manual, and fail-closed. Each backu
 **Scope and operator requirements:** This automated provider is deliberately native-VPS only at present; Docker is explicitly rejected rather than silently ignoring token-backed TLS setup. The Cloudflare token must have the documented least privilege `Zone → SSL and Certificates → Edit` permission scoped to the target zone. The domain records must be Cloudflare-proxied and zone SSL/TLS must be set to `Full (strict)`, because Origin CA certificates secure Cloudflare-to-origin traffic and are not publicly browser-trusted on a direct origin connection.
 
 **Validation:** Installer shell syntax passed across native, guided, and unified scripts. Static review confirmed the token path is the only automated secret reference and does not become a raw `Authorization` command argument. A dedicated regression execution confirmed that raw Cloudflare API token environment variables are rejected before bootstrap package installation begins. Official Cloudflare API and security requirements were recorded in `docs/CLOUDFLARE_ORIGIN_CA_AUTOMATION_NOTES.md`.
+
+
+## 2026-08-20 — Configuration export revalidation after portal error
+
+**Report:** An administrator received the generic “Could not export configuration” message from Backup Management after entering an export passphrase.
+
+**Production inspection:** The live service was active. The protected backup-control socket remained owned by `root:readypackets` mode `0660`, and the encrypted-export staging directory had the required `root:readypackets` mode `0640` artifacts. The portal journal recorded the UI request at 06:25 UTC as an invalid returned filename, but it contained no exposed passphrase or bundle content.
+
+**Metadata-only validation:** A temporary Node client was run as the `readypackets` service account using the exact JSON socket protocol and a random in-memory passphrase. The protected helper returned a valid `readypackets-config-<timestamp>.rpconfig` filename. The service account could read and Base64-encode the generated encrypted bundle; validation recorded only byte/base64 lengths, not content. The test export and temporary diagnostic client were deleted immediately after validation.
+
+**Conclusion:** No permissions or helper-generation defect remained at the time of revalidation, so no production code/configuration change was applied. The administrator can retry with a new 16+ character passphrase after refreshing Backup Management. If an error recurs, correlate the exact retry time with the portal journal before making a further change.
