@@ -647,7 +647,7 @@ const systemBackupsRouter = router({
     return { reachable: result.reachable === "true", destination: result.destination ?? input.destination };
   }),
   exportConfiguration: adminProcedure.input(z.object({ passphrase: z.string().min(16).max(512) })).mutation(async ({ ctx, input }) => {
-    const filename = (await runBackupControl(["export-config"], `${input.passphrase}\\n`)).trim();
+    const filename = (await runBackupControl(["export-config"], `${input.passphrase}\n`)).trim();
     if (!/^readypackets-config-[0-9TZ-]+\\.rpconfig$/.test(filename)) {
       throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The protected export helper did not return a valid encrypted configuration filename. Review the backup-control service log before retrying." });
     }
