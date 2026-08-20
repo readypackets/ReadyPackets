@@ -10,6 +10,11 @@
 #   sudo ./restore.sh --archive /var/backups/readypackets/readypackets-....tar.gz
 #   sudo ./restore.sh --archive <file> --database rp_restore_test --no-files
 #   sudo ./restore.sh --archive <file> --yes
+#   sudo ./restore.sh --archive <file> --yes --restore-platform-secrets
+#
+# --restore-platform-secrets is a root-console-only replacement-server option.
+# It restores application/integration secrets while preserving target database,
+# network, hostname, TLS, and storage-location values.
 #
 # Verifying a backup without touching production:
 #   sudo ./restore.sh --archive <file> --database rp_restore_test --no-files --yes
@@ -22,6 +27,7 @@ ARCHIVE=""
 TARGET_DB=""
 RESTORE_FILES="true"
 ASSUME_YES="false"
+RESTORE_PLATFORM_SECRETS="false"
 SERVICE="readypackets"
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -34,6 +40,7 @@ while [[ $# -gt 0 ]]; do
     --database)  TARGET_DB="${2:?}"; shift 2 ;;
     --no-files)  RESTORE_FILES="false"; shift ;;
     --yes)       ASSUME_YES="true"; shift ;;
+    --restore-platform-secrets) RESTORE_PLATFORM_SECRETS="true"; shift ;;
     --env-file)  ENV_FILE="${2:?}"; shift 2 ;;
     -h|--help)   sed -n '2,18p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *)           die "Unknown option: $1" ;;
@@ -65,11 +72,23 @@ validate_backup_archive() {
   while IFS= read -r member; do
     normalized="${member#./}"
     [[ -n "$normalized" ]] || continue
-    [[ "$normalized" =~ ^(database\.sql|MANIFEST\.txt|SHA256SUMS|storage\.tar|portal\.env)$ ]] || die "Archive contains an unsupported member."
+    [[ "$normalized" =~ ^(database\.sql|MANIFEST\.txt|SHA256SUMS|storage\.tar|platform-runtime\.tar|portal\.env)$ ]] || die "Archive contains an unsupported member."
   done < <(tar -tzf "$source")
   while IFS= read -r member_type; do
     [[ "$member_type" == "-" || "$member_type" == "d" ]] || die "Archive contains links or unsupported member types."
   done < <(tar -tvzf "$source" | awk '{print substr($1,1,1)}')
+}
+
+validate_platform_runtime_archive() {
+  local source="$1" member normalized member_type
+  while IFS= read -r member; do
+    normalized="${member#./}"
+    [[ -n "$normalized" ]] || continue
+    [[ "$normalized" == root/.config/rclone || "$normalized" == root/.config/rclone/* || "$normalized" == etc/readypackets/backup-sync-targets.conf ]] || die "Platform runtime archive contains an unsupported path."
+  done < <(tar -tf "$source")
+  while IFS= read -r member_type; do
+    [[ "$member_type" == "-" || "$member_type" == "d" ]] || die "Platform runtime archive contains links or unsupported member types."
+  done < <(tar -tvf "$source" | awk '{print substr($1,1,1)}')
 }
 
 validate_storage_archive() {
@@ -120,20 +139,52 @@ if [[ -f "${STAGING}/SHA256SUMS" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# The encryption key must match, or the restored rows are unreadable
+# Replacement-server secrets (explicit root-console break-glass only)
 # ---------------------------------------------------------------------------
+TARGET_ENV_BACKUP=""
+prepare_platform_secret_restore() {
+  [[ -f "${STAGING}/portal.env" ]] || die "This archive has no portal.env; it cannot restore platform secrets."
+  TARGET_ENV_BACKUP="${ENV_FILE}.pre-full-restore-$(date -u '+%Y%m%dT%H%M%SZ')"
+  install -m 0600 -o root -g root "$ENV_FILE" "$TARGET_ENV_BACKUP"
+
+  # These values identify and connect the replacement host. They must remain
+  # local even when restoring source application and integration secrets.
+  local preserve_keys=(DB_NAME DB_USER DB_PASSWORD DATABASE_URL PORT BIND_HOST APP_URL ALLOWED_ORIGINS TRUST_PROXY_HOPS BEHIND_CLOUDFLARE STORAGE_LOCAL_ROOT RP_ENV_FILE RP_DATA_DIR)
+  local preserve_regex key replacement
+  preserve_regex="^($(IFS='|'; echo "${preserve_keys[*]}"))="
+  replacement="${STAGING}/portal.env.recovered"
+  grep -Ev "$preserve_regex" "${STAGING}/portal.env" > "$replacement" || true
+  for key in "${preserve_keys[@]}"; do
+    grep -m1 "^${key}=" "$ENV_FILE" >> "$replacement" || true
+  done
+  grep -q '^DATA_ENCRYPTION_KEY=' "$replacement" || die "Recovered portal environment lacks DATA_ENCRYPTION_KEY."
+  grep -q '^EMAIL_INDEX_KEY=' "$replacement" || die "Recovered portal environment lacks EMAIL_INDEX_KEY."
+  install -m 0640 -o root -g readypackets "$replacement" "$ENV_FILE"
+  log "Applied archived application and integration secrets; target host settings preserved (previous file: $TARGET_ENV_BACKUP)"
+}
+
 if [[ -f "${STAGING}/portal.env" ]]; then
   ARCHIVE_KEY="$(grep -E '^DATA_ENCRYPTION_KEY=' "${STAGING}/portal.env" | cut -d= -f2- || true)"
   if [[ -n "$ARCHIVE_KEY" && "$ARCHIVE_KEY" != "${DATA_ENCRYPTION_KEY:-}" ]]; then
-    warn "The archive was created with a DIFFERENT DATA_ENCRYPTION_KEY than the one"
-    warn "currently configured. Encrypted columns (names, emails, company details)"
-    warn "will not decrypt after this restore unless you also restore the key from"
-    warn "${STAGING}/portal.env into ${ENV_FILE}."
-    if [[ "$ASSUME_YES" != "true" ]]; then
-      read -r -p "Continue anyway? [y/N] " reply
-      [[ "$reply" == "y" || "$reply" == "Y" ]] || die "Aborted."
+    warn "The archive was created with a DIFFERENT DATA_ENCRYPTION_KEY than the one currently configured."
+    if [[ "$RESTORE_PLATFORM_SECRETS" == "true" ]]; then
+      prepare_platform_secret_restore
+      # Reload the target connection values while retaining the archived data key.
+      set -a; source "$ENV_FILE"; set +a
+    else
+      warn "Encrypted customer data will not decrypt unless this is a controlled replacement-server recovery."
+      warn "Use --restore-platform-secrets only from the root console after validating the archive."
+      if [[ "$ASSUME_YES" != "true" ]]; then
+        read -r -p "Continue without restoring archived secrets? [y/N] " reply
+        [[ "$reply" == "y" || "$reply" == "Y" ]] || die "Aborted."
+      fi
     fi
+  elif [[ "$RESTORE_PLATFORM_SECRETS" == "true" ]]; then
+    prepare_platform_secret_restore
+    set -a; source "$ENV_FILE"; set +a
   fi
+elif [[ "$RESTORE_PLATFORM_SECRETS" == "true" ]]; then
+  die "This archive has no portal.env; it cannot restore platform secrets."
 fi
 
 # ---------------------------------------------------------------------------
@@ -174,9 +225,16 @@ if [[ "$IS_PRODUCTION" == "true" ]]; then
 fi
 
 log "Restoring the database into '${TARGET_DB}'"
-MYSQL_PWD="$DB_PASSWORD" mysql --host=127.0.0.1 --user="$DB_USER" <<SQL
+# This script is root-only. Provision the selected database through the local
+# root socket, then grant the existing least-privilege application account access
+# to that one database. This enables nonproduction restore drills without giving
+# the application account global CREATE DATABASE privilege.
+mysql --protocol=socket -uroot <<SQL
 CREATE DATABASE IF NOT EXISTS \`${TARGET_DB}\`
   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+GRANT ALL PRIVILEGES ON \`${TARGET_DB}\`.* TO '${DB_USER}'@'127.0.0.1';
+GRANT ALL PRIVILEGES ON \`${TARGET_DB}\`.* TO '${DB_USER}'@'localhost';
+FLUSH PRIVILEGES;
 SQL
 
 # The dump recreates each table, so an existing schema is replaced rather than
@@ -209,6 +267,27 @@ if [[ "$RESTORE_FILES" == "true" && -f "${STAGING}/storage.tar" ]]; then
   chmod -R go-rwx "${DATA_DIR}/storage"
 elif [[ "$RESTORE_FILES" == "true" ]]; then
   warn "The archive contains no storage.tar; uploaded files were not restored."
+fi
+
+# ---------------------------------------------------------------------------
+# Root-owned backup synchronization runtime (explicit recovery mode only)
+# ---------------------------------------------------------------------------
+if [[ "$RESTORE_PLATFORM_SECRETS" == "true" && -f "${STAGING}/platform-runtime.tar" ]]; then
+  log "Restoring root-owned backup synchronization runtime"
+  validate_platform_runtime_archive "${STAGING}/platform-runtime.tar"
+  runtime_safety="/var/backups/readypackets/pre-restore-runtime-$(date -u '+%Y%m%dT%H%M%SZ').tar.gz"
+  runtime_paths=()
+  [[ -d /root/.config/rclone ]] && runtime_paths+=("/root/.config/rclone")
+  [[ -f /etc/readypackets/backup-sync-targets.conf ]] && runtime_paths+=("/etc/readypackets/backup-sync-targets.conf")
+  if [[ ${#runtime_paths[@]} -gt 0 ]]; then
+    tar -czf "$runtime_safety" "${runtime_paths[@]}"
+    chmod 0600 "$runtime_safety"
+  fi
+  tar --no-same-owner --no-same-permissions -C / -xf "${STAGING}/platform-runtime.tar"
+  [[ -d /root/.config/rclone ]] && { chown -R root:root /root/.config/rclone; chmod 0700 /root/.config/rclone; find /root/.config/rclone -type f -exec chmod 0600 {} +; }
+  [[ -f /etc/readypackets/backup-sync-targets.conf ]] && { chown root:readypackets /etc/readypackets/backup-sync-targets.conf; chmod 0640 /etc/readypackets/backup-sync-targets.conf; }
+elif [[ "$RESTORE_PLATFORM_SECRETS" == "true" ]]; then
+  warn "Archive has no backup synchronization runtime; application secrets were restored without cloud-backup credentials."
 fi
 
 # ---------------------------------------------------------------------------

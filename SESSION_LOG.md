@@ -3669,3 +3669,17 @@ New migration `0049_phase_kickoff_schema_compat.sql` safely examines `informatio
 **Validation:** `pnpm vitest run tests/schemaContract.test.ts` passed (3/3), `tsc --noEmit` passed, and the migration bundle compiled and passed Node syntax validation.
 
 **Deployment note:** This source-level guard must be applied on each self-hosted server by pulling the release and rerunning its supported `deploy/install.sh` path; the externally administered `readypackets.com` VPS is not connected to this session, so no direct changes were made to it beyond the operator-run commands above.
+
+## 2026-08-20 — Fresh-install assurance and complete full-backup recovery hardening
+
+**User request:** Confirm that a new VPS installation cannot repeat the incomplete-schema failure and that full backups/restores carry user accounts, order files, application settings, and platform secrets.
+
+**Fresh-install safeguard:** The migration runner now verifies a critical schema contract after every forward-only migration run and before systemd can start the portal. A partial install therefore fails closed with explicit missing table/column names instead of allowing later P101/P201, backup, or outbound-integration UI errors. The supported native installer always rebuilds and runs this migration bundle before its readiness probe.
+
+**Full-backup coverage:** `deploy/backup.sh` now includes database.sql (all database-backed accounts, MFA records, orders, application settings, workflows, logs and integrations), storage.tar (uploaded/generated order artifacts), portal.env (application and integration secrets, including encryption and blind-index keys), and platform-runtime.tar when present (root-owned rclone cloud-backup configuration and target mapping). It writes this scope to MANIFEST.txt and self-verifies the actual gzip archive structure and SHA-256 checksums before retention or synchronization. Cloudflare/TLS private keys remain intentionally excluded because a replacement host must use its own hostname-valid certificate.
+
+**Restore modes:** The administrator portal remains intentionally secret-safe: a typed `RESTORE BACKUP` restores database/files while retaining target-server secrets. A root-console-only `--restore-platform-secrets` break-glass mode supports a controlled replacement-server recovery; it restores archived application/integration secrets and backup-sync runtime but preserves target database connection, network, hostname, Cloudflare, TLS and storage-location settings. The previous target portal.env is retained root-only. Scratch restore drills now create and grant access to only the explicitly named drill database using root, without broadening the application database account globally.
+
+**Production validation:** The connected `myportal.readypackets.com` VPS deployed the hardened backup/restore/control scripts with rollback at `/opt/readypackets/rollback-20260820T180142Z-backup-recovery-final`. A new `readypackets-20260820T175930Z.tar.gz` full archive self-verified successfully. Its manifest confirmed files, application secrets, and backup-sync runtime. An isolated restore drill imported that archive into a temporary database and restored **126 tables**, **10 user accounts**, and **25 orders**, then cleaned up the temporary database and its scoped grants without altering production data or uploaded files.
+
+**Validation:** Shell syntax checks passed for backup.sh, restore.sh and backup-control.sh; TypeScript validation passed; backup archive checksums passed; isolated database restore drill passed.

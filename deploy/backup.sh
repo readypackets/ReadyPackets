@@ -3,8 +3,9 @@
 # ReadyPackets Portal — backup
 #
 # Produces a single compressed, optionally encrypted archive containing the
-# database dump, the uploaded files, and the environment file. Retention is
-# enforced locally; nothing is uploaded anywhere by default.
+# database dump, uploaded files, application environment, and root-owned backup
+# synchronization runtime. Retention is enforced locally; nothing is uploaded
+# anywhere by default.
 #
 # Usage:
 #   sudo ./backup.sh                       # nightly default
@@ -58,9 +59,10 @@ set -a; source "$ENV_FILE"; set +a
 
 TIMESTAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
 STAGING="$(mktemp -d /tmp/rp-backup.XXXXXXXX)"
-chmod 0700 "$STAGING"
-# The staging directory holds plaintext secrets; remove it whatever happens.
-trap 'rm -rf "$STAGING"' EXIT INT TERM
+VERIFY_STAGING="$(mktemp -d /tmp/rp-backup-verify.XXXXXXXX)"
+chmod 0700 "$STAGING" "$VERIFY_STAGING"
+# These directories hold plaintext secrets; remove them whatever happens.
+trap 'rm -rf "$STAGING" "$VERIFY_STAGING"' EXIT INT TERM
 
 install -d -m 0750 -o root -g readypackets "$OUTPUT_DIR"
 
@@ -95,6 +97,7 @@ log "Dump size: $(numfmt --to=iec "$DUMP_BYTES")"
 # ---------------------------------------------------------------------------
 # Uploaded files and configuration
 # ---------------------------------------------------------------------------
+INCLUDES_RUNTIME="no"
 if [[ "$DB_ONLY" == "false" ]]; then
   if [[ -d "${DATA_DIR}/storage" ]]; then
     log "Archiving uploaded files"
@@ -103,8 +106,22 @@ if [[ "$DB_ONLY" == "false" ]]; then
     warn "No storage directory at ${DATA_DIR}/storage"
   fi
 
-  # Included because the encryption keys are required to read the dump.
+  # Included because the encryption and service-integration keys are required
+  # to recover encrypted customer data and application settings on a replacement
+  # host. The restore path requires an explicit break-glass flag to apply it.
   cp "$ENV_FILE" "${STAGING}/portal.env"
+
+  # Backup-sync credentials are root-owned outside the application database.
+  # Include only these runtime files; TLS private keys are intentionally excluded
+  # because a replacement host must issue its own certificate for its hostname.
+  runtime_paths=()
+  [[ -d /root/.config/rclone ]] && runtime_paths+=("root/.config/rclone")
+  [[ -f "$SYNC_TARGETS_FILE" ]] && runtime_paths+=("${SYNC_TARGETS_FILE#/}")
+  if [[ ${#runtime_paths[@]} -gt 0 ]]; then
+    log "Archiving backup synchronization runtime"
+    tar -C / -cf "${STAGING}/platform-runtime.tar" "${runtime_paths[@]}"
+    INCLUDES_RUNTIME="yes"
+  fi
 fi
 
 # A manifest makes a restore verifiable rather than hopeful.
@@ -115,12 +132,16 @@ Host:           $(hostname -f 2>/dev/null || hostname)
 Database:       ${DB_NAME}
 Dump bytes:     ${DUMP_BYTES}
 Includes files: $([[ "$DB_ONLY" == "false" ]] && echo yes || echo no)
+Includes application secrets: $([[ "$DB_ONLY" == "false" ]] && echo yes || echo no)
+Includes backup-sync runtime: ${INCLUDES_RUNTIME}
 Schema version: $(MYSQL_PWD="$DB_PASSWORD" mysql --host=127.0.0.1 --user="$DB_USER" \
                     --batch --skip-column-names -e \
                     "SELECT COALESCE(MAX(filename),'none') FROM \`${DB_NAME}\`.schema_migrations" 2>/dev/null || echo unknown)
 
-WARNING: this archive contains DATA_ENCRYPTION_KEY and EMAIL_INDEX_KEY.
-Treat it as equivalent to the full customer database in plaintext.
+WARNING: this archive contains DATA_ENCRYPTION_KEY, EMAIL_INDEX_KEY, application
+integration secrets, and possibly root-owned cloud-backup credentials. Treat it
+as equivalent to the full customer database in plaintext. Store it encrypted and
+separately from its recovery passphrase or access controls.
 MANIFEST
 
 (cd "$STAGING" && sha256sum ./* > SHA256SUMS 2>/dev/null || true)
@@ -132,6 +153,15 @@ ARCHIVE="${OUTPUT_DIR}/readypackets-${TIMESTAMP}.tar.gz"
 log "Writing ${ARCHIVE}"
 tar -C "$STAGING" -czf "$ARCHIVE" .
 chmod 0600 "$ARCHIVE"
+
+# Verify the archive that will be retained or synchronized, not merely the
+# source staging files. A corrupt backup must never be reported as successful.
+gzip -t "$ARCHIVE"
+tar -tzf "$ARCHIVE" >/dev/null
+tar --no-same-owner --no-same-permissions -C "$VERIFY_STAGING" -xzf "$ARCHIVE"
+(cd "$VERIFY_STAGING" && sha256sum -c --ignore-missing --quiet SHA256SUMS) \
+  || die "Archive self-verification failed; no backup was retained or synchronized."
+log "Archive structure and checksums verified"
 
 if [[ "$ENCRYPT" == "true" ]]; then
   if command -v age >/dev/null 2>&1 && [[ -n "${RP_AGE_RECIPIENT:-}" ]]; then

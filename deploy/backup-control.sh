@@ -95,7 +95,7 @@ validate_archive_members() {
   while IFS= read -r member; do
     normalized="${member#./}"
     [[ -n "$normalized" ]] || continue
-    [[ "$normalized" =~ ^(database\.sql|MANIFEST\.txt|SHA256SUMS|storage\.tar|portal\.env)$ ]] || { echo "Archive contains an unsupported member" >&2; return 1; }
+    [[ "$normalized" =~ ^(database\.sql|MANIFEST\.txt|SHA256SUMS|storage\.tar|platform-runtime\.tar|portal\.env)$ ]] || { echo "Archive contains an unsupported member" >&2; return 1; }
   done < <(tar -tzf "$source")
   while IFS= read -r type; do
     [[ "$type" == "-" || "$type" == "d" ]] || { echo "Archive contains links or unsupported member types" >&2; return 1; }

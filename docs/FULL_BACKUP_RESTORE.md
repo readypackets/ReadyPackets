@@ -1,49 +1,72 @@
-# Full Backup Restore
+# Full Backup and Recovery
 
 ## Purpose
 
-The **Admin → Backup management** page can now preflight and restore a full ReadyPackets archive. A full archive has the form `readypackets-<timestamp>.tar.gz` and is created by the protected backup service.
+A ReadyPackets **full backup** is a root-created archive named `readypackets-<timestamp>.tar.gz`. It is the recovery artifact for a complete self-hosted portal, not a selective-record export. A standard restore replaces the target database and uploaded-file storage with the archive contents.
 
-> **Warning:** A full restore replaces the target database and uploaded-file storage with the selected archive. It is intended for disaster recovery or a controlled self-hosted environment migration, not for selectively restoring one record.
+> **Security classification:** A full archive contains the database and application encryption keys. Treat it as equivalent to an unencrypted copy of the entire platform. Store it in root-only local storage or an encrypted, access-controlled off-site destination. Keep the archive and its encryption/recovery credentials separate.
 
-## Required archive contents
+## Archive contents
 
-A valid archive contains the following root-level members:
+| Archive member | Included | Recovery purpose |
+|---|---:|---|
+| `database.sql` | Always | Entire MySQL application database: user accounts, MFA recovery data, orders, messages, audit records, product/catalogue data, workflow definitions, policies, integration configuration, and application settings. |
+| `storage.tar` | Full backups | Uploaded and generated order files, audio recordings, customer and staff attachments, and generated artifacts under ReadyPackets storage. |
+| `portal.env` | Full backups | Application secrets and configuration, including session signing, AES-256-GCM data encryption, email blind-index, SMTP, payment, SAML, storage-provider, and other environment-backed settings. |
+| `platform-runtime.tar` | When backup synchronization is configured | Root-owned rclone backup-sync configuration and destination mapping. TLS private keys are deliberately excluded. |
+| `MANIFEST.txt` | Always | Creation time, source host, database name, schema version, included components, and warnings. |
+| `SHA256SUMS` | Always | SHA-256 integrity verification for every archive member. |
 
-| Member | Purpose |
-|---|---|
-| `database.sql` | MySQL application database dump |
-| `storage.tar` | Uploaded and generated ReadyPackets files |
-| `portal.env` | Environment configuration including encryption and blind-index keys |
-| `MANIFEST.txt` | Backup identity and content summary |
-| `SHA256SUMS` | Integrity checks for the archive members |
+A **database-only** archive intentionally excludes files and environment material. It is useful for a controlled database test but is not a complete disaster-recovery artifact.
 
-Database-only archives cannot be restored through the portal because they do not provide the storage and key material required for a consistent platform recovery.
+## What is restored by each mode
 
-## Administrator workflow
+| Recovery mode | Database and accounts | Order files | Application settings | Platform secrets | Backup cloud credentials | Target hostname and TLS |
+|---|---:|---:|---:|---:|---:|---:|
+| **Portal full restore** | Yes | Yes | Database-backed settings | Preserved on target | Preserved on target | Preserved on target |
+| **Root-console replacement-server restore** with `--restore-platform-secrets` | Yes | Yes | Yes | Restored from archive | Restored when `platform-runtime.tar` is present | Preserved on target; issue a certificate for the target hostname |
+| **`.rpconfig` configuration restore** | No | No | Secret-free configuration only | Preserved on target | Preserved on target | Preserved on target |
+
+The administrator portal defaults to the first mode. This prevents a browser upload from automatically replacing encryption keys or cloud-backup credentials. A complete replacement-server recovery is intentionally available only at the root console with an explicit flag.
+
+## Administrator portal restore
+
+Use this method to recover a server from a trusted archive while retaining the target server’s environment credentials and TLS material.
 
 1. Open **Admin → Backup management**.
-2. In **Restore uploaded full backup**, choose a local `readypackets-*.tar.gz` archive. The upload limit is 50 MB.
-3. Select **Verify backup archive**. The server checks the name, member allowlist, archive structure, checksum file, manifest, and database payload without restoring anything.
-4. Review the preflight summary, including archive name, database dump size, storage inclusion, and schema version.
-5. Type the exact phrase `RESTORE FULL BACKUP`.
-6. Select **Restore verified backup**.
-7. Wait for the portal restart and sign in again. Existing sessions are invalidated by design.
+2. Select either a listed archive’s **Restore** action or **Upload and restore backup file**.
+3. Run the archive preflight. The portal verifies the gzip archive, allowlisted members, link/path safety, manifest, checksums, and database payload before any data changes.
+4. Review the archive summary and type the exact phrase `RESTORE BACKUP`.
+5. Start recovery and wait for the protected restore job to restart ReadyPackets.
+6. Sign in again after the readiness status is successful. Existing sessions are invalidated by the restored database state.
 
-The verified preflight is bound to the signed-in administrator and expires after ten minutes. Uploading a different file, changing the filename, or retrying after expiry requires a new verification.
+Preflight is bound to the fully authenticated administrator and expires after ten minutes. Full-backup uploads are limited to 512 MB; larger archives should be recovered through the root-console procedure.
 
-## Safeguards
+## Replacement-server recovery with secrets
 
-The restore interface is administrator-only and is protected by MFA-backed session authorization, CSRF validation, rate limiting, a 50 MB upload limit, strict archive member checks, path/link rejection, checksums, typed confirmation, audit records, and a root-controlled staging directory. The portal application account cannot choose arbitrary root paths or shell commands; it can request only fixed helper actions through the backup-control socket.
+Use this method only for a controlled lift-and-shift or disaster recovery to a new self-hosted host. Perform it as root after the latest ReadyPackets release is installed and its initial service environment exists.
 
-The restore helper creates a pre-restore snapshot before replacing the target data. Rollback assets for application changes remain separate from data backups.
+```bash
+sudo /opt/readypackets/deploy/restore.sh \
+  --archive /var/backups/readypackets/readypackets-YYYYMMDDTHHMMSSZ.tar.gz \
+  --yes \
+  --restore-platform-secrets
+```
 
-## Migration notes
+The command first validates archive structure and checksums, creates a pre-restore database snapshot, restores the database and files, restores archived application/integration secrets while preserving target database connection, hostname, network, storage-path, Cloudflare, and TLS settings, restores root-owned backup-sync runtime if available, reruns forward-only migrations and the database schema contract, and starts the service only after readiness succeeds.
 
-A full backup is sufficient for a like-for-like self-hosted migration only when the target platform uses a compatible ReadyPackets release and the target operator deliberately accepts importing the archive's `portal.env` keys and database. The source and target should be placed in maintenance mode during a final migration cutover to prevent data divergence.
+The prior target environment is retained as a root-only file beside `portal.env` with a `.pre-full-restore-<timestamp>` suffix. The target must issue or install a valid certificate for its own public hostname; Cloudflare Origin CA material is intentionally never included in the backup archive.
 
-A standard `.rpconfig` configuration export is different: it carries secret-free policy, catalog, and setting data, and does **not** replace customer data, orders, uploads, encryption keys, or environment credentials. Use `.rpconfig` for configuration replication; use a verified full archive for complete platform recovery or a controlled lift-and-shift.
+## Fresh VPS installation assurance
 
-## Audit and retention
+The supported native installer builds a fresh migration runner from the released source, applies all forward-only migrations before starting ReadyPackets, then verifies the critical schema contract. The contract includes Phase Kickoff configuration, phase jobs, webhook deliveries, email automations, system backups, outbound connections, and outbound call logs. If an installation is incomplete, the installer fails before the portal starts and names the missing table or column rather than exposing a partially functional administrator interface.
 
-Successful and blocked restore attempts are recorded in the activity and security logs. Keep full archives in root-protected storage or encrypted external backup destinations. An archive is equivalent to the full customer database because it can contain application encryption keys.
+For a new VPS, install the desired reviewed release first, confirm the installer reports the database schema contract as verified, then perform the explicit replacement-server recovery above if complete secret continuity is required.
+
+## Safeguards and operations
+
+The portal restore flow is administrator-only and requires an MFA-backed active session, CSRF validation, typed confirmation, strict archive-member checks, path/link rejection, checksums, protected staging, audit records, and a narrowly scoped root backup-control helper. The helper accepts only fixed archive names and action types; it cannot execute arbitrary user-controlled commands.
+
+Run a restore drill periodically against an isolated, nonproduction database and storage location. A backup that has not been verified and tested cannot be relied on for disaster recovery.
+
+A full archive should be encrypted before it is copied off-host. ReadyPackets can create encrypted archives through the root backup procedure when `age` or GPG recovery material is configured. Cloud destinations should also use provider-side encryption, versioning or immutability, and separate least-privilege credentials.
