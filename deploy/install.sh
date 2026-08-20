@@ -35,6 +35,10 @@ readonly NODE_MAJOR="22"
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 DOMAIN=""
+ALTERNATE_DOMAIN=""
+SERVER_NAMES=""
+HOST_ALLOWLIST_REGEX=""
+TLS_ALIAS_PLACEHOLDER="__rp_no_alias.invalid"
 CONTACT_EMAIL=""
 TLS_PROVIDER="" # letsencrypt, cloudflare-origin, or empty to preserve/expose HTTP only
 CLOUDFLARE_ORIGIN_CERT=""
@@ -117,6 +121,25 @@ fi
 # configuration (origin checks, cookie scope, certificate name).
 [[ "$DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$ ]] \
   || die "'${DOMAIN}' does not look like a valid hostname."
+
+# Treat a conventional apex/www pair as one public site. This preserves an
+# explicit subdomain deployment (for example portal.example.com), but lets a
+# user entering either example.com or www.example.com reach the same portal.
+if [[ "$DOMAIN" == www.* ]]; then
+  ALTERNATE_DOMAIN="${DOMAIN#www.}"
+elif [[ "$DOMAIN" =~ ^[^.]+\.[^.]+$ ]]; then
+  ALTERNATE_DOMAIN="www.${DOMAIN}"
+fi
+SERVER_NAMES="$DOMAIN"
+if [[ -n "$ALTERNATE_DOMAIN" ]]; then
+  SERVER_NAMES+=" ${ALTERNATE_DOMAIN}"
+  TLS_ALIAS_PLACEHOLDER="$ALTERNATE_DOMAIN"
+fi
+escape_regex() { printf '%s' "$1" | sed 's/[.[\\*^$()+?{|]/\\\\&/g'; }
+HOST_ALLOWLIST_REGEX="$(escape_regex "$DOMAIN")"
+if [[ -n "$ALTERNATE_DOMAIN" ]]; then
+  HOST_ALLOWLIST_REGEX+="|$(escape_regex "$ALTERNATE_DOMAIN")"
+fi
 
 log "Installing ReadyPackets Portal for https://${DOMAIN}"
 
@@ -458,7 +481,7 @@ write_http_only_site() {
 server {
     listen 80;
     listen [::]:80;
-    server_name ${DOMAIN};
+    server_name ${SERVER_NAMES};
     server_tokens off;
     client_max_body_size 55m;
 
@@ -470,13 +493,7 @@ server {
     }
 
     location / {
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Connection "";
-        proxy_pass http://127.0.0.1:3000;
+        return 308 https://${DOMAIN}\$request_uri;
     }
 }
 TEMP
@@ -497,6 +514,9 @@ write_hardened_site() {
   # character, but it would accept "myportalXreadypackets.com" too. Doubling them
   # means one backslash survives into the file.
   local host_regex="${DOMAIN//./\\\\.}"
+  if [[ -n "$ALTERNATE_DOMAIN" ]]; then
+    host_regex+="|${ALTERNATE_DOMAIN//./\\\\.}"
+  fi
 
   # `more_clear_headers` comes from the headers-more module, present in
   # nginx-extras but not in the base nginx package. Emitting the directive
@@ -508,6 +528,8 @@ write_hardened_site() {
   fi
 
   sed -e "s/portal\.readypackets\.com/${DOMAIN}/g" \
+      -e "s/__RP_SERVER_NAMES__/${SERVER_NAMES}/g" \
+      -e "s/__RP_TLS_ALIAS__/${TLS_ALIAS_PLACEHOLDER}/g" \
       -e "s/__RP_HOST_REGEX__/${host_regex}/g" \
       -e "s|# __RP_MORE_CLEAR_HEADERS__|${clear_headers}|g" \
       "${APP_DIR}/deploy/nginx.conf" > "$NGINX_SITE"
@@ -527,6 +549,16 @@ write_hardened_site() {
 TLS_DIR="/etc/readypackets/tls"
 TLS_INCLUDE="${TLS_DIR}/nginx-tls.conf"
 CLOUDFLARE_TLS_DIR="${TLS_DIR}/cloudflare-origin"
+
+certificate_covers_public_names() {
+  local certificate="$1" hostname
+  local -a hostnames=("$DOMAIN")
+  [[ -n "$ALTERNATE_DOMAIN" ]] && hostnames+=("$ALTERNATE_DOMAIN")
+  [[ -f "$certificate" ]] || return 1
+  for hostname in "${hostnames[@]}"; do
+    openssl x509 -in "$certificate" -noout -checkhost "$hostname" 2>/dev/null | grep -q "does match certificate" || return 1
+  done
+}
 
 write_tls_include() {
   local provider="$1" certificate="$2" private_key="$3"
@@ -548,7 +580,7 @@ install_cloudflare_origin_material() {
   if [[ -n "$CLOUDFLARE_ORIGIN_ROOT" ]]; then
     install -m 0644 -o root -g root "$CLOUDFLARE_ORIGIN_ROOT" "${CLOUDFLARE_TLS_DIR}/cloudflare-origin-ca-root.pem"
   fi
-  openssl x509 -in "${CLOUDFLARE_TLS_DIR}/certificate.pem" -noout -checkhost "$DOMAIN" | grep -q "does match certificate" || die "Cloudflare Origin certificate does not match ${DOMAIN}."
+  certificate_covers_public_names "${CLOUDFLARE_TLS_DIR}/certificate.pem" || die "Cloudflare Origin certificate does not cover every configured public hostname."
   openssl x509 -in "${CLOUDFLARE_TLS_DIR}/certificate.pem" -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256 > /tmp/rp-cert-pub.$$
   openssl pkey -in "${CLOUDFLARE_TLS_DIR}/private-key.pem" -pubout -outform DER | openssl dgst -sha256 > /tmp/rp-key-pub.$$
   cmp -s /tmp/rp-cert-pub.$$ /tmp/rp-key-pub.$$ || die "Cloudflare Origin certificate and private key do not match."
@@ -557,15 +589,26 @@ install_cloudflare_origin_material() {
 }
 
 HAVE_CERT="false"
+LE_CERTIFICATE="/etc/letsencrypt/live/${DOMAIN}/fullchain.pem"
+LE_PRIVATE_KEY="/etc/letsencrypt/live/${DOMAIN}/privkey.pem"
 if [[ "$TLS_PROVIDER" == "cloudflare-origin" ]]; then
   log "Installing the supplied Cloudflare Origin CA material"
   install_cloudflare_origin_material
   HAVE_CERT="true"
-elif [[ -f "$TLS_INCLUDE" ]]; then
-  HAVE_CERT="true"
-elif [[ -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" && -f "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" ]]; then
-  write_tls_include "letsencrypt" "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" "/etc/letsencrypt/live/${DOMAIN}/privkey.pem"
-  HAVE_CERT="true"
+elif [[ "$TLS_PROVIDER" == "letsencrypt" && -f "$LE_CERTIFICATE" && -f "$LE_PRIVATE_KEY" ]]; then
+  if certificate_covers_public_names "$LE_CERTIFICATE"; then
+    write_tls_include "letsencrypt" "$LE_CERTIFICATE" "$LE_PRIVATE_KEY"
+    HAVE_CERT="true"
+  else
+    warn "The existing certificate does not cover every configured public hostname; it will be expanded."
+  fi
+elif [[ -z "$TLS_PROVIDER" && -f "$TLS_INCLUDE" ]]; then
+  existing_certificate="$(awk '$1 == "ssl_certificate" { gsub(/;/, "", $2); print $2; exit }' "$TLS_INCLUDE")"
+  if certificate_covers_public_names "$existing_certificate"; then
+    HAVE_CERT="true"
+  else
+    warn "The preserved certificate does not cover every configured public hostname; HTTPS remains disabled until it does."
+  fi
 fi
 
 if [[ "$HAVE_CERT" == "true" ]]; then
@@ -605,15 +648,25 @@ if [[ "$TLS_PROVIDER" == "letsencrypt" && "$HAVE_CERT" == "false" ]]; then
   # whatever nginx configuration is in place.
   install -d -m 0755 /var/www/html/.well-known/acme-challenge
 
+  certbot_domains=(--cert-name "$DOMAIN" -d "$DOMAIN")
+  if [[ -n "$ALTERNATE_DOMAIN" ]]; then
+    certbot_domains+=(-d "$ALTERNATE_DOMAIN")
+  fi
+  # Certbot requires an explicit non-interactive expansion when a prior
+  # canonical-name certificate is being widened to its apex/www counterpart.
+  if [[ -d "/etc/letsencrypt/live/${DOMAIN}" ]]; then
+    certbot_domains+=(--expand)
+  fi
   if certbot certonly --webroot --webroot-path /var/www/html \
        --non-interactive --agree-tos --email "$CONTACT_EMAIL" \
-       -d "$DOMAIN"; then
-    write_tls_include "letsencrypt" "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" "/etc/letsencrypt/live/${DOMAIN}/privkey.pem"
+       "${certbot_domains[@]}"; then
+    certificate_covers_public_names "$LE_CERTIFICATE" || die "The issued certificate does not cover every configured public hostname."
+    write_tls_include "letsencrypt" "$LE_CERTIFICATE" "$LE_PRIVATE_KEY"
     HAVE_CERT="true"
   else
     warn "Certificate issuance failed. The site remains available over HTTP."
-    warn "Check that ${DOMAIN} resolves to this host, then re-run:"
-    warn "  certbot certonly --webroot --webroot-path /var/www/html -d ${DOMAIN}"
+    warn "Check that every configured hostname resolves to this host, then re-run:"
+    warn "  certbot certonly --webroot --webroot-path /var/www/html -d ${DOMAIN}${ALTERNATE_DOMAIN:+ -d ${ALTERNATE_DOMAIN}}"
     warn "  ${BASH_SOURCE[0]} --domain ${DOMAIN} --skip-packages"
   fi
 fi
