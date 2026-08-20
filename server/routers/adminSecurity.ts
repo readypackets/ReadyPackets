@@ -603,12 +603,14 @@ export const adminSecurityRouter = router({
 
   updateCookieConsentConfig: adminProcedure
     .input(z.object({
+      cookieConsentEnabled: z.boolean(),
       analyticsTrackingEnabled: z.boolean(),
       marketingTrackingEnabled: z.boolean(),
       confirm: z.literal("UPDATE COOKIE CONSENT SETTINGS"),
     }))
     .mutation(async ({ ctx, input }) => {
       await Promise.all([
+        setSetting("privacy.cookie_consent_enabled", String(input.cookieConsentEnabled), { category: "privacy", valueType: "boolean", userId: ctx.session.user.id }),
         setSetting("privacy.analytics_tracking_enabled", String(input.analyticsTrackingEnabled), { category: "privacy", valueType: "boolean", userId: ctx.session.user.id }),
         setSetting("privacy.marketing_tracking_enabled", String(input.marketingTrackingEnabled), { category: "privacy", valueType: "boolean", userId: ctx.session.user.id }),
       ]);
@@ -619,8 +621,8 @@ export const adminSecurityRouter = router({
         entityType: "privacy",
         entityId: "cookie_consent",
         severity: "warning",
-        summary: `Cookie consent tracking categories updated: analytics ${input.analyticsTrackingEnabled ? "available" : "disabled"}; marketing ${input.marketingTrackingEnabled ? "available" : "disabled"}`,
-        changes: { analyticsTrackingEnabled: input.analyticsTrackingEnabled, marketingTrackingEnabled: input.marketingTrackingEnabled },
+        summary: `Cookie consent banner ${input.cookieConsentEnabled ? "enabled" : "disabled"}; analytics ${input.analyticsTrackingEnabled ? "available" : "disabled"}; marketing ${input.marketingTrackingEnabled ? "available" : "disabled"}`,
+        changes: { cookieConsentEnabled: input.cookieConsentEnabled, analyticsTrackingEnabled: input.analyticsTrackingEnabled, marketingTrackingEnabled: input.marketingTrackingEnabled },
         ipAddress: ctx.clientIp,
       });
       return { config: await getConsentConfig(), overview: await getConsentOverview() };

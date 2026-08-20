@@ -3432,3 +3432,19 @@ Secret-inclusive publication is intentional, manual, and fail-closed. Each backu
 **Operator guidance:** Open Backup management, choose **Restore configuration**, select the encrypted `.rpconfig`, enter the export passphrase, verify the preflight summary, type `RESTORE CONFIGURATION`, and reload after the scheduled restart. No passphrase, configuration data, certificate, private key, or integration secret was exposed in validation or retained in this log.
 
 ---
+
+## 2026-08-20 — Cookie-management controls and banner visibility
+
+**User request:** Add an administrator on/off control for cookie management and make the public privacy-preference popup more visible and less opaque.
+
+**Delivered:** Admin → System → Cookie consent and privacy preferences now includes the audited **Show cookie preference banner and management controls** checkbox. When enabled, visitors see the consent banner and the persistent Manage cookie preferences control. When disabled, both visitor-facing preference controls are hidden. Essential session, CSRF, security, checkout, and requested portal-function cookies remain active and cannot be disabled. Optional analytics and marketing categories are disabled in the administrator panel when the banner is off, and they are saved as unavailable.
+
+**Banner design:** Reduced the page dimming layer to improve surrounding-page visibility while making the banner itself highly legible: larger maximum width, fully opaque navy panel, high-contrast white typography, a stronger cyan border/ring, clearer icon treatment, and an elevated shadow. The persistent preferences button is also larger and uses an opaque high-contrast treatment.
+
+**Server behavior:** Added `privacy.cookie_consent_enabled`, defaulting to enabled for existing installations that have no explicit value. The admin mutation writes the new flag alongside optional-category availability and audits the change. Public client rendering only presents the banner/management control when the flag is enabled. Existing consent decisions and consent recording remain unchanged while enabled.
+
+**Validation:** Cookie-consent regression tests passed (3/3); TypeScript, production client/server builds, and server syntax validation passed. The deployed public page confirmed the updated client bundle and consent-management control are available. The portal recovered from the normal short restart window and public health returned `{"status":"ok"}`.
+
+**Production deployment:** Server/client deployment at `20260820074500`; rollback assets retained at `/opt/readypackets/rollback-20260820074500-cookie-management/`. Source commit pending final publication.
+
+---

@@ -11,6 +11,7 @@ type Preferences = {
 
 type ConsentConfig = {
   version: string;
+  enabled: boolean;
   analyticsAvailable: boolean;
   marketingAvailable: boolean;
 };
@@ -72,10 +73,11 @@ export function CookieConsentProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const openPreferences = useCallback(() => {
+    if (payload?.config.enabled === false) return;
     setCustomize(true);
     setOpen(true);
     setError(null);
-  }, []);
+  }, [payload?.config.enabled]);
 
   const save = useCallback(async (selection: Omit<Preferences, "essential">) => {
     setSaving(true);
@@ -102,22 +104,22 @@ export function CookieConsentProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const config = payload?.config ?? null;
-  const showBanner = payload !== null && payload.preferences === null;
+  const showBanner = payload !== null && payload.config.enabled && payload.preferences === null;
   const context = useMemo(() => ({ preferences: payload?.preferences ?? null, config, openPreferences }), [payload?.preferences, config, openPreferences]);
 
   return (
     <CookieConsentContext.Provider value={context}>
       {children}
-      {(showBanner || open) && (
-        <div className="fixed inset-0 z-[100] flex items-end bg-slate-950/35 p-3 sm:p-6" role="presentation">
-          <section aria-modal="true" aria-labelledby="cookie-preferences-title" className="mx-auto w-full max-w-3xl rounded-2xl border border-cyan-200/30 bg-[var(--card)] p-5 shadow-2xl sm:p-7" role="dialog">
+      {(showBanner || (open && config?.enabled)) && (
+        <div className="fixed inset-0 z-[100] flex items-end bg-slate-950/20 p-3 backdrop-blur-[1px] sm:p-6" role="presentation">
+          <section aria-modal="true" aria-labelledby="cookie-preferences-title" className="mx-auto w-full max-w-4xl rounded-2xl border-2 border-cyan-200/70 bg-slate-950 p-6 text-white shadow-[0_24px_80px_rgba(0,0,0,0.58)] ring-1 ring-cyan-300/30 sm:p-8" role="dialog">
             <div className="flex gap-4">
-              <div className="rounded-xl bg-cyan-500/15 p-3 text-cyan-300"><Cookie className="h-6 w-6" aria-hidden="true" /></div>
+                  <div className="rounded-xl border border-cyan-200/40 bg-cyan-400/20 p-3 text-cyan-100"><Cookie className="h-7 w-7" aria-hidden="true" /></div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h2 id="cookie-preferences-title" className="text-xl font-semibold text-[var(--foreground)]">Your privacy preferences</h2>
-                    <p className="mt-1 text-sm leading-6 text-[var(--muted-foreground)]">We use essential security cookies to operate ReadyPackets. Optional preferences, analytics, and marketing technologies remain off unless you choose them.</p>
+                    <h2 id="cookie-preferences-title" className="text-2xl font-bold tracking-tight text-white">Your privacy preferences</h2>
+                    <p className="mt-2 text-base leading-7 text-slate-100">We use essential security cookies to operate ReadyPackets. Optional preferences, analytics, and marketing technologies remain off unless you choose them.</p>
                   </div>
                   {open && !showBanner && <button type="button" onClick={() => setOpen(false)} className="rounded-md p-1 text-[var(--muted-foreground)] hover:bg-white/10" aria-label="Close cookie preferences"><X className="h-5 w-5" /></button>}
                 </div>
@@ -143,7 +145,7 @@ export function CookieConsentProvider({ children }: { children: ReactNode }) {
           </section>
         </div>
       )}
-      {payload?.preferences && !open && <button type="button" onClick={openPreferences} className="fixed bottom-4 left-4 z-40 inline-flex items-center gap-2 rounded-full border border-cyan-300/30 bg-[var(--card)] px-3 py-2 text-xs font-semibold text-cyan-200 shadow-lg hover:bg-cyan-500/10" aria-label="Manage cookie preferences"><Settings2 className="h-4 w-4" /> Manage cookie preferences</button>}
+      {payload?.preferences && config?.enabled && !open && <button type="button" onClick={openPreferences} className="fixed bottom-4 left-4 z-40 inline-flex items-center gap-2 rounded-full border border-cyan-200/60 bg-slate-950 px-4 py-2.5 text-sm font-bold text-cyan-100 shadow-xl ring-1 ring-cyan-300/20 hover:bg-cyan-950" aria-label="Manage cookie preferences"><Settings2 className="h-4 w-4" /> Manage cookie preferences</button>}
     </CookieConsentContext.Provider>
   );
 }

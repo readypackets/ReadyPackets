@@ -224,11 +224,13 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 function CookieConsentAdminPanel() {
   const toast = useToast();
   const consent = trpc.adminSecurity.cookieConsent.useQuery();
+  const [cookieConsentEnabled, setCookieConsentEnabled] = useState(true);
   const [analyticsEnabled, setAnalyticsEnabled] = useState(false);
   const [marketingEnabled, setMarketingEnabled] = useState(false);
   const [confirm, setConfirm] = useState("");
   useEffect(() => {
     if (!consent.data) return;
+    setCookieConsentEnabled(consent.data.config.enabled);
     setAnalyticsEnabled(consent.data.config.analyticsAvailable);
     setMarketingEnabled(consent.data.config.marketingAvailable);
   }, [consent.data]);
@@ -236,7 +238,7 @@ function CookieConsentAdminPanel() {
     async onSuccess() {
       await consent.refetch();
       setConfirm("");
-      toast.success("Cookie consent settings updated", "Optional tracking remains unavailable to visitors until they explicitly consent.");
+      toast.success("Cookie consent settings updated", "Essential security cookies remain active. Optional categories still require each visitor’s consent when the banner is enabled.");
     },
     onError(error) { toast.error("Cookie consent settings were not updated", errorMessage(error)); },
   });
@@ -244,18 +246,19 @@ function CookieConsentAdminPanel() {
   return <Card>
     <CardHeader title={<span className="flex items-center gap-2"><Cookie className="size-4 text-teal" aria-hidden="true" />Cookie consent and privacy preferences</span>} description="Visitors can accept, reject, or customize optional categories. Essential session and security cookies are always required and cannot be disabled." actions={<Button size="sm" variant="outline" busy={consent.isFetching} onClick={() => void consent.refetch()} leadingIcon={<RefreshCw className="size-4" />}>Refresh</Button>} />
     {consent.isLoading ? <Skeleton className="mt-5 h-52 w-full" /> : <>
-      <Alert tone="info" className="mt-5" title="Consent-before-tracking enforcement">Analytics and marketing remain disabled by default. Enabling a category only makes it available in the preference center; it does not grant permission until each visitor opts in. No tracking integration is currently configured.</Alert>
+      <Alert tone={cookieConsentEnabled ? "info" : "warning"} className="mt-5" title={cookieConsentEnabled ? "Consent-before-tracking enforcement" : "Cookie preference center is turned off"}>{cookieConsentEnabled ? "Analytics and marketing remain disabled by default. Enabling a category only makes it available in the preference center; it does not grant permission until each visitor opts in. No tracking integration is currently configured." : "Visitors will not see the cookie preference banner or the Manage cookie preferences button. Essential session, CSRF, security, and requested portal-function cookies remain active and cannot be disabled."}</Alert>
       <div className="mt-5 grid gap-4 md:grid-cols-3">
         <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4"><p className="text-xs uppercase tracking-wide text-body">Consent version</p><p className="mt-1 text-lg font-semibold text-ink">{consent.data?.config.version}</p></div>
         <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4"><p className="text-xs uppercase tracking-wide text-body">Recorded decisions</p><p className="mt-1 text-lg font-semibold text-ink">{overview?.total ?? 0}</p></div>
         <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4"><p className="text-xs uppercase tracking-wide text-body">Essential-only choices</p><p className="mt-1 text-lg font-semibold text-ink">{overview?.essentialOnly ?? 0}</p></div>
       </div>
       <div className="mt-6 space-y-4">
-        <label className="flex items-start gap-3 rounded-xl border border-white/10 p-4"><input type="checkbox" className="mt-1 h-4 w-4 accent-teal" checked={analyticsEnabled} onChange={(event) => setAnalyticsEnabled(event.target.checked)} /><span><span className="font-medium text-ink">Make analytics consent available</span><span className="mt-1 block text-sm text-body">Only enable this immediately before installing a separately approved analytics integration. Visitors must still opt in before it may run.</span></span></label>
-        <label className="flex items-start gap-3 rounded-xl border border-white/10 p-4"><input type="checkbox" className="mt-1 h-4 w-4 accent-teal" checked={marketingEnabled} onChange={(event) => setMarketingEnabled(event.target.checked)} /><span><span className="font-medium text-ink">Make marketing consent available</span><span className="mt-1 block text-sm text-body">Only enable this immediately before installing a separately approved marketing or advertising integration. Visitors must still opt in before it may run.</span></span></label>
+        <label className="flex items-start gap-3 rounded-xl border border-teal/40 bg-teal/10 p-4"><input type="checkbox" className="mt-1 h-4 w-4 accent-teal" checked={cookieConsentEnabled} onChange={(event) => setCookieConsentEnabled(event.target.checked)} /><span><span className="font-semibold text-ink">Show cookie preference banner and management controls</span><span className="mt-1 block text-sm text-body">Turn this on to display the visitor cookie preference banner, collect consent records, and show the persistent Manage cookie preferences button. Turn it off only when cookie consent management is not required for your current deployment.</span></span></label>
+        <label className={`flex items-start gap-3 rounded-xl border p-4 ${cookieConsentEnabled ? "border-white/10" : "border-white/10 opacity-60"}`}><input type="checkbox" className="mt-1 h-4 w-4 accent-teal" checked={analyticsEnabled} disabled={!cookieConsentEnabled} onChange={(event) => setAnalyticsEnabled(event.target.checked)} /><span><span className="font-medium text-ink">Make analytics consent available</span><span className="mt-1 block text-sm text-body">Only enable this immediately before installing a separately approved analytics integration. Visitors must still opt in before it may run.</span></span></label>
+        <label className={`flex items-start gap-3 rounded-xl border p-4 ${cookieConsentEnabled ? "border-white/10" : "border-white/10 opacity-60"}`}><input type="checkbox" className="mt-1 h-4 w-4 accent-teal" checked={marketingEnabled} disabled={!cookieConsentEnabled} onChange={(event) => setMarketingEnabled(event.target.checked)} /><span><span className="font-medium text-ink">Make marketing consent available</span><span className="mt-1 block text-sm text-body">Only enable this immediately before installing a separately approved marketing or advertising integration. Visitors must still opt in before it may run.</span></span></label>
       </div>
       <div className="mt-5 max-w-lg"><Input label="Type to confirm" placeholder="UPDATE COOKIE CONSENT SETTINGS" value={confirm} onChange={(event) => setConfirm(event.target.value)} /><p className="mt-2 text-xs text-body">Changing categories is audited. This does not itself activate a tracking script.</p></div>
-      <div className="mt-5 flex flex-wrap gap-3"><Button busy={update.isPending} disabled={confirm !== "UPDATE COOKIE CONSENT SETTINGS"} onClick={() => update.mutate({ analyticsTrackingEnabled: analyticsEnabled, marketingTrackingEnabled: marketingEnabled, confirm: "UPDATE COOKIE CONSENT SETTINGS" })} leadingIcon={<Save className="size-4" />}>Save cookie consent settings</Button><a href="/privacy" className="inline-flex items-center rounded-lg border border-white/15 px-4 py-2 text-sm font-semibold text-ink hover:bg-white/5">Review Privacy Policy</a></div>
+      <div className="mt-5 flex flex-wrap gap-3"><Button busy={update.isPending} disabled={confirm !== "UPDATE COOKIE CONSENT SETTINGS"} onClick={() => update.mutate({ cookieConsentEnabled, analyticsTrackingEnabled: cookieConsentEnabled && analyticsEnabled, marketingTrackingEnabled: cookieConsentEnabled && marketingEnabled, confirm: "UPDATE COOKIE CONSENT SETTINGS" })} leadingIcon={<Save className="size-4" />}>Save cookie consent settings</Button><a href="/privacy" className="inline-flex items-center rounded-lg border border-white/15 px-4 py-2 text-sm font-semibold text-ink hover:bg-white/5">Review Privacy Policy</a></div>
     </>}
   </Card>;
 }

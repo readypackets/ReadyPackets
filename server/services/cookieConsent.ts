@@ -21,6 +21,7 @@ export interface CookiePreferences {
 
 export interface ConsentConfig {
   version: string;
+  enabled: boolean;
   analyticsAvailable: boolean;
   marketingAvailable: boolean;
 }
@@ -44,13 +45,17 @@ export function normalizeCookiePreferences(input: Partial<CookiePreferences>, co
 }
 
 export async function getConsentConfig(): Promise<ConsentConfig> {
-  const [version, analyticsEnabled, marketingEnabled] = await Promise.all([
+  const [version, consentEnabled, analyticsEnabled, marketingEnabled] = await Promise.all([
     getSetting("privacy.cookie_consent_version"),
+    getSetting("privacy.cookie_consent_enabled"),
     getSetting("privacy.analytics_tracking_enabled"),
     getSetting("privacy.marketing_tracking_enabled"),
   ]);
   return {
     version: version?.trim() || COOKIE_CONSENT_VERSION,
+    // Existing installations retain their active consent prompt until an
+    // administrator explicitly turns it off.
+    enabled: consentEnabled !== "false",
     analyticsAvailable: analyticsEnabled === "true",
     marketingAvailable: marketingEnabled === "true",
   };
