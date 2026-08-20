@@ -3517,3 +3517,46 @@ Public production health returned `{"status":"ok"}`. A browser inspection of `ht
 The user will be informed that the repair is live: the shortcut no longer overlaps the left navigation/logout region, and the `X` button hides it for the current browser session. A new browser session restores the optional shortcut; the standard portal controls remain available for changing cookie preferences.
 
 *This entry was appended, rather than replacing prior history, in accordance with the project logging requirement.*
+
+
+---
+
+## 65. Order workflow configuration import and export — August 20, 2026
+
+### 65.1 Request
+
+> add a method to import and export the order workflow configuration
+
+### 65.2 Implementation
+
+The **Admin → Order workflows** page now provides an **Export** action for each workflow and an **Import configuration** action in the page header. Export creates a portable JSON document using the versioned format `readypackets.order-workflow`, version `1`. It contains the workflow name, description, active state, stage ordering, customer capabilities, stage messages, acknowledgement and progression policies, upload limits, SharePoint relative destinations, administrator task markers, email-template references, status/completion rules, and dashboard alert configuration.
+
+The export deliberately omits `webhookEndpointId`. Endpoint IDs are local to a deployment and importing a numeric identifier into a different server could attach the workflow to the wrong destination. The import dialog explicitly explains this and requires an administrator to review/reselect a local webhook endpoint after importing.
+
+Import accepts only a small JSON file (250 KB maximum) bearing the expected format/version marker. Server-side Zod validation is authoritative and rejects malformed stages, unsafe SharePoint paths, excessive values, invalid stage keys, duplicate stage keys, invalid template references, and nonexistent/disabled webhook references. The browser check is only a usability preflight; an altered file cannot bypass the server validation.
+
+The import confirmation requires exact entry of:
+
+```text
+IMPORT WORKFLOW CONFIGURATION
+```
+
+An import always creates a **new** workflow definition. It never overwrites an existing workflow, never changes the default workflow, and preserves active/inactive state from the exported configuration. Both export and import are administrator-only tRPC actions and create audit-log records. The exported format contains no credential, secret, private key, or webhook URL material.
+
+### 65.3 Validation and deployment
+
+TypeScript validation completed without errors. Both the production Vite client build and the Node server bundle build completed successfully. The general automated suite was started, but its database-dependent tests could not connect to the intentionally absent sandbox MySQL listener (`127.0.0.1:3306`); 21 test files and 178 tests completed, while 11 database-dependent pricing tests failed solely with `ECONNREFUSED`. This was an environment limitation, not a feature assertion failure, and no test result was represented as a pass.
+
+The server and client artifacts were SHA-256 verified, the client archive was checked for required bundle files and unsafe traversal paths, and production deployment retained a rollback copy. The initial external health request returned a transient `502` while systemd was completing the restart; journal inspection confirmed normal startup and listener initialization. A follow-up check passed:
+
+```text
+service: active
+/api/health: {"status":"ok"}
+/api/health/ready: {"status":"ready"}
+```
+
+### 65.4 User-facing result
+
+Administrators can now export any workflow from its table row, upload a previously exported JSON file, assign a new workflow name, review its stage count and portability notice, type the import confirmation, and create it as an independent workflow. The standard Edit workflow view is used afterward to select any environment-specific webhook endpoint.
+
+*This entry was appended rather than replacing earlier history, as required by the ReadyPackets project instructions.*

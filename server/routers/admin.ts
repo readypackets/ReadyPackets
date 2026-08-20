@@ -147,6 +147,71 @@ const workflowStageActionsSchema = z.object({
   }
 }).default({});
 
+const workflowStageSchema = z.object({
+  key: z.string().trim().regex(/^[a-z0-9_]+$/).max(48),
+  label: z.string().trim().min(2).max(120),
+  order: z.number().int().min(1).max(50),
+  capabilities: z.array(z.enum(["documents", "questions", "recording", "audio_upload", "review_space"])).max(5).default([]),
+  adminTasks: z.array(z.enum(["upload_document", "assign_questions", "review_submission", "run_automation"])).max(4).default([]),
+  customerMessage: z.object({
+    kind: z.enum(["instructions", "announcement"]),
+    title: z.string().trim().min(2).max(120).optional(),
+    bodyMarkdown: z.string().trim().min(1).max(8_000),
+  }).optional(),
+  advanceMode: z.enum(["next", "submit_lock"]).default("submit_lock"),
+  customerAcknowledgement: z.enum(["required", "optional", "none"]).default("required"),
+  submissionNotice: z.string().trim().min(10).max(2_000).optional(),
+  uploadLimits: z.object({
+    documentMaxFiles: z.number().int().min(1).max(50).optional(),
+    documentMaxSizeMb: z.number().int().min(1).max(100).optional(),
+    audioMaxFiles: z.number().int().min(1).max(50).optional(),
+    audioMaxSizeMb: z.number().int().min(1).max(100).optional(),
+    recordingMaxDurationSeconds: z.number().int().min(1).max(7_200).optional(),
+    audioTotalDurationSeconds: z.number().int().min(1).max(7_200).optional(),
+  }).optional(),
+  sharePointDestination: z.string().trim().min(1).max(240).regex(/^(?!.*\.\.)(?:[A-Za-z0-9 _().-]+)(?:\/[A-Za-z0-9 _().-]+)*$/, "Use a safe relative SharePoint folder path without dot segments.").optional(),
+  sharePointAudioDestination: z.string().trim().min(1).max(240).regex(/^(?!.*\.\.)(?:[A-Za-z0-9 _().-]+)(?:\/[A-Za-z0-9 _().-]+)*$/, "Use a safe relative SharePoint folder path without dot segments.").optional(),
+  actions: workflowStageActionsSchema,
+});
+
+type WorkflowStageInput = z.infer<typeof workflowStageSchema>;
+
+const workflowConfigurationSchema = z.object({
+  format: z.literal("readypackets.order-workflow"),
+  version: z.literal(1),
+  exportedAt: z.string().datetime().optional(),
+  workflow: z.object({
+    name: z.string().trim().min(2).max(120),
+    description: z.string().trim().max(4_000).nullable().optional(),
+    customerPresentation: z.literal("wizard").default("wizard"),
+    stages: z.array(workflowStageSchema).min(1).max(20),
+    active: z.boolean().default(true),
+  }),
+}).strict();
+
+async function validateWorkflowStageReferences(stages: WorkflowStageInput[]): Promise<void> {
+  for (const stage of stages) {
+    if (stage.actions.emailTemplateKey) {
+      const [template] = await db.select({ templateKey: emailTemplates.templateKey }).from(emailTemplates).where(eq(emailTemplates.templateKey, stage.actions.emailTemplateKey)).limit(1);
+      if (!template) throw new TRPCError({ code: "BAD_REQUEST", message: `Select a valid Email Template Center template for ${stage.label}.` });
+    }
+    if (stage.actions.webhookEndpointId) {
+      const [endpoint] = await db.select({ id: webhookEndpoints.id }).from(webhookEndpoints).where(and(eq(webhookEndpoints.id, stage.actions.webhookEndpointId), eq(webhookEndpoints.enabled, true))).limit(1);
+      if (!endpoint) throw new TRPCError({ code: "BAD_REQUEST", message: `Select an enabled webhook endpoint for ${stage.label}.` });
+    }
+  }
+}
+
+function portableWorkflowStages(rawStages: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(rawStages)) return [];
+  return rawStages.map((stage) => {
+    const source = stage && typeof stage === "object" ? stage as Record<string, unknown> : {};
+    const actions = source.actions && typeof source.actions === "object" ? { ...(source.actions as Record<string, unknown>) } : {};
+    delete actions.webhookEndpointId;
+    return { ...source, actions };
+  });
+}
+
 async function purgeOrdersFromTrash(orderIds: number[]) {
   if (orderIds.length === 0) return;
   await db.transaction(async (tx) => {
@@ -1357,29 +1422,70 @@ export const adminRouter = router({
     return rows.map((row) => ({ ...row, stages: Array.isArray(row.stages) ? row.stages : [] }));
   }),
 
+  exportOrderWorkflow: adminProcedure
+    .input(z.object({ workflowId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const [workflow] = await db
+        .select({ id: orderWorkflows.id, name: orderWorkflows.name, description: orderWorkflows.description, customerPresentation: orderWorkflows.customerPresentation, stages: orderWorkflows.stages, active: orderWorkflows.active })
+        .from(orderWorkflows)
+        .where(eq(orderWorkflows.id, input.workflowId))
+        .limit(1);
+      if (!workflow) throw new TRPCError({ code: "NOT_FOUND", message: "Workflow not found." });
+
+      const configuration = {
+        format: "readypackets.order-workflow" as const,
+        version: 1 as const,
+        exportedAt: new Date().toISOString(),
+        workflow: {
+          name: workflow.name,
+          description: workflow.description,
+          customerPresentation: "wizard" as const,
+          stages: portableWorkflowStages(workflow.stages),
+          active: workflow.active,
+        },
+      };
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "workflow.configuration_exported", entityType: "order_workflow", entityId: workflow.id, summary: `Administrator exported workflow configuration ${workflow.name}`, changes: { format: configuration.format, version: configuration.version, stageCount: configuration.workflow.stages.length, externalWebhookReferencesExcluded: true }, ipAddress: ctx.clientIp });
+      return configuration;
+    }),
+
+  importOrderWorkflow: adminProcedure
+    .input(z.object({
+      name: z.string().trim().min(2).max(120),
+      confirmation: z.literal("IMPORT WORKFLOW CONFIGURATION"),
+      configuration: workflowConfigurationSchema,
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const stages = [...input.configuration.workflow.stages].sort((a, b) => a.order - b.order);
+      if (new Set(stages.map((stage) => stage.key)).size !== stages.length) throw new TRPCError({ code: "BAD_REQUEST", message: "Imported workflow stages must have unique keys." });
+      await validateWorkflowStageReferences(stages);
+      const result = await db.insert(orderWorkflows).values({
+        name: input.name,
+        description: input.configuration.workflow.description ?? null,
+        customerPresentation: input.configuration.workflow.customerPresentation,
+        stages,
+        isDefault: false,
+        active: input.configuration.workflow.active,
+        createdByUserId: ctx.session.user.id,
+      });
+      const id = insertedId(result);
+      void recordActivity({ actorUserId: ctx.session.user.id, actorRole: "admin", action: "workflow.configuration_imported", entityType: "order_workflow", entityId: id, summary: `Administrator imported workflow configuration as ${input.name}`, changes: { sourceFormat: input.configuration.format, sourceVersion: input.configuration.version, stageCount: stages.length, sourceWorkflowName: input.configuration.workflow.name, active: input.configuration.workflow.active, defaultWorkflowProtected: true }, ipAddress: ctx.clientIp });
+      return { ok: true as const, id };
+    }),
+
   upsertOrderWorkflow: adminProcedure
     .input(z.object({
       id: z.number().int().positive().optional(),
       name: z.string().trim().min(2).max(120),
       description: z.string().trim().max(4_000).optional(),
       customerPresentation: z.literal("wizard").default("wizard"),
-      stages: z.array(z.object({ key: z.string().trim().regex(/^[a-z0-9_]+$/).max(48), label: z.string().trim().min(2).max(120), order: z.number().int().min(1).max(50), capabilities: z.array(z.enum(["documents", "questions", "recording", "audio_upload", "review_space"])).max(5).default([]), adminTasks: z.array(z.enum(["upload_document", "assign_questions", "review_submission", "run_automation"])).max(4).default([]), customerMessage: z.object({ kind: z.enum(["instructions", "announcement"]), title: z.string().trim().min(2).max(120).optional(), bodyMarkdown: z.string().trim().min(1).max(8_000) }).optional(), advanceMode: z.enum(["next", "submit_lock"]).default("submit_lock"), customerAcknowledgement: z.enum(["required", "optional", "none"]).default("required"), submissionNotice: z.string().trim().min(10).max(2_000).optional(), uploadLimits: z.object({ documentMaxFiles: z.number().int().min(1).max(50).optional(), documentMaxSizeMb: z.number().int().min(1).max(100).optional(), audioMaxFiles: z.number().int().min(1).max(50).optional(), audioMaxSizeMb: z.number().int().min(1).max(100).optional(), recordingMaxDurationSeconds: z.number().int().min(1).max(7_200).optional(), audioTotalDurationSeconds: z.number().int().min(1).max(7_200).optional() }).optional(), sharePointDestination: z.string().trim().min(1).max(240).regex(/^(?!.*\.\.)(?:[A-Za-z0-9 _().-]+)(?:\/[A-Za-z0-9 _().-]+)*$/, "Use a safe relative SharePoint folder path without dot segments.").optional(), sharePointAudioDestination: z.string().trim().min(1).max(240).regex(/^(?!.*\.\.)(?:[A-Za-z0-9 _().-]+)(?:\/[A-Za-z0-9 _().-]+)*$/, "Use a safe relative SharePoint folder path without dot segments.").optional(), actions: workflowStageActionsSchema })).min(1).max(20),
+      stages: z.array(workflowStageSchema).min(1).max(20),
       isDefault: z.boolean().default(false),
       active: z.boolean().default(true),
     }))
     .mutation(async ({ ctx, input }) => {
       const stages = [...input.stages].sort((a, b) => a.order - b.order);
       if (new Set(stages.map((stage) => stage.key)).size !== stages.length) throw new TRPCError({ code: "BAD_REQUEST", message: "Workflow stages must have unique keys." });
-      for (const stage of stages) {
-        if (stage.actions.emailTemplateKey) {
-          const [template] = await db.select({ templateKey: emailTemplates.templateKey }).from(emailTemplates).where(eq(emailTemplates.templateKey, stage.actions.emailTemplateKey)).limit(1);
-          if (!template) throw new TRPCError({ code: "BAD_REQUEST", message: `Select a valid Email Template Center template for ${stage.label}.` });
-        }
-        if (stage.actions.webhookEndpointId) {
-          const [endpoint] = await db.select({ id: webhookEndpoints.id }).from(webhookEndpoints).where(and(eq(webhookEndpoints.id, stage.actions.webhookEndpointId), eq(webhookEndpoints.enabled, true))).limit(1);
-          if (!endpoint) throw new TRPCError({ code: "BAD_REQUEST", message: `Select an enabled webhook endpoint for ${stage.label}.` });
-        }
-      }
+      await validateWorkflowStageReferences(stages);
       if (input.isDefault) await db.update(orderWorkflows).set({ isDefault: false });
       if (input.id) {
         const existingRows = await db.select({ stages: orderWorkflows.stages }).from(orderWorkflows).where(eq(orderWorkflows.id, input.id)).limit(1);

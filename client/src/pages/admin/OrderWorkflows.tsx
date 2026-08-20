@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
-import { ArrowDown, ArrowDownUp, ArrowUp, Bell, ClipboardList, Copy, Download, FileAudio, FileQuestion, FileText, Gauge, GripVertical, LayoutTemplate, Mail, Mic, Pencil, Plus, Save, Trash2, Webhook } from "lucide-react";
+import { ArrowDown, ArrowDownUp, ArrowUp, Bell, ClipboardList, Copy, Download, FileAudio, FileQuestion, FileText, Gauge, GripVertical, LayoutTemplate, Mail, Mic, Pencil, Plus, Save, Trash2, Upload, Webhook } from "lucide-react";
 import { trpc, errorMessage } from "@/lib/trpc";
 import { Button } from "@/components/ui/Button";
 import { Checkbox, Input, Select, Textarea } from "@/components/ui/Field";
@@ -12,6 +12,7 @@ import { useToast } from "@/components/ui/Toast";
 import { PageHeader } from "@/components/layout/PortalLayout";
 
 type Workflow = { id: number; name: string; description: string | null; stages: unknown[]; customerPresentation: "cards" | "wizard"; isDefault: boolean; active: boolean; createdAt: Date | string };
+type WorkflowConfiguration = { format: "readypackets.order-workflow"; version: 1; exportedAt?: string; workflow: { name: string; description?: string | null; customerPresentation: "wizard"; stages: Stage[]; active?: boolean } };
 type StageCapability = "documents" | "questions" | "recording" | "audio_upload" | "review_space";
 type OrderStatus = string;
 type StageActions = {
@@ -173,6 +174,10 @@ export function AdminOrderWorkflowsPage() {
   const [designerMode, setDesignerMode] = useState<"canvas" | "guided">("canvas");
   const [guidedStep, setGuidedStep] = useState(0);
   const [guidedStageIndex, setGuidedStageIndex] = useState(0);
+  const [importConfiguration, setImportConfiguration] = useState<WorkflowConfiguration | null>(null);
+  const [importFileName, setImportFileName] = useState("");
+  const [importName, setImportName] = useState("");
+  const [importConfirmation, setImportConfirmation] = useState("");
 
   const save = trpc.admin.upsertOrderWorkflow.useMutation({
     async onSuccess() { await utils.admin.orderWorkflows.invalidate(); setOpen(false); toast.success(editing ? "Workflow updated" : "Workflow created", "Assigned order workspaces refresh from the current workflow automatically."); },
@@ -182,6 +187,44 @@ export function AdminOrderWorkflowsPage() {
     async onSuccess() { await utils.admin.orderWorkflows.invalidate(); setDeleting(null); setDeleteConfirmation(""); toast.success("Workflow deleted"); },
     onError(error) { toast.error("Could not delete workflow", errorMessage(error)); },
   });
+  const exportWorkflow = trpc.admin.exportOrderWorkflow.useMutation();
+  const importWorkflow = trpc.admin.importOrderWorkflow.useMutation({
+    async onSuccess() { await utils.admin.orderWorkflows.invalidate(); setImportConfiguration(null); setImportFileName(""); setImportName(""); setImportConfirmation(""); toast.success("Workflow imported", "A new workflow definition was created. It was not made the default workflow."); },
+    onError(error) { toast.error("Could not import workflow", errorMessage(error)); },
+  });
+  function resetImport() { setImportConfiguration(null); setImportFileName(""); setImportName(""); setImportConfirmation(""); }
+  async function downloadWorkflowConfiguration(workflow: Workflow) {
+    try {
+      const configuration = await exportWorkflow.mutateAsync({ workflowId: workflow.id });
+      const blob = new Blob([JSON.stringify(configuration, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const stem = workflow.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "workflow";
+      anchor.href = url;
+      anchor.download = `readypackets-order-workflow-${stem}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      toast.success("Workflow configuration exported", "The portable JSON file excludes environment-specific webhook endpoint assignments.");
+    } catch (error) { toast.error("Could not export workflow", errorMessage(error)); }
+  }
+  async function selectWorkflowConfiguration(event: React.ChangeEvent<HTMLInputElement>) {
+    const selected = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!selected) return;
+    if (selected.size > 250_000) { toast.error("Configuration file is too large", "Select a ReadyPackets workflow JSON file smaller than 250 KB."); return; }
+    try {
+      const candidate = JSON.parse(await selected.text()) as unknown;
+      if (!candidate || typeof candidate !== "object") throw new Error("The file does not contain a workflow configuration object.");
+      const configuration = candidate as WorkflowConfiguration;
+      if (configuration.format !== "readypackets.order-workflow" || configuration.version !== 1 || !configuration.workflow || typeof configuration.workflow.name !== "string" || !Array.isArray(configuration.workflow.stages)) throw new Error("Select a ReadyPackets order workflow configuration export (format version 1).");
+      setImportConfiguration(configuration);
+      setImportFileName(selected.name);
+      setImportName(`${configuration.workflow.name} imported`.slice(0, 120));
+      setImportConfirmation("");
+    } catch (error) { toast.error("Could not read workflow configuration", error instanceof Error ? error.message : "Select a valid JSON configuration file."); }
+  }
   function reset(workflow: Workflow | null, clone = false) {
     setEditing(clone ? null : workflow);
     setName(workflow ? `${clone ? `${workflow.name} copy` : workflow.name}` : "");
@@ -207,11 +250,11 @@ export function AdminOrderWorkflowsPage() {
     { key: "name", header: "Workflow", cell: (row) => <div><p className="font-medium text-ink">{row.name}</p><p className="mt-0.5 max-w-xl text-xs text-muted">{row.description || "No description"}</p></div> },
     { key: "stages", header: "Stages", cell: (row) => <span className="text-sm text-body">{normalizeStages(row.stages).length}</span> },
     { key: "state", header: "State", cell: (row) => <div className="flex gap-1.5">{row.customerPresentation === "wizard" ? <Badge tone="gold">Wizard</Badge> : <Badge tone="neutral">Cards</Badge>}{row.isDefault ? <Badge tone="teal">Default</Badge> : null}<Badge tone={row.active ? "success" : "neutral"}>{row.active ? "Active" : "Inactive"}</Badge></div> },
-    { key: "action", header: "", align: "right", cell: (row) => <div className="flex justify-end gap-2"><Button size="sm" variant="outline" leadingIcon={<Copy className="size-3.5" />} onClick={() => reset(row, true)}>Clone</Button><Button size="sm" variant="outline" leadingIcon={<Pencil className="size-3.5" />} onClick={() => reset(row)}>Edit</Button><Button size="sm" variant="ghost" leadingIcon={<Trash2 className="size-3.5 text-danger" />} onClick={() => { setDeleting(row); setDeleteConfirmation(""); }} aria-label={`Delete ${row.name}`}>Delete</Button></div> },
+    { key: "action", header: "", align: "right", cell: (row) => <div className="flex justify-end gap-2"><Button size="sm" variant="outline" busy={exportWorkflow.isPending} leadingIcon={<Download className="size-3.5" />} onClick={() => void downloadWorkflowConfiguration(row)}>Export</Button><Button size="sm" variant="outline" leadingIcon={<Copy className="size-3.5" />} onClick={() => reset(row, true)}>Clone</Button><Button size="sm" variant="outline" leadingIcon={<Pencil className="size-3.5" />} onClick={() => reset(row)}>Edit</Button><Button size="sm" variant="ghost" leadingIcon={<Trash2 className="size-3.5 text-danger" />} onClick={() => { setDeleting(row); setDeleteConfirmation(""); }} aria-label={`Delete ${row.name}`}>Delete</Button></div> },
   ];
 
   return <>
-    <PageHeader title="Order workflows" description="Build connected wizard steps, customer requirements, and auditable actions that administrators can run for individual orders." actions={<div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => navigate("/admin/order-statuses")}>Manage order statuses</Button><Button leadingIcon={<Plus className="size-4" />} onClick={() => reset(null)}>New workflow</Button></div>} />
+    <PageHeader title="Order workflows" description="Build connected wizard steps, customer requirements, and auditable actions that administrators can run for individual orders." actions={<div className="flex flex-wrap gap-2"><input id="workflow-configuration-import" className="sr-only" type="file" accept="application/json,.json" onChange={(event) => void selectWorkflowConfiguration(event)} aria-label="Select an order workflow configuration file" /><Button variant="outline" leadingIcon={<Upload className="size-4" />} onClick={() => document.getElementById("workflow-configuration-import")?.click()}>Import configuration</Button><Button variant="outline" onClick={() => navigate("/admin/order-statuses")}>Manage order statuses</Button><Button leadingIcon={<Plus className="size-4" />} onClick={() => reset(null)}>New workflow</Button></div>} />
     <Alert tone="info" className="mb-5">Workflow changes are live definitions: every assigned order refreshes its customer and administrator phase workspaces from the saved stage labels, capabilities, and available actions. Existing files and questions remain associated with their stable stage key.</Alert>
     {workflows.isLoading ? <div className="space-y-3">{Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-16 w-full" />)}</div> : (workflows.data ?? []).length ? <DataTable caption="Order workflows" columns={columns} rows={(workflows.data ?? []) as Workflow[]} rowKey={(row) => row.id} /> : <EmptyState icon={ClipboardList} title="No workflows" description="Create a workflow before assigning one to an order." action={<Button onClick={() => reset(null)}>New workflow</Button>} />}
     <Modal size="2xl" open={open} onClose={() => setOpen(false)} title={editing ? "Edit order workflow" : "New order workflow"} description="Use the visual stage builder to define customer workspaces and optional administrator-run actions." footer={<><Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button busy={save.isPending} disabled={name.trim().length < 2 || normalizedStages.length === 0 || invalidStages || duplicateKeys} leadingIcon={<Save className="size-4" />} onClick={() => save.mutate({ id: editing?.id, name: name.trim(), description: description.trim() || undefined, customerPresentation, stages: normalizedStages, isDefault, active })}>Save workflow</Button></>}>
@@ -251,6 +294,7 @@ export function AdminOrderWorkflowsPage() {
         <div className="grid gap-3 md:grid-cols-2"><Checkbox label="Use as the default workflow for new orders" checked={isDefault} onChange={(event) => setIsDefault(event.target.checked)} /><Checkbox label="Active and available for assignment" checked={active} onChange={(event) => setActive(event.target.checked)} /></div>
       </div>
     </Modal>
+    <Modal open={Boolean(importConfiguration)} onClose={() => { if (!importWorkflow.isPending) resetImport(); }} title="Import order workflow configuration" description="Review the portable workflow configuration before creating a separate new workflow definition."><div className="space-y-4">{importConfiguration ? <><Alert tone="info"><strong>{importFileName}</strong> contains <strong>{importConfiguration.workflow.stages.length}</strong> workflow stages. The import creates a new workflow and never overwrites an existing workflow or changes the default workflow.</Alert><Alert tone="warning">Environment-specific webhook assignments are intentionally excluded from exports. Review and select any applicable webhook endpoint after importing.</Alert><div className="grid gap-3 md:grid-cols-2"><Input label="New workflow name" value={importName} onChange={(event) => setImportName(event.target.value)} required /><Input label="Source workflow" value={importConfiguration.workflow.name} readOnly /></div><Input label="Type IMPORT WORKFLOW CONFIGURATION to confirm" value={importConfirmation} onChange={(event) => setImportConfirmation(event.target.value)} /><div className="flex justify-end gap-2"><Button variant="outline" onClick={resetImport} disabled={importWorkflow.isPending}>Cancel</Button><Button busy={importWorkflow.isPending} disabled={importName.trim().length < 2 || importConfirmation !== "IMPORT WORKFLOW CONFIGURATION"} leadingIcon={<Upload className="size-4" />} onClick={() => importWorkflow.mutate({ name: importName.trim(), confirmation: "IMPORT WORKFLOW CONFIGURATION", configuration: importConfiguration })}>Import as new workflow</Button></div></> : null}</div></Modal>
     <Modal open={Boolean(deleting)} onClose={() => { if (!deleteWorkflow.isPending) { setDeleting(null); setDeleteConfirmation(""); } }} title="Delete workflow" description="Deletion is permanent for the workflow definition. Assigned active orders and the current default workflow cannot be deleted."><div className="space-y-4"><Alert tone="warning">Delete <strong>{deleting?.name}</strong> only after all active orders have been reassigned. Historical order records remain protected by the server.</Alert><Input label="Type DELETE WORKFLOW to confirm" value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} /><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => { setDeleting(null); setDeleteConfirmation(""); }} disabled={deleteWorkflow.isPending}>Cancel</Button><Button variant="danger" busy={deleteWorkflow.isPending} disabled={!deleting || deleteConfirmation !== "DELETE WORKFLOW"} onClick={() => deleting && deleteWorkflow.mutate({ workflowId: deleting.id, confirmation: "DELETE WORKFLOW" })}>Delete workflow</Button></div></div></Modal>
   </>;
 }
