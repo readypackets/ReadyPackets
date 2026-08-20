@@ -643,10 +643,16 @@ if [[ "$TLS_PROVIDER" == "letsencrypt" && "$HAVE_CERT" == "false" ]]; then
   log "Requesting a TLS certificate for ${DOMAIN}"
   apt-get install -y --no-install-recommends certbot >/dev/null
 
-  # The webroot plugin validates against the running HTTP-only site rather than
-  # rewriting the configuration, which keeps certificate issuance independent of
-  # whatever nginx configuration is in place.
+  # First use the normal webroot route with a test token served through the
+  # generated HTTP-only nginx site. If a host-level hidden-path guard, stale
+  # configuration, or proxy behavior blocks that path, use Certbot standalone
+  # mode as a bounded fallback rather than leaving a fresh portal HTTP-only.
   install -d -m 0755 /var/www/html/.well-known/acme-challenge
+  acme_probe_name="readypackets-local-${RANDOM}${RANDOM}"
+  acme_probe_value="ready-${RANDOM}${RANDOM}"
+  acme_probe_file="/var/www/html/.well-known/acme-challenge/${acme_probe_name}"
+  printf '%s' "$acme_probe_value" > "$acme_probe_file"
+  chmod 0644 "$acme_probe_file"
 
   certbot_domains=(--cert-name "$DOMAIN" -d "$DOMAIN")
   if [[ -n "$ALTERNATE_DOMAIN" ]]; then
@@ -657,16 +663,57 @@ if [[ "$TLS_PROVIDER" == "letsencrypt" && "$HAVE_CERT" == "false" ]]; then
   if [[ -d "/etc/letsencrypt/live/${DOMAIN}" ]]; then
     certbot_domains+=(--expand)
   fi
-  if certbot certonly --webroot --webroot-path /var/www/html \
-       --non-interactive --agree-tos --email "$CONTACT_EMAIL" \
-       "${certbot_domains[@]}"; then
+
+  webroot_ready="true"
+  acme_hostnames=("$DOMAIN")
+  [[ -n "$ALTERNATE_DOMAIN" ]] && acme_hostnames+=("$ALTERNATE_DOMAIN")
+  for acme_hostname in "${acme_hostnames[@]}"; do
+    if ! curl --fail --silent --show-error --max-time 5 \
+      --resolve "${acme_hostname}:80:127.0.0.1" \
+      "http://${acme_hostname}/.well-known/acme-challenge/${acme_probe_name}" \
+      | cmp -s - <(printf '%s' "$acme_probe_value"); then
+      webroot_ready="false"
+      warn "The local ACME challenge probe was not served for ${acme_hostname}; using standalone certificate validation."
+      break
+    fi
+  done
+  rm -f "$acme_probe_file"
+
+  certificate_issued="false"
+  if [[ "$webroot_ready" == "true" ]]; then
+    if certbot certonly --webroot --webroot-path /var/www/html \
+         --non-interactive --agree-tos --email "$CONTACT_EMAIL" \
+         "${certbot_domains[@]}"; then
+      certificate_issued="true"
+    else
+      warn "Webroot certificate validation was rejected; retrying through the standalone responder."
+    fi
+  fi
+
+  if [[ "$certificate_issued" == "false" ]]; then
+    nginx_was_active="false"
+    if systemctl is-active --quiet nginx; then
+      nginx_was_active="true"
+      systemctl stop nginx
+    fi
+    if certbot certonly --standalone \
+         --non-interactive --agree-tos --email "$CONTACT_EMAIL" \
+         "${certbot_domains[@]}"; then
+      certificate_issued="true"
+    fi
+    # Always restore the reverse proxy, even when Certbot rejects the fallback.
+    if [[ "$nginx_was_active" == "true" ]]; then
+      systemctl start nginx || die "Nginx did not restart after standalone certificate validation."
+    fi
+  fi
+
+  if [[ "$certificate_issued" == "true" ]]; then
     certificate_covers_public_names "$LE_CERTIFICATE" || die "The issued certificate does not cover every configured public hostname."
     write_tls_include "letsencrypt" "$LE_CERTIFICATE" "$LE_PRIVATE_KEY"
     HAVE_CERT="true"
   else
     warn "Certificate issuance failed. The site remains available over HTTP."
-    warn "Check that every configured hostname resolves to this host, then re-run:"
-    warn "  certbot certonly --webroot --webroot-path /var/www/html -d ${DOMAIN}${ALTERNATE_DOMAIN:+ -d ${ALTERNATE_DOMAIN}}"
+    warn "Check that every configured hostname resolves to this host and that any Cloudflare proxy/WAF allows HTTP-01 validation, then re-run:"
     warn "  ${BASH_SOURCE[0]} --domain ${DOMAIN} --skip-packages"
   fi
 fi
