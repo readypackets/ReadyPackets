@@ -3399,3 +3399,14 @@ Secret-inclusive publication is intentional, manual, and fail-closed. Each backu
 **Repair:** Updated `server/routers/tier3.ts` so `exportConfiguration` supplies `${input.passphrase}\n` with a real newline character. The server type check, bundle build, and Node syntax check passed. The server-only bundle was checksum-verified and deployed to production at `20260820064000`; the deployed bundle was inspected to confirm the template literal renders across an actual newline. The service restarted cleanly, local readiness returned `{"status":"ready"}`, and public health returned `{"status":"ok"}`. Retained rollback: `/opt/readypackets/rollback-20260820064000-config-export-newline/server.js`.
 
 **Security:** No export passphrase, configuration contents, encrypted bundle payload, or credential was printed during diagnosis. Existing failed-request artifacts remain protected as `root:readypackets` mode `0640`; temporary test bundles and diagnostic clients were removed. The administrator should refresh Backup Management and retry with a new 16+ character passphrase.
+
+
+## 2026-08-20 — Final configuration export filename validation repair
+
+**Follow-up report:** The portal export still failed after correcting the literal passphrase terminator. Live correlation showed each request generated a valid protected artifact such as `readypackets-config-<timestamp>.rpconfig`, proving the helper and encrypted file generation were successful.
+
+**Final root cause:** Both the server-side pre-read guard and `readProtectedExport` used an over-escaped JavaScript regular expression (`\\\\.rpconfig` in source), which required a literal backslash before the extension and rejected every valid `.rpconfig` filename. The helper response was therefore never accepted by the tRPC procedure despite valid output.
+
+**Repair:** Corrected both filename guards to use the intended escaped-dot regular expression (`\.rpconfig`). A focused regression test verified valid generated names are accepted while path traversal, suffix, and backslash variants remain rejected. TypeScript validation, server bundle generation, and Node syntax validation passed. The server-only bundle was checksum-verified and deployed to production at `20260820065000`; local readiness and public health passed. A metadata-only service-account test executed the full helper request, strict filename guard equivalent, protected file read/Base64 conversion, and cleanup lifecycle successfully. No configuration content, passphrase, or secret material was printed.
+
+**Rollback:** `/opt/readypackets/rollback-20260820065000-config-export-regex/server.js`.

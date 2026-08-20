@@ -582,7 +582,7 @@ async function availableBackupFiles() {
 }
 
 async function readProtectedExport(filename: string) {
-  if (!BACKUP_FILENAME.test(filename) && !/^readypackets-config-[0-9TZ-]+\\.rpconfig$/.test(filename)) throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid protected export filename." });
+  if (!BACKUP_FILENAME.test(filename) && !/^readypackets-config-[0-9TZ-]+\.rpconfig$/.test(filename)) throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid protected export filename." });
   const location = path.join(BACKUP_EXPORT_DIR, filename);
   const details = await stat(location);
   if (details.size > 50 * 1024 * 1024) throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "This protected export exceeds the 50 MB browser download limit. Retrieve it from the server console instead." });
@@ -648,7 +648,7 @@ const systemBackupsRouter = router({
   }),
   exportConfiguration: adminProcedure.input(z.object({ passphrase: z.string().min(16).max(512) })).mutation(async ({ ctx, input }) => {
     const filename = (await runBackupControl(["export-config"], `${input.passphrase}\n`)).trim();
-    if (!/^readypackets-config-[0-9TZ-]+\\.rpconfig$/.test(filename)) {
+    if (!/^readypackets-config-[0-9TZ-]+\.rpconfig$/.test(filename)) {
       throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The protected export helper did not return a valid encrypted configuration filename. Review the backup-control service log before retrying." });
     }
     const payload = await readProtectedExport(filename);
