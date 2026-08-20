@@ -3641,3 +3641,19 @@ The repair makes manual P101/P201 controls **webhook-only requeue controls**. Th
 ### 67.3 Validation and release status
 
 TypeScript validation passed, Vite client build passed, server bundle build passed, and the source diff passed whitespace validation. The change requires deployment to the reported self-hosted `readypackets.com` VPS; that machine is not the attached Cloud Computer and cannot be safely modified from this session without its connection. The exact supported deployment command will be included with the published GitHub commit.
+
+
+### 67.4 Confirmed self-hosted schema root cause and compatibility migration
+
+The administrator supplied the Security Centre detail for the P101/P201 failure. It confirms this is not an endpoint, SharePoint, or P101 payload failure. Both `integrations.phaseKickoffConfigs` and `integrations.manualPhaseKickoff` fail while selecting the phase configuration row from `phase_kickoff_configs`:
+
+```text
+SELECT id, phase, create_folders, folder_template, attach_placeholders,
+notify_customer, notify_webhooks, email_template_key, completion_percent,
+enabled, updated_at
+FROM phase_kickoff_configs
+```
+
+The self-hosted database therefore predates one or more columns expected by the current application. The current initial schema includes `folder_template` and `email_template_key`; `completion_percent` was added to the runtime model without a forward-only compatibility migration for older databases. The checked query shows all three are now required in the affected environment.
+
+New migration `0049_phase_kickoff_schema_compat.sql` safely examines `information_schema.columns` and adds missing `folder_template`, `email_template_key`, and `completion_percent` columns only when absent. It preserves existing rows and settings, does not recreate the table, and is idempotent for already-current environments. Applying the latest release migration will restore both the Phase Kickoff configuration screen and the shared P101/P201 manual queue action.
