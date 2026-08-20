@@ -3410,3 +3410,25 @@ Secret-inclusive publication is intentional, manual, and fail-closed. Each backu
 **Repair:** Corrected both filename guards to use the intended escaped-dot regular expression (`\.rpconfig`). A focused regression test verified valid generated names are accepted while path traversal, suffix, and backslash variants remain rejected. TypeScript validation, server bundle generation, and Node syntax validation passed. The server-only bundle was checksum-verified and deployed to production at `20260820065000`; local readiness and public health passed. A metadata-only service-account test executed the full helper request, strict filename guard equivalent, protected file read/Base64 conversion, and cleanup lifecycle successfully. No configuration content, passphrase, or secret material was printed.
 
 **Rollback:** `/opt/readypackets/rollback-20260820065000-config-export-regex/server.js`.
+
+## 2026-08-20 — Encrypted configuration restore workflow
+
+**User request:** “There is no option to restore the exported configuration.”
+
+**Delivered:** Added **Restore configuration** to **Admin → Backup management**. A fully authenticated administrator can upload one encrypted `.rpconfig` export (maximum 5 MB), enter the original export passphrase, verify the encrypted envelope and non-secret manifest before any change, review the restore scope, type `RESTORE CONFIGURATION`, and apply the verified configuration. The portal schedules a short restart after returning the success response.
+
+**Scope and safety:** The browser restore workflow intentionally imports only the standard secret-free configuration export. It restores supported platform settings/configuration tables while preserving target-server encryption keys, session secret, database credentials, integration secrets, customer data, orders, uploaded files, recordings, sessions, logs, and operating-system configuration. Source-server secrets remain a controlled new-server recovery concern through the separate encrypted private GitHub vault process.
+
+**Security controls:** Added an admin-only multipart endpoint at `/api/configuration-restore` with active-admin/MFA checks, same-origin CSRF enforcement, one-file/5 MB limits, random fixed-format import filenames, administrator-bound ten-minute preflight tokens, typed confirmation, audit/security logging, and a root-owned non-listable staging directory. The web service can write a random encrypted upload but cannot list or read the staging directory. Only the fixed-action root backup-control daemon can inspect or apply a bundle. The helper validates HMAC/checksums and removes staged bundles after application or expiry.
+
+**Implementation:** Added `server/http/configRestore.ts`; mounted it before tRPC in `server/app.ts`; added UI controls in `client/src/pages/admin/Backups.tsx`; extended `deploy/backup-control.sh` and `deploy/backup-control-daemon.mjs` with strict inspect/apply allowlists; added `--manifest-only` and `--no-restart` modes to `deploy/config-migration.sh`; provisioned `/var/lib/readypackets/storage/config-restore-imports` as `root:readypackets` mode `0730`; and documented operation in `docs/CONFIGURATION_RESTORE.md`.
+
+**Hardened extraction repair:** The root backup-control daemon intentionally lacks ownership-changing capabilities. `config-migration.sh` now extracts both configuration bundle layers with `tar --no-same-owner`, allowing validation inside the hardened helper without relaxing service capabilities.
+
+**Validation:** TypeScript, shell, daemon, server build, client build, and Node syntax checks passed. The existing catalogue test group remains unavailable in the sandbox because local MySQL is not running; independent non-database tests passed. Production metadata-only validation generated a normal encrypted export, staged it using the restore format, authenticated the envelope and manifest through the live root helper, confirmed `format=1`, `tables=15`, and `customer_data=false`, then removed both test artifacts. Public health returned `{"status":"ok"}`.
+
+**Deployment:** Server/client/helper restore controls deployed at `20260820072000`; capability-safe bundle extraction deployed at `20260820073500`. Rollback artifacts: `/opt/readypackets/rollback-20260820072000-configuration-restore/` and `/opt/readypackets/rollback-20260820073500-configuration-restore-tar-fix/`. Production release commit will be set after the final source commit is published.
+
+**Operator guidance:** Open Backup management, choose **Restore configuration**, select the encrypted `.rpconfig`, enter the export passphrase, verify the preflight summary, type `RESTORE CONFIGURATION`, and reload after the scheduled restart. No passphrase, configuration data, certificate, private key, or integration secret was exposed in validation or retained in this log.
+
+---

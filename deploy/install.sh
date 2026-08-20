@@ -879,6 +879,9 @@ install -d -m 0700 -o root -g root /var/lib/readypackets/platform-upgrades
 # but the archives remain root-owned and never become world-readable.
 install -d -m 0750 -o root -g readypackets /var/backups/readypackets
 install -d -m 0750 -o root -g readypackets /var/lib/readypackets/storage/admin-exports
+# The portal can create a random encrypted restore upload but cannot list or read
+# the root-controlled staging directory. The backup helper is the only reader.
+install -d -m 0730 -o root -g readypackets /var/lib/readypackets/storage/config-restore-imports
 systemctl daemon-reload
 systemctl enable --now readypackets-backup-control.service
 systemctl enable --now readypackets-certificate-control.service

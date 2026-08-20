@@ -224,7 +224,9 @@ open_bundle() {
   local input="$1" envelope extracted salt iv enc_key mac_key expected actual
   [[ -f "$input" ]] || die "Bundle not found: $input"
   envelope="$(mktemp -d)"; cleanup_paths+=("$envelope")
-  tar -C "$envelope" -xzf "$input"
+  # The backup-control daemon intentionally drops ownership-changing capabilities.
+  # Bundle validation needs only content, not archived root ownership metadata.
+  tar --no-same-owner -C "$envelope" -xzf "$input"
   [[ -f "$envelope/envelope.json" && -f "$envelope/payload.enc" && -f "$envelope/payload.hmac" ]] || die "Invalid migration bundle envelope."
   salt="$(grep -oE '"saltHex": "[0-9a-f]+"' "$envelope/envelope.json" | sed -E 's/.*"([0-9a-f]+)"/\1/')"
   iv="$(grep -oE '"ivHex": "[0-9a-f]+"' "$envelope/envelope.json" | sed -E 's/.*"([0-9a-f]+)"/\1/')"
@@ -234,13 +236,13 @@ open_bundle() {
   actual="$(openssl dgst -sha256 -mac HMAC -macopt "hexkey:${mac_key}" "$envelope/payload.enc" | awk '{print $NF}')"
   [[ "$actual" == "$expected" ]] || die "Bundle integrity verification failed. Wrong passphrase or modified file."
   extracted="$(mktemp -d)"; cleanup_paths+=("$extracted")
-  openssl enc -d -aes-256-cbc -K "$enc_key" -iv "$iv" -nosalt -in "$envelope/payload.enc" | tar -C "$extracted" -xzf -
+  openssl enc -d -aes-256-cbc -K "$enc_key" -iv "$iv" -nosalt -in "$envelope/payload.enc" | tar --no-same-owner -C "$extracted" -xzf -
   [[ -f "$extracted/manifest.json" && -f "$extracted/portal.env" && -f "$extracted/configuration.sql" && -f "$extracted/contents.sha256" ]] || die "Decrypted bundle contents are incomplete."
   (cd "$extracted" && sha256sum -c contents.sha256) >/dev/null || die "Decrypted contents checksum failed."
   EXTRACTED_DIR="$extracted"
 }
 
-inspect_bundle() { open_bundle "$INPUT"; log "Bundle integrity verified. Non-secret manifest:"; cat "$EXTRACTED_DIR/manifest.json"; }
+inspect_bundle() { open_bundle "$INPUT"; if [[ "$MANIFEST_ONLY" == "true" ]]; then cat "$EXTRACTED_DIR/manifest.json"; else log "Bundle integrity verified. Non-secret manifest:"; cat "$EXTRACTED_DIR/manifest.json"; fi; }
 
 import_bundle() {
   [[ "$REPLACE_CONFIG" == "true" ]] || die "Import requires --replace-config."
@@ -285,14 +287,16 @@ import_bundle() {
     log "Non-secret configuration restored; target environment and secret settings were preserved."
   fi
   log "Review target-specific public URLs and network destinations before use."
-  if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files readypackets.service >/dev/null 2>&1; then
+  if [[ "$NO_RESTART" == "true" ]]; then
+    log "readypackets restart deferred to the protected caller."
+  elif command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files readypackets.service >/dev/null 2>&1; then
     systemctl restart readypackets
     log "readypackets service restarted."
   fi
 }
 
 ACTION="${1:-}"; shift || true
-OUTPUT=""; INPUT=""; PASSPHRASE_FILE=""; REPLACE_CONFIG="false"; APPLY_ENV="false"; DRY_RUN="false"; FORCE="false"; INCLUDE_SECRETS="false"
+OUTPUT=""; INPUT=""; PASSPHRASE_FILE=""; REPLACE_CONFIG="false"; APPLY_ENV="false"; DRY_RUN="false"; FORCE="false"; INCLUDE_SECRETS="false"; NO_RESTART="false"; MANIFEST_ONLY="false"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --output) OUTPUT="${2:-}"; shift 2 ;;
@@ -303,6 +307,8 @@ while [[ $# -gt 0 ]]; do
     --dry-run) DRY_RUN="true"; shift ;;
     --force) FORCE="true"; shift ;;
     --include-secrets) INCLUDE_SECRETS="true"; shift ;;
+    --no-restart) NO_RESTART="true"; shift ;;
+    --manifest-only) MANIFEST_ONLY="true"; shift ;;
     -h|--help|help) usage; exit 0 ;;
     *) die "Unknown option: $1" ;;
   esac

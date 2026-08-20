@@ -7,6 +7,7 @@ umask 077
 APP_ROOT="${RP_APP_ROOT:-/opt/readypackets}"
 BACKUP_DIR="${RP_BACKUP_DIR:-/var/backups/readypackets}"
 EXPORT_DIR="${RP_EXPORT_DIR:-/var/lib/readypackets/storage/admin-exports}"
+CONFIG_IMPORT_DIR="${RP_CONFIG_IMPORT_DIR:-/var/lib/readypackets/storage/config-restore-imports}"
 TARGETS_FILE="${RP_BACKUP_SYNC_TARGETS_FILE:-/etc/readypackets/backup-sync-targets.conf}"
 RESTORE_STATUS_FILE="${RP_BACKUP_RESTORE_STATUS_FILE:-/var/lib/readypackets/backup-restore-status.conf}"
 TIMER_UNIT="readypackets-backup.timer"
@@ -17,6 +18,7 @@ command -v systemctl >/dev/null || { echo "systemctl is unavailable" >&2; exit 1
 # The daemon runs as root with the portal service group. New protected files use
 # restrictive modes; do not call chown inside the hardened daemon namespace.
 install -d -m 0750 "$BACKUP_DIR" "$EXPORT_DIR"
+install -d -m 0730 -o root -g readypackets "$CONFIG_IMPORT_DIR"
 install -d -m 0700 "$(dirname "$RESTORE_STATUS_FILE")"
 
 safe_name() {
@@ -25,6 +27,43 @@ safe_name() {
 
 safe_config_export_name() {
   [[ "$1" =~ ^readypackets-config-github-secrets-[0-9TZ-]+\.rpconfig$ ]] || { echo "Invalid protected configuration export filename" >&2; exit 1; }
+}
+
+safe_config_import_name() {
+  [[ "$1" =~ ^rpconfig-import-[a-f0-9]{32}\.rpconfig$ ]] || { echo "Invalid protected configuration import filename" >&2; exit 1; }
+}
+
+read_config_import_passphrase() {
+  local passphrase
+  IFS= read -r passphrase || true
+  [[ ${#passphrase} -ge 16 && ${#passphrase} -le 512 && "$passphrase" != *$'\n'* && "$passphrase" != *$'\r'* ]] || { echo "Configuration restore passphrase is invalid" >&2; exit 1; }
+  printf '%s' "$passphrase"
+}
+
+inspect_config_import() {
+  local filename="$1" passphrase passfile
+  safe_config_import_name "$filename"
+  [[ -f "$CONFIG_IMPORT_DIR/$filename" ]] || { echo "Configuration restore upload was not found or has expired" >&2; exit 1; }
+  passphrase="$(read_config_import_passphrase)"
+  passfile="$(mktemp)"; trap 'rm -f "$passfile"' RETURN
+  printf '%s\n' "$passphrase" > "$passfile"; chmod 0600 "$passfile"
+  RP_APP_ROOT="$APP_ROOT" bash "$APP_ROOT/deploy/config-migration.sh" inspect --input "$CONFIG_IMPORT_DIR/$filename" --passphrase-file "$passfile" --manifest-only
+}
+
+restore_config_import() {
+  local filename="$1" passphrase confirmation passfile restart_unit
+  safe_config_import_name "$filename"
+  [[ -f "$CONFIG_IMPORT_DIR/$filename" ]] || { echo "Configuration restore upload was not found or has expired" >&2; exit 1; }
+  IFS= read -r passphrase || true
+  IFS= read -r confirmation || true
+  [[ ${#passphrase} -ge 16 && ${#passphrase} -le 512 && "$passphrase" != *$'\n'* && "$passphrase" != *$'\r'* ]] || { echo "Configuration restore passphrase is invalid" >&2; exit 1; }
+  [[ "$confirmation" == "RESTORE CONFIGURATION" ]] || { echo "Type RESTORE CONFIGURATION to confirm the settings restore" >&2; exit 1; }
+  passfile="$(mktemp)"; trap 'rm -f "$passfile" "$CONFIG_IMPORT_DIR/$filename"' RETURN
+  printf '%s\n' "$passphrase" > "$passfile"; chmod 0600 "$passfile"
+  RP_APP_ROOT="$APP_ROOT" bash "$APP_ROOT/deploy/config-migration.sh" import --input "$CONFIG_IMPORT_DIR/$filename" --passphrase-file "$passfile" --replace-config --force --no-restart >/dev/null
+  restart_unit="readypackets-config-restore-$(date -u +%Y%m%dT%H%M%SZ)"
+  systemd-run --unit "$restart_unit" --collect --on-active=5s /bin/systemctl restart readypackets >/dev/null
+  printf 'unit=%s\nstatus=applied\n' "$restart_unit"
 }
 
 archive_path() {
@@ -250,6 +289,12 @@ EOF
   restore-status)
     restore_status
     ;;
+  inspect-config)
+    inspect_config_import "${2:-}"
+    ;;
+  restore-config)
+    restore_config_import "${2:-}"
+    ;;
   export-config|export-config-secrets)
     passphrase="$(head -n 1 | tr -d '\r\n')"
     [[ ${#passphrase} -ge 16 ]] || { echo "Configuration export passphrase must be at least 16 characters" >&2; exit 1; }
@@ -278,7 +323,7 @@ EOF
     basename "$output"
     ;;
   *)
-    echo "Usage: $0 {start|status|schedule HH:MM|configure-remote|test-target DESTINATION|configure-targets|verify-archive FILENAME|start-restore FILENAME|restore-status|export-config|export-config-secrets|delete-export FILENAME|prepare-download FILENAME}" >&2
+    echo "Usage: $0 {start|status|schedule HH:MM|configure-remote|test-target DESTINATION|configure-targets|verify-archive FILENAME|start-restore FILENAME|restore-status|inspect-config FILENAME|restore-config FILENAME|export-config|export-config-secrets|delete-export FILENAME|prepare-download FILENAME}" >&2
     exit 2
     ;;
 esac
