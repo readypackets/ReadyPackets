@@ -12,6 +12,7 @@ import path from "node:path";
 import process from "node:process";
 import mysql from "mysql2/promise";
 import { env } from "../server/config/env.js";
+import { assertCriticalSchemaContract, schemaContractSummary } from "./schemaContract.js";
 
 const MIGRATIONS_DIR = path.resolve(process.cwd(), "drizzle", "migrations");
 
@@ -181,11 +182,12 @@ async function main(): Promise<void> {
     }
   }
 
+  await assertCriticalSchemaContract(connection);
   await connection.end();
   console.log(
     appliedCount === 0
-      ? "Database is already up to date."
-      : `Applied ${appliedCount} migration(s).`,
+      ? `Database is already up to date; ${schemaContractSummary()}.`
+      : `Applied ${appliedCount} migration(s); ${schemaContractSummary()}.`,
   );
 }
 

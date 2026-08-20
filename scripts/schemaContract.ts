@@ -1,0 +1,159 @@
+import type { Connection, RowDataPacket } from "mysql2/promise";
+
+/**
+ * Tables and columns that must exist before the portal can serve order workflow,
+ * Phase Kickoff, configuration restore, backup, and outbound integration routes.
+ * This is deliberately a small operational contract rather than a duplicate of
+ * the complete Drizzle schema: it turns a partial or legacy upgrade into a clear
+ * startup failure instead of a later generic administrator UI error.
+ */
+export const criticalSchemaContract: Readonly<Record<string, readonly string[]>> = {
+  phase_kickoff_configs: [
+    "id",
+    "phase",
+    "create_folders",
+    "folder_template",
+    "attach_placeholders",
+    "notify_customer",
+    "notify_webhooks",
+    "email_template_key",
+    "completion_percent",
+    "enabled",
+    "updated_at",
+  ],
+  phase_jobs: [
+    "id",
+    "order_id",
+    "phase",
+    "job_type",
+    "status",
+    "attempts",
+    "last_error",
+    "run_after",
+    "completed_at",
+    "created_at",
+  ],
+  webhook_deliveries: [
+    "id",
+    "endpoint_id",
+    "order_id",
+    "order_number",
+    "customer_name",
+    "event_type",
+    "payload",
+    "status",
+    "response_code",
+    "response_detail",
+    "attempts",
+    "last_error",
+    "run_after",
+    "delivered_at",
+    "created_at",
+  ],
+  email_automations: [
+    "id",
+    "name",
+    "trigger_event",
+    "template_key",
+    "delay_minutes",
+    "enabled",
+    "run_count",
+    "created_at",
+    "updated_at",
+  ],
+  system_backups: [
+    "id",
+    "filename",
+    "size_bytes",
+    "backup_type",
+    "status",
+    "schema_version",
+    "checksum",
+    "storage_path",
+    "triggered_by",
+    "triggered_by_user_id",
+    "error",
+    "created_at",
+  ],
+  outbound_connections: [
+    "id",
+    "name",
+    "connection_type",
+    "base_url",
+    "auth_type",
+    "enabled",
+    "last_tested_at",
+    "last_test_ok",
+    "created_at",
+  ],
+  outbound_call_logs: [
+    "id",
+    "connection_id",
+    "method",
+    "url",
+    "status_code",
+    "latency_ms",
+    "error",
+    "triggered_by",
+    "created_at",
+  ],
+};
+
+export type SchemaContractConnection = Pick<Connection, "query">;
+
+type ColumnRow = RowDataPacket & {
+  table_name: string;
+  column_name: string;
+};
+
+/**
+ * Throws a deterministic, actionable error if an old/partial database lacks a
+ * critical table or column. Migration callers must execute this after applying
+ * all forward-only migrations and before starting the application process.
+ */
+export async function assertCriticalSchemaContract(
+  connection: SchemaContractConnection,
+): Promise<void> {
+  const tables = Object.keys(criticalSchemaContract);
+  const placeholders = tables.map(() => "?").join(", ");
+  const [rows] = await connection.query<ColumnRow[]>(
+    `SELECT table_name, column_name
+       FROM information_schema.columns
+      WHERE table_schema = DATABASE()
+        AND table_name IN (${placeholders})`,
+    tables,
+  );
+
+  const available = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const columns = available.get(row.table_name) ?? new Set<string>();
+    columns.add(row.column_name);
+    available.set(row.table_name, columns);
+  }
+
+  const missing: string[] = [];
+  for (const [table, columns] of Object.entries(criticalSchemaContract)) {
+    const availableColumns = available.get(table);
+    if (!availableColumns) {
+      missing.push(`${table} (table missing)`);
+      continue;
+    }
+    for (const column of columns) {
+      if (!availableColumns.has(column)) missing.push(`${table}.${column}`);
+    }
+  }
+
+  if (missing.length > 0) {
+    throw new Error(
+      "Database schema contract is incomplete: " +
+        `${missing.join(", ")}. ` +
+        "Do not start the portal against this partial schema. Ensure the latest source is deployed and re-run deploy/install.sh so all forward-only migrations apply.",
+    );
+  }
+}
+
+export function schemaContractSummary(): string {
+  return `${Object.keys(criticalSchemaContract).length} critical tables verified`;
+}
+
+export const __testing = { criticalSchemaContract };
