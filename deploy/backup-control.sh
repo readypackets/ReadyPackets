@@ -19,7 +19,17 @@ command -v systemctl >/dev/null || { echo "systemctl is unavailable" >&2; exit 1
 # The daemon runs as root with the portal service group. New protected files use
 # restrictive modes; do not call chown inside the hardened daemon namespace.
 install -d -m 0750 "$BACKUP_DIR" "$EXPORT_DIR"
-install -d -m 0730 -o root -g readypackets "$CONFIG_IMPORT_DIR" "$BACKUP_IMPORT_DIR"
+# These two staging directories are created by the root installer. The daemon
+# intentionally runs without CAP_CHOWN, so it must never attempt an ownership
+# change on every browser request. The service group needs write/traverse but
+# not directory listing access (0730).
+for restore_dir in "$CONFIG_IMPORT_DIR" "$BACKUP_IMPORT_DIR"; do
+  [[ -d "$restore_dir" ]] || { echo "Required restore staging directory is missing: $restore_dir" >&2; exit 1; }
+  [[ "$(stat -c '%U:%G' "$restore_dir")" == "root:readypackets" && "$(stat -c '%a' "$restore_dir")" == "730" ]] || {
+    echo "Restore staging directory has unsafe ownership or permissions: $restore_dir" >&2
+    exit 1
+  }
+done
 install -d -m 0700 "$(dirname "$RESTORE_STATUS_FILE")"
 
 safe_name() {

@@ -3460,3 +3460,13 @@ Secret-inclusive publication is intentional, manual, and fail-closed. Each backu
 **Production deployment:** Server/client, backup-control helper/daemon, restore scripts, migration `0046`, policy source package, and required staging path were deployed with retained rollback assets at `/opt/readypackets/rollback-20260820083000-policy-backup-restore/`. MySQL migration `0046` was applied; both `readypackets` and `readypackets-backup-control` services are active and portal readiness passed. Release publication to GitHub is pending commit creation at the time of this entry.
 
 **Legal notice:** The imported policy documents are working operational imports, not legal advice; legal counsel should review policy language before reliance.
+
+## 2026-08-20 — Fresh-server configuration restore staging repair
+
+**Reported behavior:** On the newly installed `www.readypackets.com` environment, the encrypted `.rpconfig` configuration restore preflight failed before passphrase verification. The browser received an `install: failed to chown ... Operation not permitted` error for both configuration and backup restore import staging directories.
+
+**Root cause:** The root-owned `readypackets-backup-control` daemon is intentionally sandboxed without `CAP_CHOWN`. Its helper script nevertheless attempted `install -d -o root -g readypackets` on every restore request. On a correctly provisioned fresh server, this redundant ownership mutation was blocked by the hardening boundary even though the directories already had the required `root:readypackets` ownership and `0730` mode.
+
+**Repair:** `deploy/backup-control.sh` now treats configuration and full-backup import directories as installer-provisioned security boundaries. It verifies that each exists with exactly `root:readypackets` and `0730`, then refuses an unsafe/missing directory rather than attempting to mutate ownership at request time. The native installer continues to create the directories as root. The portal service account has write/traverse access but cannot list directory contents.
+
+**Validation:** Shell syntax passed. Production helper was installed and restarted. Both staging directories report `root:readypackets 730`. A service-account test successfully created and removed a random contract-conforming configuration-import filename within the restrictive directory; no archive/configuration data or passphrase was exposed. A rollback copy of the prior helper is retained under `/opt/readypackets/rollback-20260820083000-policy-backup-restore/backup-control-before-staging-fix.sh`.
