@@ -839,6 +839,7 @@ export const policyDocuments = mysqlTable(
     slug: varchar("slug", { length: 64 }).notNull(),
     title: varchar("title", { length: 190 }).notNull(),
     requiresAcceptance: boolean("requires_acceptance").notNull().default(false),
+    isVisible: boolean("is_visible").notNull().default(true),
     publicRoute: varchar("public_route", { length: 96 }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

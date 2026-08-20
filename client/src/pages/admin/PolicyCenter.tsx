@@ -54,6 +54,7 @@ type PolicyDoc = {
   slug: string;
   title: string;
   requiresAcceptance: boolean;
+  isVisible: boolean;
   publicRoute: string | null;
   createdAt: Date | string;
   updatedAt: Date | string;
@@ -141,6 +142,16 @@ export function PolicyCenterPage() {
     },
     onError(err) {
       toast.error("Could not update policy requirement", errorMessage(err));
+    },
+  });
+
+  const updateVisibility = trpc.admin.updatePolicyVisibility.useMutation({
+    onSuccess(_result, variables) {
+      toast.success(variables.isVisible ? "Policy is now visible" : "Policy is now hidden", variables.isVisible ? "The policy can appear on public and customer policy routes." : "The policy is hidden from general browsing. Required acceptance remains available in the compliance flow.");
+      void utils.admin.policies.invalidate();
+    },
+    onError(err) {
+      toast.error("Could not update policy visibility", errorMessage(err));
     },
   });
 
@@ -274,6 +285,23 @@ export function PolicyCenterPage() {
             onClick={() => updateRequirement.mutate({ policyId: doc.id, requiresAcceptance: !doc.requiresAcceptance })}
           >
             Make {doc.requiresAcceptance ? "optional" : "required"}
+          </Button>
+        </div>
+      ),
+    },
+    {
+      key: "isVisible",
+      header: "Visibility",
+      cell: (doc) => (
+        <div className="flex items-center gap-2">
+          {doc.isVisible ? <Badge tone="teal">Visible</Badge> : <Badge tone="neutral">Hidden</Badge>}
+          <Button
+            size="sm"
+            variant="ghost"
+            busy={updateVisibility.isPending && updateVisibility.variables?.policyId === doc.id}
+            onClick={() => updateVisibility.mutate({ policyId: doc.id, isVisible: !doc.isVisible })}
+          >
+            Make {doc.isVisible ? "hidden" : "visible"}
           </Button>
         </div>
       ),

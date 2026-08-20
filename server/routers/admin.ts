@@ -2624,6 +2624,7 @@ export const adminRouter = router({
         slug: z.string().trim().min(1).max(64).regex(/^[a-z0-9-]+$/, "Slug must be lowercase letters, numbers, and hyphens only."),
         title: z.string().trim().min(1).max(190),
         requiresAcceptance: z.boolean().default(true),
+        isVisible: z.boolean().default(true),
         publicRoute: z.string().trim().max(96).optional(),
       }),
     )
@@ -2632,6 +2633,7 @@ export const adminRouter = router({
         slug: input.slug,
         title: input.title,
         requiresAcceptance: input.requiresAcceptance,
+        isVisible: input.isVisible,
         publicRoute: input.publicRoute ?? null,
       });
       void recordActivity({
@@ -2664,6 +2666,24 @@ export const adminRouter = router({
           ? "Administrator marked policy acceptance as required"
           : "Administrator marked policy acceptance as optional",
         changes: { requiresAcceptance: input.requiresAcceptance },
+        ipAddress: ctx.clientIp,
+      });
+      return { ok: true as const };
+    }),
+
+  /** Change whether a policy is visible on public/customer policy routes without changing its acceptance status. */
+  updatePolicyVisibility: adminProcedure
+    .input(z.object({ policyId: z.number().int().positive(), isVisible: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      await db.update(policyDocuments).set({ isVisible: input.isVisible }).where(eq(policyDocuments.id, input.policyId));
+      void recordActivity({
+        actorUserId: ctx.session.user.id,
+        actorRole: "admin",
+        action: "policy.visibility_updated",
+        entityType: "policy_document",
+        entityId: input.policyId,
+        summary: input.isVisible ? "Administrator made policy visible" : "Administrator hid policy from customer and public routes",
+        changes: { isVisible: input.isVisible },
         ipAddress: ctx.clientIp,
       });
       return { ok: true as const };

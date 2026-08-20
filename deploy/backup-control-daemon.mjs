@@ -21,6 +21,7 @@ const SAFE_TARGET = /^[A-Za-z0-9._-]+:.+$/;
 const SAFE_FILENAME = /^readypackets-[0-9TZ-]+\.tar\.gz(?:\.(?:age|gpg))?$/;
 const SAFE_CONFIG_EXPORT = /^readypackets-config-github-secrets-[0-9TZ-]+\.rpconfig$/;
 const SAFE_CONFIG_IMPORT = /^rpconfig-import-[a-f0-9]{32}\.rpconfig$/;
+const SAFE_BACKUP_IMPORT = /^rpbackup-import-[a-f0-9]{32}\.tar\.gz$/;
 
 if (process.getuid?.() !== 0) throw new Error("backup-control daemon must run as root");
 
@@ -48,6 +49,10 @@ function validateRequest(value) {
       if (args.length !== 1 || !SAFE_TARGET.test(args[0]) || stdin) deny("Invalid cloud target."); break;
     case "configure-targets": case "configure-remote": case "export-config": case "export-config-secrets":
       if (args.length !== 0 || !stdin) deny("This action requires a configuration payload."); break;
+    case "inspect-archive-import":
+      if (args.length !== 1 || !SAFE_BACKUP_IMPORT.test(args[0]) || stdin) deny("Invalid uploaded backup inspection request."); break;
+    case "start-restore-import":
+      if (args.length !== 1 || !SAFE_BACKUP_IMPORT.test(args[0]) || stdin !== "RESTORE BACKUP\n") deny("Invalid uploaded backup restore confirmation."); break;
     case "inspect-config":
       if (args.length !== 1 || !SAFE_CONFIG_IMPORT.test(args[0]) || !stdin || /\r|\n/.test(stdin.slice(0, -1)) || !stdin.endsWith("\n")) deny("Invalid configuration restore inspection request."); break;
     case "restore-config":

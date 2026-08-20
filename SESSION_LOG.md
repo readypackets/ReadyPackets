@@ -3448,3 +3448,15 @@ Secret-inclusive publication is intentional, manual, and fail-closed. Each backu
 **Production deployment:** Server/client deployment at `20260820074500`; rollback assets retained at `/opt/readypackets/rollback-20260820074500-cookie-management/`. Source commit pending final publication.
 
 ---
+
+## 2026-08-20 — Policy Center visibility and full-backup restore release
+
+**User-approved customer-facing policy publication:** The supplied policy package was reviewed and the user explicitly authorized publishing the listed customer-facing versions. The production publisher created the following required current versions while retaining all prior versions for history and acceptance audit: Privacy Policy `2026.08.20-consulting`, Refund Policy `2026.08.20-consulting`, Liability Disclaimer `2026.08.20-consulting`, and MNDA `1.1`. The supplied Terms document was retained as a GitHub-tracked draft because it contains unresolved date, governing-law, and jurisdiction placeholders and was not silently published. The policy publisher's `--dry-run` mode was corrected so future previews cannot mutate data.
+
+**Policy visibility controls:** Migration `0046_policy_visibility.sql` adds `policy_documents.is_visible` with a safe default of visible for existing policies. Admin → Policy Center now presents independent Acceptance and Visibility controls. Hiding a policy removes it from public policy routes and listings, while a required policy remains available through the compliance acceptance flow so customers cannot be deadlocked. Every visibility change is audited as `policy.visibility_updated`.
+
+**Full-backup restore:** Admin → Backup management now supports upload, preflight, and restored execution of a verified full `readypackets-*.tar.gz` archive. The workflow requires administrator authorization, CSRF, a 50 MB upload cap, strict archive member/path/link checks, `SHA256SUMS`, manifest checks, a ten-minute account-bound preflight token, exact `RESTORE FULL BACKUP` confirmation, audit events, and a root-controlled staging directory. The root backup helper accepts only fixed inspection/restore actions. The archive extraction path is hardened against unsafe ownership, path, and link preservation. A synthetic archive was preflighted successfully through the deployed service-account socket path; no customer or production data was restored during validation. `docs/FULL_BACKUP_RESTORE.md` documents the workflow and its distinction from secret-free `.rpconfig` configuration restore.
+
+**Production deployment:** Server/client, backup-control helper/daemon, restore scripts, migration `0046`, policy source package, and required staging path were deployed with retained rollback assets at `/opt/readypackets/rollback-20260820083000-policy-backup-restore/`. MySQL migration `0046` was applied; both `readypackets` and `readypackets-backup-control` services are active and portal readiness passed. Release publication to GitHub is pending commit creation at the time of this entry.
+
+**Legal notice:** The imported policy documents are working operational imports, not legal advice; legal counsel should review policy language before reliance.

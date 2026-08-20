@@ -202,7 +202,7 @@ export const publicRouter = router({
         })
         .from(policyDocuments)
         .innerJoin(policyVersions, eq(policyVersions.policyId, policyDocuments.id))
-        .where(and(eq(policyDocuments.slug, input.slug), eq(policyVersions.published, true)))
+        .where(and(eq(policyDocuments.slug, input.slug), eq(policyDocuments.isVisible, true), eq(policyVersions.published, true)))
         .orderBy(desc(policyVersions.id))
         .limit(1);
 
@@ -219,6 +219,7 @@ export const publicRouter = router({
         publicRoute: policyDocuments.publicRoute,
       })
       .from(policyDocuments)
+      .where(eq(policyDocuments.isVisible, true))
       .orderBy(policyDocuments.id);
   }),
 

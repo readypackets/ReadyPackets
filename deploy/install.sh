@@ -882,6 +882,7 @@ install -d -m 0750 -o root -g readypackets /var/lib/readypackets/storage/admin-e
 # The portal can create a random encrypted restore upload but cannot list or read
 # the root-controlled staging directory. The backup helper is the only reader.
 install -d -m 0730 -o root -g readypackets /var/lib/readypackets/storage/config-restore-imports
+install -d -m 0730 -o root -g readypackets /var/lib/readypackets/storage/backup-restore-imports
 systemctl daemon-reload
 systemctl enable --now readypackets-backup-control.service
 systemctl enable --now readypackets-certificate-control.service

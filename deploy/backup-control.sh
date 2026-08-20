@@ -8,6 +8,7 @@ APP_ROOT="${RP_APP_ROOT:-/opt/readypackets}"
 BACKUP_DIR="${RP_BACKUP_DIR:-/var/backups/readypackets}"
 EXPORT_DIR="${RP_EXPORT_DIR:-/var/lib/readypackets/storage/admin-exports}"
 CONFIG_IMPORT_DIR="${RP_CONFIG_IMPORT_DIR:-/var/lib/readypackets/storage/config-restore-imports}"
+BACKUP_IMPORT_DIR="${RP_BACKUP_IMPORT_DIR:-/var/lib/readypackets/storage/backup-restore-imports}"
 TARGETS_FILE="${RP_BACKUP_SYNC_TARGETS_FILE:-/etc/readypackets/backup-sync-targets.conf}"
 RESTORE_STATUS_FILE="${RP_BACKUP_RESTORE_STATUS_FILE:-/var/lib/readypackets/backup-restore-status.conf}"
 TIMER_UNIT="readypackets-backup.timer"
@@ -18,7 +19,7 @@ command -v systemctl >/dev/null || { echo "systemctl is unavailable" >&2; exit 1
 # The daemon runs as root with the portal service group. New protected files use
 # restrictive modes; do not call chown inside the hardened daemon namespace.
 install -d -m 0750 "$BACKUP_DIR" "$EXPORT_DIR"
-install -d -m 0730 -o root -g readypackets "$CONFIG_IMPORT_DIR"
+install -d -m 0730 -o root -g readypackets "$CONFIG_IMPORT_DIR" "$BACKUP_IMPORT_DIR"
 install -d -m 0700 "$(dirname "$RESTORE_STATUS_FILE")"
 
 safe_name() {
@@ -31,6 +32,10 @@ safe_config_export_name() {
 
 safe_config_import_name() {
   [[ "$1" =~ ^rpconfig-import-[a-f0-9]{32}\.rpconfig$ ]] || { echo "Invalid protected configuration import filename" >&2; exit 1; }
+}
+
+safe_backup_import_name() {
+  [[ "$1" =~ ^rpbackup-import-[a-f0-9]{32}\.tar\.gz$ ]] || { echo "Invalid protected backup import filename" >&2; exit 1; }
 }
 
 read_config_import_passphrase() {
@@ -75,15 +80,27 @@ archive_path() {
 
 json_escape() { node -e 'process.stdout.write(JSON.stringify(process.argv[1]))' "$1"; }
 
-verify_archive() {
-  local filename="$1" source staging
-  source="$(archive_path "$filename")"
+validate_archive_members() {
+  local source="$1" member normalized type
+  while IFS= read -r member; do
+    normalized="${member#./}"
+    [[ -n "$normalized" ]] || continue
+    [[ "$normalized" =~ ^(database\.sql|MANIFEST\.txt|SHA256SUMS|storage\.tar|portal\.env)$ ]] || { echo "Archive contains an unsupported member" >&2; return 1; }
+  done < <(tar -tzf "$source")
+  while IFS= read -r type; do
+    [[ "$type" == "-" || "$type" == "d" ]] || { echo "Archive contains links or unsupported member types" >&2; return 1; }
+  done < <(tar -tvzf "$source" | awk '{print substr($1,1,1)}')
+}
+
+verify_archive_source() {
+  local source="$1" filename="$2" staging
   [[ "$source" == *.tar.gz ]] || { echo "Browser verification supports unencrypted .tar.gz archives. Verify encrypted archives through the protected host restore procedure." >&2; exit 1; }
+  validate_archive_members "$source"
   staging="$(mktemp -d /tmp/rp-archive-check.XXXXXXXX)"
-  trap 'rm -rf "$staging"' RETURN
+  trap "rm -rf -- '$staging'" RETURN
   # Verification needs only content and checksums; preserving root ownership is
   # unnecessary and prohibited by the daemon's hardened syscall policy.
-  tar --no-same-owner -C "$staging" -xzf "$source"
+  tar --no-same-owner --no-same-permissions -C "$staging" -xzf "$source"
   [[ -s "$staging/database.sql" ]] || { echo "Archive is missing database.sql" >&2; exit 1; }
   [[ -f "$staging/MANIFEST.txt" ]] || { echo "Archive is missing MANIFEST.txt" >&2; exit 1; }
   if [[ -f "$staging/SHA256SUMS" ]]; then
@@ -94,6 +111,43 @@ verify_archive() {
   [[ "$dump_bytes" -gt 1024 ]] || { echo "Archive database dump is suspiciously small" >&2; exit 1; }
   has_files="false"; [[ -f "$staging/storage.tar" ]] && has_files="true"
   printf 'verified=true\narchive=%s\ndatabase_bytes=%s\nincludes_files=%s\n' "$filename" "$dump_bytes" "$has_files"
+}
+
+verify_archive() {
+  local filename="$1"
+  verify_archive_source "$(archive_path "$filename")" "$filename"
+}
+
+inspect_archive_import() {
+  local filename="$1" source
+  safe_backup_import_name "$filename"
+  source="$BACKUP_IMPORT_DIR/$filename"
+  [[ -f "$source" ]] || { echo "Backup restore upload was not found or has expired" >&2; exit 1; }
+  verify_archive_source "$source" "$filename"
+}
+
+start_restore_import() {
+  local filename="$1" source confirmation destination unit
+  safe_backup_import_name "$filename"
+  source="$BACKUP_IMPORT_DIR/$filename"
+  [[ -f "$source" ]] || { echo "Backup restore upload was not found or has expired" >&2; exit 1; }
+  confirmation="$(head -n 1 | tr -d '\r\n')"
+  [[ "$confirmation" == "RESTORE BACKUP" ]] || { echo "Type RESTORE BACKUP to confirm production recovery." >&2; exit 1; }
+  verify_archive_source "$source" "$filename" >/dev/null
+  destination="$BACKUP_DIR/readypackets-$(date -u +%Y%m%dT%H%M%SZ)-$(od -An -N3 -tu4 /dev/urandom | tr -d ' ').tar.gz"
+  install -m 0600 -o root -g root "$source" "$destination"
+  rm -f -- "$source"
+  unit="readypackets-restore-$(date -u +%Y%m%dT%H%M%SZ)"
+  cat > "$RESTORE_STATUS_FILE" <<EOF
+unit=$unit
+archive=$(basename "$destination")
+mode=production
+started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+  chmod 0600 "$RESTORE_STATUS_FILE"
+  systemd-run --unit "$unit" --collect --property=Type=oneshot --property=Nice=15 --property=IOSchedulingClass=idle \
+    "$APP_ROOT/deploy/restore.sh" --archive "$destination" --yes >/dev/null
+  printf 'unit=%s\narchive=%s\n' "$unit" "$(basename "$destination")"
 }
 
 write_remote_config() {
@@ -288,6 +342,12 @@ EOF
     ;;
   restore-status)
     restore_status
+    ;;
+  inspect-archive-import)
+    inspect_archive_import "${2:-}"
+    ;;
+  start-restore-import)
+    start_restore_import "${2:-}"
     ;;
   inspect-config)
     inspect_config_import "${2:-}"

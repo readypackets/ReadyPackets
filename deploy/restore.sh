@@ -60,25 +60,51 @@ trap 'rm -rf "$STAGING"' EXIT INT TERM
 # ---------------------------------------------------------------------------
 # Unpack
 # ---------------------------------------------------------------------------
+validate_backup_archive() {
+  local source="$1" member normalized member_type
+  while IFS= read -r member; do
+    normalized="${member#./}"
+    [[ -n "$normalized" ]] || continue
+    [[ "$normalized" =~ ^(database\.sql|MANIFEST\.txt|SHA256SUMS|storage\.tar|portal\.env)$ ]] || die "Archive contains an unsupported member."
+  done < <(tar -tzf "$source")
+  while IFS= read -r member_type; do
+    [[ "$member_type" == "-" || "$member_type" == "d" ]] || die "Archive contains links or unsupported member types."
+  done < <(tar -tvzf "$source" | awk '{print substr($1,1,1)}')
+}
+
+validate_storage_archive() {
+  local source="$1" member normalized member_type
+  while IFS= read -r member; do
+    normalized="${member#./}"
+    [[ -n "$normalized" ]] || continue
+    [[ "$normalized" == storage || "$normalized" == storage/* ]] || die "Storage archive contains an unsupported path."
+  done < <(tar -tf "$source")
+  while IFS= read -r member_type; do
+    [[ "$member_type" == "-" || "$member_type" == "d" ]] || die "Storage archive contains links or unsupported member types."
+  done < <(tar -tvf "$source" | awk '{print substr($1,1,1)}')
+}
+
 log "Unpacking archive"
+ARCHIVE_TAR="$ARCHIVE"
 case "$ARCHIVE" in
   *.age)
     command -v age >/dev/null 2>&1 || die "age is required to decrypt this archive."
-    age --decrypt -o "${STAGING}/archive.tar.gz" "$ARCHIVE"
-    tar -C "$STAGING" -xzf "${STAGING}/archive.tar.gz"
+    ARCHIVE_TAR="${STAGING}/archive.tar.gz"
+    age --decrypt -o "$ARCHIVE_TAR" "$ARCHIVE"
     ;;
   *.gpg)
     command -v gpg >/dev/null 2>&1 || die "gpg is required to decrypt this archive."
-    gpg --batch --yes --decrypt --output "${STAGING}/archive.tar.gz" "$ARCHIVE"
-    tar -C "$STAGING" -xzf "${STAGING}/archive.tar.gz"
+    ARCHIVE_TAR="${STAGING}/archive.tar.gz"
+    gpg --batch --yes --decrypt --output "$ARCHIVE_TAR" "$ARCHIVE"
     ;;
   *.tar.gz)
-    tar -C "$STAGING" -xzf "$ARCHIVE"
     ;;
   *)
     die "Unrecognised archive format: ${ARCHIVE}"
     ;;
 esac
+validate_backup_archive "$ARCHIVE_TAR"
+tar --no-same-owner --no-same-permissions -C "$STAGING" -xzf "$ARCHIVE_TAR"
 
 [[ -f "${STAGING}/database.sql" ]] || die "The archive contains no database.sql"
 
@@ -177,7 +203,8 @@ if [[ "$RESTORE_FILES" == "true" && -f "${STAGING}/storage.tar" ]]; then
   if [[ -d "${DATA_DIR}/storage" ]]; then
     mv "${DATA_DIR}/storage" "${DATA_DIR}/storage.replaced-$(date -u '+%Y%m%dT%H%M%SZ')"
   fi
-  tar -C "$DATA_DIR" -xf "${STAGING}/storage.tar"
+  validate_storage_archive "${STAGING}/storage.tar"
+  tar --no-same-owner --no-same-permissions -C "$DATA_DIR" -xf "${STAGING}/storage.tar"
   chown -R readypackets:readypackets "${DATA_DIR}/storage" 2>/dev/null || true
   chmod -R go-rwx "${DATA_DIR}/storage"
 elif [[ "$RESTORE_FILES" == "true" ]]; then
