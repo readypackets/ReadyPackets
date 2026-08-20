@@ -13,10 +13,12 @@
 #   --domain <host>     Public hostname (required)
 #   --email <address>   Contact address for Let's Encrypt (required for --tls-provider letsencrypt)
 #   --tls               Compatibility alias for --tls-provider letsencrypt
-#   --tls-provider <p>  letsencrypt or cloudflare-origin
-#   --cloudflare-origin-cert <path>  PEM Origin certificate (Cloudflare Origin CA)
-#   --cloudflare-origin-key <path>   PEM private key (Cloudflare Origin CA)
+#   --tls-provider <p>  letsencrypt, cloudflare-origin, or cloudflare-origin-ca
+#   --cloudflare-origin-cert <path>  PEM Origin certificate (manual Cloudflare Origin CA)
+#   --cloudflare-origin-key <path>   PEM private key (manual Cloudflare Origin CA)
 #   --cloudflare-origin-root <path>  Optional PEM Cloudflare Origin CA root/chain
+#   --cloudflare-api-token-file <path> Root-only Cloudflare API token file (automated Origin CA)
+#   --cloudflare-origin-validity <days> Origin CA lifetime: 7,30,90,365,730,1095,5475 (default 5475)
 #   --no-seed           Skip catalogue seeding (use when restoring a backup)
 #   --skip-packages     Assume Node, MySQL and nginx are already installed
 #   --site-name <name>  Website name used for public page metadata
@@ -40,10 +42,12 @@ SERVER_NAMES=""
 HOST_ALLOWLIST_REGEX=""
 TLS_ALIAS_PLACEHOLDER="__rp_no_alias.invalid"
 CONTACT_EMAIL=""
-TLS_PROVIDER="" # letsencrypt, cloudflare-origin, or empty to preserve/expose HTTP only
+TLS_PROVIDER="" # letsencrypt, cloudflare-origin, cloudflare-origin-ca, or empty to preserve/expose HTTP only
 CLOUDFLARE_ORIGIN_CERT=""
 CLOUDFLARE_ORIGIN_KEY=""
 CLOUDFLARE_ORIGIN_ROOT=""
+CLOUDFLARE_API_TOKEN_FILE=""
+CLOUDFLARE_ORIGIN_VALIDITY="5475"
 WANT_SEED="true"
 SKIP_PACKAGES="false"
 SITE_NAME="ReadyPackets"
@@ -71,6 +75,8 @@ while [[ $# -gt 0 ]]; do
     --cloudflare-origin-cert) CLOUDFLARE_ORIGIN_CERT="${2:-}"; shift 2 ;;
     --cloudflare-origin-key)  CLOUDFLARE_ORIGIN_KEY="${2:-}"; shift 2 ;;
     --cloudflare-origin-root) CLOUDFLARE_ORIGIN_ROOT="${2:-}"; shift 2 ;;
+    --cloudflare-api-token-file) CLOUDFLARE_API_TOKEN_FILE="${2:-}"; shift 2 ;;
+    --cloudflare-origin-validity) CLOUDFLARE_ORIGIN_VALIDITY="${2:-}"; shift 2 ;;
     --no-seed)       WANT_SEED="false"; shift ;;
     --skip-packages) SKIP_PACKAGES="true"; shift ;;
     --site-name) SITE_NAME="${2:-}"; shift 2 ;;
@@ -105,8 +111,8 @@ if [[ -z "$TLS_PROVIDER" && -t 0 ]]; then
     *) die "Choose 1, 2, or 3 for TLS certificate provider." ;;
   esac
 fi
-if [[ -n "$TLS_PROVIDER" && "$TLS_PROVIDER" != "letsencrypt" && "$TLS_PROVIDER" != "cloudflare-origin" ]]; then
-  die "--tls-provider must be letsencrypt or cloudflare-origin."
+if [[ -n "$TLS_PROVIDER" && "$TLS_PROVIDER" != "letsencrypt" && "$TLS_PROVIDER" != "cloudflare-origin" && "$TLS_PROVIDER" != "cloudflare-origin-ca" ]]; then
+  die "--tls-provider must be letsencrypt, cloudflare-origin, or cloudflare-origin-ca."
 fi
 if [[ "$TLS_PROVIDER" == "letsencrypt" && -z "$CONTACT_EMAIL" ]]; then
   die "--email is required for Let's Encrypt."
@@ -115,6 +121,11 @@ if [[ "$TLS_PROVIDER" == "cloudflare-origin" ]]; then
   [[ -f "$CLOUDFLARE_ORIGIN_CERT" ]] || die "Provide --cloudflare-origin-cert <PEM certificate path>."
   [[ -f "$CLOUDFLARE_ORIGIN_KEY" ]] || die "Provide --cloudflare-origin-key <PEM private key path>."
   [[ -z "$CLOUDFLARE_ORIGIN_ROOT" || -f "$CLOUDFLARE_ORIGIN_ROOT" ]] || die "Cloudflare Origin CA root path does not exist."
+elif [[ "$TLS_PROVIDER" == "cloudflare-origin-ca" ]]; then
+  [[ -f "$CLOUDFLARE_API_TOKEN_FILE" ]] || die "Automated Cloudflare Origin CA requires --cloudflare-api-token-file <root-only file>."
+  [[ "$(stat -c '%U:%a' "$CLOUDFLARE_API_TOKEN_FILE")" == "root:600" ]] || die "The Cloudflare API token file must be root-owned with mode 0600."
+  [[ -s "$CLOUDFLARE_API_TOKEN_FILE" ]] || die "The Cloudflare API token file is empty."
+  [[ "$CLOUDFLARE_ORIGIN_VALIDITY" =~ ^(7|30|90|365|730|1095|5475)$ ]] || die "--cloudflare-origin-validity must be one of 7, 30, 90, 365, 730, 1095, or 5475."
 fi
 
 # Reject an obviously invalid hostname early: it ends up in security-critical
@@ -588,12 +599,86 @@ install_cloudflare_origin_material() {
   write_tls_include "cloudflare-origin" "${CLOUDFLARE_TLS_DIR}/certificate.pem" "${CLOUDFLARE_TLS_DIR}/private-key.pem"
 }
 
+issue_cloudflare_origin_ca() {
+  local work token api_config csr payload response hostname private_key
+  work="$(mktemp -d /root/readypackets-cloudflare-origin.XXXXXX)"
+  chmod 0700 "$work"
+  token="$(tr -d '\r\n' < "$CLOUDFLARE_API_TOKEN_FILE")"
+  [[ "$token" =~ ^[A-Za-z0-9._-]{20,}$ ]] || { rm -rf "$work"; die "The Cloudflare API token has an unexpected format."; }
+  api_config="${work}/curl.conf"
+  csr="${work}/origin.csr.pem"
+  payload="${work}/request.json"
+  response="${work}/response.json"
+
+  # Keep the token out of argv, environment exports, installer profiles, logs,
+  # and persisted portal configuration. curl reads its Authorization header from
+  # a root-only ephemeral config file that is removed before this function exits.
+  printf 'header = "Authorization: Bearer %s"\\n' "$token" > "$api_config"
+  chmod 0600 "$api_config"
+  unset token
+
+  private_key="${work}/private-key.pem"
+  openssl genrsa -out "$private_key" 3072 >/dev/null 2>&1
+  chmod 0600 "$private_key"
+  hostname="$DOMAIN"
+  if [[ -n "$ALTERNATE_DOMAIN" ]]; then
+    openssl req -new -key "$private_key" -out "$csr" \
+      -subj "/CN=${hostname}" -addext "subjectAltName=DNS:${DOMAIN},DNS:${ALTERNATE_DOMAIN}"
+  else
+    openssl req -new -key "$private_key" -out "$csr" \
+      -subj "/CN=${hostname}" -addext "subjectAltName=DNS:${DOMAIN}"
+  fi
+
+  if [[ -n "$ALTERNATE_DOMAIN" ]]; then
+    jq -n --rawfile csr "$csr" --arg canonical "$DOMAIN" --arg alternate "$ALTERNATE_DOMAIN" \
+      --argjson validity "$CLOUDFLARE_ORIGIN_VALIDITY" \
+      '{csr:$csr,hostnames:[$canonical,$alternate],request_type:"origin-rsa",requested_validity:$validity}' > "$payload"
+  else
+    jq -n --rawfile csr "$csr" --arg canonical "$DOMAIN" --argjson validity "$CLOUDFLARE_ORIGIN_VALIDITY" \
+      '{csr:$csr,hostnames:[$canonical],request_type:"origin-rsa",requested_validity:$validity}' > "$payload"
+  fi
+
+  if ! curl --fail --silent --show-error --config "$api_config" \
+      --header 'Content-Type: application/json' --request POST \
+      --data-binary "@${payload}" --output "$response" \
+      https://api.cloudflare.com/client/v4/certificates; then
+    rm -rf "$work"
+    die "Cloudflare Origin CA API request failed. Verify the token has Zone → SSL and Certificates → Edit for this zone."
+  fi
+  if ! jq -e '.success == true and (.result.certificate | type == "string")' "$response" >/dev/null; then
+    jq -r '.errors[]?.message // empty' "$response" >&2 || true
+    rm -rf "$work"
+    die "Cloudflare Origin CA did not issue a certificate."
+  fi
+  jq -r '.result.certificate' "$response" > "${work}/certificate.pem"
+  certificate_covers_public_names "${work}/certificate.pem" || { rm -rf "$work"; die "Cloudflare Origin CA certificate does not cover every configured public hostname."; }
+  openssl x509 -in "${work}/certificate.pem" -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256 > "${work}/cert-pub.sha256"
+  openssl pkey -in "$private_key" -pubout -outform DER | openssl dgst -sha256 > "${work}/key-pub.sha256"
+  cmp -s "${work}/cert-pub.sha256" "${work}/key-pub.sha256" || { rm -rf "$work"; die "Cloudflare Origin CA certificate and generated private key do not match."; }
+
+  install -d -m 0700 -o root -g root "$CLOUDFLARE_TLS_DIR"
+  install -m 0644 -o root -g root "${work}/certificate.pem" "${CLOUDFLARE_TLS_DIR}/certificate.pem"
+  install -m 0600 -o root -g root "$private_key" "${CLOUDFLARE_TLS_DIR}/private-key.pem"
+  rm -rf "$work"
+
+  openssl x509 -in "${CLOUDFLARE_TLS_DIR}/certificate.pem" -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256 > /tmp/rp-cert-pub.$$
+  openssl pkey -in "${CLOUDFLARE_TLS_DIR}/private-key.pem" -pubout -outform DER | openssl dgst -sha256 > /tmp/rp-key-pub.$$
+  cmp -s /tmp/rp-cert-pub.$$ /tmp/rp-key-pub.$$ || die "Cloudflare Origin CA certificate and generated private key do not match."
+  rm -f /tmp/rp-cert-pub.$$ /tmp/rp-key-pub.$$
+  write_tls_include "cloudflare-origin-ca-api" "${CLOUDFLARE_TLS_DIR}/certificate.pem" "${CLOUDFLARE_TLS_DIR}/private-key.pem"
+}
+
 HAVE_CERT="false"
 LE_CERTIFICATE="/etc/letsencrypt/live/${DOMAIN}/fullchain.pem"
 LE_PRIVATE_KEY="/etc/letsencrypt/live/${DOMAIN}/privkey.pem"
 if [[ "$TLS_PROVIDER" == "cloudflare-origin" ]]; then
   log "Installing the supplied Cloudflare Origin CA material"
   install_cloudflare_origin_material
+  HAVE_CERT="true"
+elif [[ "$TLS_PROVIDER" == "cloudflare-origin-ca" ]]; then
+  log "Requesting a Cloudflare Origin CA certificate through the scoped API token"
+  command -v jq >/dev/null 2>&1 || apt-get install -y --no-install-recommends jq >/dev/null
+  issue_cloudflare_origin_ca
   HAVE_CERT="true"
 elif [[ "$TLS_PROVIDER" == "letsencrypt" && -f "$LE_CERTIFICATE" && -f "$LE_PRIVATE_KEY" ]]; then
   if certificate_covers_public_names "$LE_CERTIFICATE"; then

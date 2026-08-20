@@ -65,6 +65,8 @@ while [[ $# -gt 0 ]]; do
     --cloudflare-origin-cert) CLOUDFLARE_ORIGIN_CERT="${2:-}"; shift 2 ;;
     --cloudflare-origin-key) CLOUDFLARE_ORIGIN_KEY="${2:-}"; shift 2 ;;
     --cloudflare-origin-root) CLOUDFLARE_ORIGIN_ROOT="${2:-}"; shift 2 ;;
+    --cloudflare-api-token-file) CLOUDFLARE_API_TOKEN_FILE="${2:-}"; shift 2 ;;
+    --cloudflare-origin-validity) CLOUDFLARE_ORIGIN_VALIDITY="${2:-5475}"; shift 2 ;;
     --no-tls) TLS_PROVIDER="none"; shift ;;
     --site-name) SITE_NAME="${2:-}"; shift 2 ;;
     --github-config-repository) GITHUB_CONFIG_REPOSITORY="${2:-}"; shift 2 ;;
@@ -126,11 +128,16 @@ if [[ -z "$TLS_PROVIDER" && -t 0 ]]; then
   case "${tls_choice:-1}" in 1) TLS_PROVIDER="letsencrypt" ;; 2) TLS_PROVIDER="cloudflare-origin" ;; 3) TLS_PROVIDER="none" ;; *) fail "Choose 1, 2, or 3." ;; esac
 fi
 TLS_PROVIDER="${TLS_PROVIDER:-letsencrypt}"
-[[ "$TLS_PROVIDER" == "letsencrypt" || "$TLS_PROVIDER" == "cloudflare-origin" || "$TLS_PROVIDER" == "none" ]] || fail "--tls-provider must be letsencrypt or cloudflare-origin."
+[[ "$TLS_PROVIDER" == "letsencrypt" || "$TLS_PROVIDER" == "cloudflare-origin" || "$TLS_PROVIDER" == "cloudflare-origin-ca" || "$TLS_PROVIDER" == "none" ]] || fail "--tls-provider must be letsencrypt, cloudflare-origin, or cloudflare-origin-ca."
 if [[ "$TLS_PROVIDER" == "letsencrypt" ]]; then [[ "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || fail "A valid --email is required for Let's Encrypt."; fi
 if [[ "$TLS_PROVIDER" == "cloudflare-origin" ]]; then
   [[ -f "$CLOUDFLARE_ORIGIN_CERT" && -f "$CLOUDFLARE_ORIGIN_KEY" ]] || fail "Cloudflare Origin CA requires --cloudflare-origin-cert and --cloudflare-origin-key files."
   [[ -z "$CLOUDFLARE_ORIGIN_ROOT" || -f "$CLOUDFLARE_ORIGIN_ROOT" ]] || fail "Cloudflare Origin CA root file was not found."
+elif [[ "$TLS_PROVIDER" == "cloudflare-origin-ca" ]]; then
+  [[ "$MODE" == "native" ]] || fail "Automated Cloudflare Origin CA issuance is currently supported only for native VPS installations."
+  [[ -f "$CLOUDFLARE_API_TOKEN_FILE" ]] || fail "Automated Cloudflare Origin CA needs --cloudflare-api-token-file."
+  [[ "$(stat -c '%U:%a' "$CLOUDFLARE_API_TOKEN_FILE")" == "root:600" ]] || fail "Cloudflare API token file must be root-owned mode 0600."
+  [[ "$CLOUDFLARE_ORIGIN_VALIDITY" =~ ^(7|30|90|365|730|1095|5475)$ ]] || fail "Invalid Cloudflare Origin CA validity."
 fi
 
 if [[ "$MODE" == "native" ]]; then
@@ -140,6 +147,7 @@ if [[ "$MODE" == "native" ]]; then
   [[ -n "$CLOUDFLARE_ORIGIN_CERT" ]] && args+=(--cloudflare-origin-cert "$CLOUDFLARE_ORIGIN_CERT")
   [[ -n "$CLOUDFLARE_ORIGIN_KEY" ]] && args+=(--cloudflare-origin-key "$CLOUDFLARE_ORIGIN_KEY")
   [[ -n "$CLOUDFLARE_ORIGIN_ROOT" ]] && args+=(--cloudflare-origin-root "$CLOUDFLARE_ORIGIN_ROOT")
+  [[ -n "${CLOUDFLARE_API_TOKEN_FILE:-}" ]] && args+=(--cloudflare-api-token-file "$CLOUDFLARE_API_TOKEN_FILE" --cloudflare-origin-validity "${CLOUDFLARE_ORIGIN_VALIDITY:-5475}")
   args+=(--site-name "$SITE_NAME")
   if [[ -n "$GITHUB_CONFIG_REPOSITORY" ]]; then
     args+=(--github-config-repository "$GITHUB_CONFIG_REPOSITORY" --github-config-branch "$GITHUB_CONFIG_BRANCH" --github-config-folder "$GITHUB_CONFIG_FOLDER" --github-config-token-file "$GITHUB_CONFIG_TOKEN_FILE" --github-config-passphrase-file "$GITHUB_CONFIG_PASSPHRASE_FILE")

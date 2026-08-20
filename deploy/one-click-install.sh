@@ -20,7 +20,7 @@ if [[ -n "$SETTINGS_FILE" ]]; then
   [[ -f "$SETTINGS_FILE" ]] || { printf 'RP_SETTINGS_FILE was not found: %s\n' "$SETTINGS_FILE" >&2; exit 1; }
   [[ "$(stat -c '%U' "$SETTINGS_FILE")" == "root" && "$(stat -c '%a' "$SETTINGS_FILE")" == "600" ]] \
     || { printf 'RP_SETTINGS_FILE must be owned by root with mode 0600: %s\n' "$SETTINGS_FILE" >&2; exit 1; }
-  if grep -Eq '^(RP_ADMIN_PASSWORD|RP_GITHUB_CONFIG_TOKEN|RP_GITHUB_CONFIG_PASSPHRASE|RP_CLOUDFLARE_ORIGIN_KEY)=' "$SETTINGS_FILE"; then
+  if grep -Eq '^(RP_ADMIN_PASSWORD|RP_GITHUB_CONFIG_TOKEN|RP_GITHUB_CONFIG_PASSPHRASE|RP_CLOUDFLARE_ORIGIN_KEY|RP_CLOUDFLARE_API_TOKEN)=' "$SETTINGS_FILE"; then
     printf '%s\n' 'RP_SETTINGS_FILE must not contain passwords, tokens, passphrases, or private keys.' >&2
     exit 1
   fi
@@ -40,6 +40,13 @@ PROJECT_DIR="${RP_PROJECT_DIR:-/srv/readypackets}"
 CF_CERT="${RP_CLOUDFLARE_ORIGIN_CERT:-}"
 CF_KEY="${RP_CLOUDFLARE_ORIGIN_KEY:-}"
 CF_ROOT="${RP_CLOUDFLARE_ORIGIN_ROOT:-}"
+CF_API_TOKEN=""
+CF_API_TOKEN_FILE="${RP_CLOUDFLARE_API_TOKEN_FILE:-}"
+CF_ORIGIN_VALIDITY="${RP_CLOUDFLARE_ORIGIN_VALIDITY:-5475}"
+if [[ -n "${RP_CLOUDFLARE_API_TOKEN:-}" ]]; then
+  printf '%s\n' 'Do not pass a Cloudflare API token through an environment variable; use the guided prompt or RP_CLOUDFLARE_API_TOKEN_FILE.' >&2
+  exit 1
+fi
 VAULT_REPOSITORY="${RP_GITHUB_CONFIG_REPOSITORY:-}"
 VAULT_BRANCH="${RP_GITHUB_CONFIG_BRANCH:-main}"
 VAULT_FOLDER="${RP_GITHUB_CONFIG_FOLDER:-readypackets-platform-config}"
@@ -60,7 +67,7 @@ step() { printf '\n\033[1;36m[ReadyPackets install]\033[0m %s\n' "$*"; }
 warn() { printf '\n\033[1;33m[ReadyPackets install warning]\033[0m %s\n' "$*" >&2; }
 fail() { printf '\n\033[1;31m[ReadyPackets install failed]\033[0m %s\n' "$*" >&2; exit 1; }
 cleanup() {
-  unset VAULT_TOKEN VAULT_PASSPHRASE ADMIN_PASSWORD || true
+  unset VAULT_TOKEN VAULT_PASSPHRASE ADMIN_PASSWORD CF_API_TOKEN || true
   for item in "${TEMP_FILES[@]:-}"; do rm -rf -- "$item"; done
 }
 trap cleanup EXIT
@@ -141,18 +148,23 @@ if [[ "$INTERACTIVE_MODE" == "true" ]]; then
   if [[ -z "$TLS_PROVIDER" ]]; then
     printf '\nTLS certificate method:\n'
     printf '  1) Let\x27s Encrypt (public certificate with automatic renewal)\n'
-    printf '  2) Cloudflare Origin CA (for a Cloudflare-proxied site using Full strict)\n'
-    printf '  3) HTTP only / configure a certificate later (not recommended for production)\n'
-    read -r -p "Choose [1-3] (default 1): " tls_choice
+    printf '  2) Cloudflare Origin CA — request automatically with a scoped API token (Cloudflare proxy + Full strict)\n'
+    printf '  3) Cloudflare Origin CA — install an existing PEM certificate and key\n'
+    printf '  4) HTTP only / configure a certificate later (not recommended for production)\n'
+    read -r -p "Choose [1-4] (default 1): " tls_choice
     case "${tls_choice:-1}" in
       1) TLS_PROVIDER="letsencrypt" ;;
-      2) TLS_PROVIDER="cloudflare-origin" ;;
-      3) TLS_PROVIDER="none" ;;
-      *) fail "Choose 1, 2, or 3." ;;
+      2) TLS_PROVIDER="cloudflare-origin-ca" ;;
+      3) TLS_PROVIDER="cloudflare-origin" ;;
+      4) TLS_PROVIDER="none" ;;
+      *) fail "Choose 1, 2, 3, or 4." ;;
     esac
   fi
   if [[ "$TLS_PROVIDER" == "letsencrypt" ]]; then
     prompt_required "Let's Encrypt contact email" EMAIL
+  elif [[ "$TLS_PROVIDER" == "cloudflare-origin-ca" ]]; then
+    prompt_secret "Cloudflare API token (Zone → SSL and Certificates → Edit, scoped to this zone)" CF_API_TOKEN unused_confirmation
+    prompt_value "Cloudflare Origin CA validity in days" CF_ORIGIN_VALIDITY "5475"
   elif [[ "$TLS_PROVIDER" == "cloudflare-origin" ]]; then
     prompt_required "Cloudflare Origin certificate PEM file path" CF_CERT
     prompt_required "Cloudflare Origin private-key PEM file path" CF_KEY
@@ -207,11 +219,19 @@ PROVISION_ADMIN="${PROVISION_ADMIN:-auto}"
 [[ "$REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail "RP_REPOSITORY must be owner/repository."
 [[ "$DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]] || fail "Set a valid public website hostname."
 [[ "$MODE" =~ ^(native|docker|docker-bootstrap)$ ]] || fail "Installation type must be native, docker, or docker-bootstrap."
-[[ "$TLS_PROVIDER" =~ ^(letsencrypt|cloudflare-origin|none)$ ]] || fail "TLS provider must be letsencrypt, cloudflare-origin, or none."
+[[ "$TLS_PROVIDER" =~ ^(letsencrypt|cloudflare-origin|cloudflare-origin-ca|none)$ ]] || fail "TLS provider must be letsencrypt, cloudflare-origin, cloudflare-origin-ca, or none."
 [[ "$SITE_NAME" != *$'\n'* && -n "$SITE_NAME" && ${#SITE_NAME} -le 100 ]] || fail "Website display name must be 1 to 100 characters and contain no line breaks."
 [[ -z "$COMMIT" || "$COMMIT" =~ ^[0-9a-fA-F]{40}$ ]] || fail "Optional source commit must be a reviewed 40-character Git SHA."
 if [[ "$TLS_PROVIDER" == "letsencrypt" ]]; then [[ "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || fail "A valid Let\x27s Encrypt contact email is required."; fi
 if [[ "$TLS_PROVIDER" == "cloudflare-origin" ]]; then [[ -f "$CF_CERT" && -f "$CF_KEY" ]] || fail "Cloudflare Origin CA needs readable certificate and key files."; fi
+if [[ "$TLS_PROVIDER" == "cloudflare-origin-ca" ]]; then
+  if [[ -n "$CF_API_TOKEN_FILE" ]]; then
+    [[ -f "$CF_API_TOKEN_FILE" && "$(stat -c '%U:%a' "$CF_API_TOKEN_FILE")" == "root:600" ]] || fail "RP_CLOUDFLARE_API_TOKEN_FILE must be root-owned mode 0600."
+  else
+    [[ "$CF_API_TOKEN" =~ ^[A-Za-z0-9._-]{20,}$ ]] || fail "Cloudflare API token format is invalid."
+  fi
+  [[ "$CF_ORIGIN_VALIDITY" =~ ^(7|30|90|365|730|1095|5475)$ ]] || fail "Cloudflare Origin CA validity must be 7, 30, 90, 365, 730, 1095, or 5475 days."
+fi
 if [[ -n "$VAULT_REPOSITORY" || -n "$VAULT_TOKEN" || -n "$VAULT_PASSPHRASE" ]]; then
   [[ "$VAULT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail "GitHub vault repository must be owner/private-repository."
   [[ ${#VAULT_TOKEN} -ge 20 && ${#VAULT_PASSPHRASE} -ge 16 ]] || fail "GitHub vault recovery needs a fine-grained token and a 16+ character passphrase."
@@ -296,6 +316,16 @@ case "$TLS_PROVIDER" in
   cloudflare-origin)
     installer+=(--tls-provider cloudflare-origin --cloudflare-origin-cert "$CF_CERT" --cloudflare-origin-key "$CF_KEY")
     [[ -n "$CF_ROOT" ]] && installer+=(--cloudflare-origin-root "$CF_ROOT")
+    ;;
+  cloudflare-origin-ca)
+    step "Preparing the Cloudflare API token for one-time Origin CA issuance."
+    if [[ -n "$CF_API_TOKEN_FILE" ]]; then
+      cf_api_token_file="$CF_API_TOKEN_FILE"
+    else
+      cf_api_token_file="$(write_secret_file "$CF_API_TOKEN" readypackets-cloudflare-api-token)"
+      unset CF_API_TOKEN
+    fi
+    installer+=(--tls-provider cloudflare-origin-ca --cloudflare-api-token-file "$cf_api_token_file" --cloudflare-origin-validity "$CF_ORIGIN_VALIDITY")
     ;;
   none) installer+=(--no-tls) ;;
 esac
