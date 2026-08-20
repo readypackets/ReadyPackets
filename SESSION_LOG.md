@@ -3620,3 +3620,24 @@ Rollback material is retained at:
 ```
 
 *This entry was appended rather than replacing prior history, consistent with the project logging requirement.*
+
+
+---
+
+## 67. P101/P201 manual phase-start queue repair — August 20, 2026
+
+### 67.1 Report and environment boundary
+
+An administrator reported that selecting **Start Phase I / queue P101** for order `1` on the self-hosted `readypackets.com` environment produced the generic toast **Could not queue phase kickoff**. The order view showed completed automatic Phase I/Phase II `create_folders` jobs and no P101/P201 webhook-delivery row. The requested Phase II P201 control uses the same server mutation and was reviewed as part of the repair.
+
+The attached Cloud Computer is a separate `myportal.readypackets.com` installation: it has no order `1`, uses a different order dataset, and is not the screenshot’s self-hosted target. No change was applied to that unrelated environment.
+
+### 67.2 Cause and corrected behavior
+
+Both P101 and P201 controls call `integrations.manualPhaseKickoff`, which calls `runPhaseKickoff` with `forceWebhook: true`. The previous implementation treated this as a full phase rerun: it queued ordinary configured actions such as `create_folders`, placeholder attachment, and customer notification in addition to the intended phase-start webhook. Re-queuing already-completed actions is unnecessary and can fail on self-hosted schemas or constraints that enforce idempotent phase-job handling. The same shared path affected P101 and P201.
+
+The repair makes manual P101/P201 controls **webhook-only requeue controls**. They now create only the `notify_webhooks` phase job, preserving the completed folder and customer-notification actions. Normal order-status-driven transitions continue to queue the full configured Phase Kickoff action set. The administrator success message was changed to reflect the actual behavior: the P101/P201 phase-start webhook is queued for the configured endpoint.
+
+### 67.3 Validation and release status
+
+TypeScript validation passed, Vite client build passed, server bundle build passed, and the source diff passed whitespace validation. The change requires deployment to the reported self-hosted `readypackets.com` VPS; that machine is not the attached Cloud Computer and cannot be safely modified from this session without its connection. The exact supported deployment command will be included with the published GitHub commit.

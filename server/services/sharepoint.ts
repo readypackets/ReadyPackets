@@ -833,12 +833,20 @@ export async function runPhaseKickoff(
     logger.info("sharepoint.kickoff.completion_set", { orderId, phase, completionPercent: config.completionPercent });
   }
 
-  // Queue jobs for each automation step.
+  // The P101/P201 buttons are explicit webhook requeue controls. They must not
+  // rerun ordinary phase automation such as folder provisioning or customer
+  // notification, which may already have completed and can be constrained as
+  // unique jobs on older self-hosted schemas. Normal status-driven kickoff
+  // continues to queue the configured phase actions below.
   const jobs: { jobType: string }[] = [];
-  if (config?.createFolders) jobs.push({ jobType: "create_folders" });
-  if (config?.attachPlaceholders) jobs.push({ jobType: "attach_placeholders" });
-  if (config?.notifyWebhooks || options.forceWebhook) jobs.push({ jobType: "notify_webhooks" });
-  if (config?.notifyCustomer) jobs.push({ jobType: "notify_customer" });
+  if (options.forceWebhook) {
+    jobs.push({ jobType: "notify_webhooks" });
+  } else {
+    if (config?.createFolders) jobs.push({ jobType: "create_folders" });
+    if (config?.attachPlaceholders) jobs.push({ jobType: "attach_placeholders" });
+    if (config?.notifyWebhooks) jobs.push({ jobType: "notify_webhooks" });
+    if (config?.notifyCustomer) jobs.push({ jobType: "notify_customer" });
+  }
 
   for (const job of jobs) {
     await db.insert(phaseJobs).values({

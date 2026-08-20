@@ -1728,7 +1728,7 @@ function OrderAutomationTab({ order, customer }: { order: any; customer: any }) 
     onSuccess(_result, variables) {
       toast.success(
         "Phase kickoff queued",
-        `${variables.phase === "phase_1_intake" ? "P101" : variables.phase === "phase_2_synthesis" ? "P201" : variables.phase} is now queued with the configured SharePoint, notification, and webhook actions.`,
+        `${variables.phase === "phase_1_intake" ? "P101" : variables.phase === "phase_2_synthesis" ? "P201" : variables.phase} is now queued for delivery to the configured phase-start webhook endpoint.`,
       );
       void utils.integrations.phaseJobs.invalidate({ orderId: order.id });
     },
