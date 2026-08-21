@@ -121,7 +121,10 @@ export async function handleLoginRedirect(req: Request, res: Response): Promise<
 
   try {
     const saml = buildSamlInstance(config);
-    const authorizeUrl = await saml.getAuthorizeUrlAsync("", req.headers.host ?? "", {});
+    // Relay only a strictly local portal/mobile authorization route; never relay user-controlled hosts.
+    const requestedReturn = typeof req.query.return_to === "string" ? req.query.return_to : "";
+    const relayState = requestedReturn.startsWith("/portal") || requestedReturn.startsWith("/api/mobile/v1/authorize?") ? requestedReturn : "";
+    const authorizeUrl = await saml.getAuthorizeUrlAsync(relayState, req.headers.host ?? "", {});
     const redirectUrl = typeof authorizeUrl === "string" ? authorizeUrl : (authorizeUrl as any).context as string;
     res.redirect(redirectUrl);
   } catch (err) {

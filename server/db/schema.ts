@@ -2397,3 +2397,114 @@ export const platformUpgradeRuns = mysqlTable(
     targetCommitIdx: index("platform_upgrade_runs_target_commit_idx").on(table.targetCommit),
   }),
 );
+
+
+/* ------------------------------------------------------------------ */
+/* Native mobile OAuth and device sessions                            */
+/* ------------------------------------------------------------------ */
+
+/** A non-secret native installation identifier, revocable per user/device. */
+export const mobileDevices = mysqlTable(
+  "mobile_devices",
+  {
+    id: varchar("id", { length: 96 }).primaryKey(),
+    userId: int("user_id").notNull(),
+    platform: varchar("platform", { length: 16 }).notNull(),
+    appVersion: varchar("app_version", { length: 32 }).notNull(),
+    deviceName: varchar("device_name", { length: 128 }),
+    pushTokenHash: char("push_token_hash", { length: 64 }),
+    pushPlatform: varchar("push_platform", { length: 16 }),
+    status: varchar("status", { length: 16 }).notNull().default("active"),
+    lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+    revokedAt: timestamp("revoked_at"),
+    revokedReason: varchar("revoked_reason", { length: 190 }),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    userIdx: index("mobile_devices_user_idx").on(table.userId),
+    statusIdx: index("mobile_devices_status_idx").on(table.status),
+    lastSeenIdx: index("mobile_devices_last_seen_idx").on(table.lastSeenAt),
+  }),
+);
+
+export const mobileDeviceSessions = mysqlTable(
+  "mobile_device_sessions",
+  {
+    id: varchar("id", { length: 64 }).primaryKey(),
+    tokenFamilyId: varchar("token_family_id", { length: 64 }).notNull(),
+    deviceId: varchar("device_id", { length: 96 }).notNull(),
+    userId: int("user_id").notNull(),
+    status: varchar("status", { length: 16 }).notNull().default("active"),
+    lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+    expiresAt: timestamp("expires_at").notNull(),
+    revokedAt: timestamp("revoked_at"),
+    revokedReason: varchar("revoked_reason", { length: 190 }),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    familyIdx: uniqueIndex("mobile_device_sessions_family_uq").on(table.tokenFamilyId),
+    userIdx: index("mobile_device_sessions_user_idx").on(table.userId),
+    deviceIdx: index("mobile_device_sessions_device_idx").on(table.deviceId),
+    expiresIdx: index("mobile_device_sessions_expires_idx").on(table.expiresAt),
+  }),
+);
+
+export const mobileAuthorizationCodes = mysqlTable(
+  "mobile_authorization_codes",
+  {
+    id: varchar("id", { length: 64 }).primaryKey(),
+    codeHash: char("code_hash", { length: 64 }).notNull(),
+    userId: int("user_id").notNull(),
+    deviceId: varchar("device_id", { length: 96 }).notNull(),
+    redirectUri: varchar("redirect_uri", { length: 512 }).notNull(),
+    codeChallenge: varchar("code_challenge", { length: 128 }).notNull(),
+    scopes: json("scopes").notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    usedAt: timestamp("used_at"),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    hashIdx: uniqueIndex("mobile_authorization_codes_hash_uq").on(table.codeHash),
+    expiresIdx: index("mobile_authorization_codes_expires_idx").on(table.expiresAt),
+    userIdx: index("mobile_authorization_codes_user_idx").on(table.userId),
+  }),
+);
+
+export const mobileRefreshTokens = mysqlTable(
+  "mobile_refresh_tokens",
+  {
+    id: varchar("id", { length: 64 }).primaryKey(),
+    tokenHash: char("token_hash", { length: 64 }).notNull(),
+    sessionId: varchar("session_id", { length: 64 }).notNull(),
+    tokenFamilyId: varchar("token_family_id", { length: 64 }).notNull(),
+    status: varchar("status", { length: 16 }).notNull().default("active"),
+    expiresAt: timestamp("expires_at").notNull(),
+    rotatedAt: timestamp("rotated_at"),
+    revokedAt: timestamp("revoked_at"),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    hashIdx: uniqueIndex("mobile_refresh_tokens_hash_uq").on(table.tokenHash),
+    sessionIdx: index("mobile_refresh_tokens_session_idx").on(table.sessionId),
+    familyIdx: index("mobile_refresh_tokens_family_idx").on(table.tokenFamilyId),
+    expiresIdx: index("mobile_refresh_tokens_expires_idx").on(table.expiresAt),
+  }),
+);
+
+export const mobileIdempotencyKeys = mysqlTable(
+  "mobile_idempotency_keys",
+  {
+    id: varchar("id", { length: 64 }).primaryKey(),
+    userId: int("user_id").notNull(),
+    route: varchar("route", { length: 128 }).notNull(),
+    keyHash: char("key_hash", { length: 64 }).notNull(),
+    requestHash: char("request_hash", { length: 64 }).notNull(),
+    responseJson: json("response_json").notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    userKeyIdx: uniqueIndex("mobile_idempotency_keys_user_key_uq").on(table.userId, table.keyHash),
+    expiresIdx: index("mobile_idempotency_keys_expires_idx").on(table.expiresAt),
+  }),
+);

@@ -177,6 +177,14 @@ export const env = {
   sessionIdleTimeoutMinutes: num("SESSION_IDLE_TIMEOUT_MINUTES", 120),
   cookiePrefix: isProduction ? "__Host-" : "",
 
+  /** Native clients use OAuth 2.1/OIDC + PKCE; callback hosts are explicitly allowlisted. */
+  mobile: {
+    issuer: optional("MOBILE_OAUTH_ISSUER") ?? appUrl.origin,
+    redirectUris: list("MOBILE_OAUTH_REDIRECT_URIS"),
+    accessTokenTtlSeconds: num("MOBILE_ACCESS_TOKEN_TTL_SECONDS", 600),
+    refreshTokenTtlDays: num("MOBILE_REFRESH_TOKEN_TTL_DAYS", 30),
+  },
+
   storage: {
     driver: (optional("STORAGE_DRIVER") ?? "local") as "local" | "s3",
     localRoot: str("STORAGE_LOCAL_ROOT", path.resolve(process.cwd(), "var", "storage")),

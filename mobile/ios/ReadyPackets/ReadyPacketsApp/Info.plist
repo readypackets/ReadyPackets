@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleDisplayName</key><string>ReadyPackets</string>
+  <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+  <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+  <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+  <key>UILaunchScreen</key><dict><key>UIColorName</key><string>BrandNavy</string></dict>
+  <key>NSMicrophoneUsageDescription</key><string>ReadyPackets uses the microphone only when you choose to record an audio response for an authorized workflow step.</string>
+  <key>NSPhotoLibraryUsageDescription</key><string>ReadyPackets uses your selected photos only when you choose them for an authorized workflow upload.</string>
+  <key>NSUserNotificationsUsageDescription</key><string>ReadyPackets can notify you about messages and work that needs your attention after you choose to enable notifications.</string>
+  <key>UIUserInterfaceStyle</key><string>Automatic</string>
+</dict></plist>

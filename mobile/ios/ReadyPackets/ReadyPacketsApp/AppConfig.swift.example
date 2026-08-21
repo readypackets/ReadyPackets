@@ -1,0 +1,9 @@
+import Foundation
+
+enum AppConfig {
+    /// Public deployment configuration only. Never put passwords, keys, provider credentials, or secrets here.
+    static let portalBaseURL = URL(string: "https://portal.example.com")!
+    /// Must exactly match `MOBILE_OAUTH_REDIRECT_URIS` on the self-hosted portal and the verified Associated Domain.
+    static let redirectURI = URL(string: "https://mobile.example.com/auth/callback")!
+    static let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+}

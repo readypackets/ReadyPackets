@@ -3686,3 +3686,57 @@ New migration `0049_phase_kickoff_schema_compat.sql` safely examines `informatio
 
 **Additional file-recovery validation:** A second isolated full restore drill restored `storage.tar` into a disposable nonproduction storage root while importing the same archive database into a disposable database. The drill restored **170 uploaded/generated files** and **126 database tables**, matched the archive file count, and removed the temporary database, grants, and storage root afterward. Production database and storage were not changed.
 **Additional secret-recovery validation:** A third isolated replacement-server recovery drill used the explicit `--restore-platform-secrets` mode against a disposable target environment and storage/database roots. It restored 170 files and 126 tables, verified that the archived AES-256-GCM encryption key replaced the disposable key, and verified that the target `APP_URL` remained `https://recovery-drill.invalid`. Root-owned backup-sync runtime was intentionally omitted from this isolated drill to avoid changing the production rclone configuration; the expected warning was emitted. Temporary environment, database, grants, and storage were removed afterward.
+
+
+---
+
+## Native mobile application implementation — August 21, 2026
+
+### Request received
+
+> I want you to act as a senior mobile software developer engineer and architect to build a clean professional elegant mobile application that will interact with the ReadyPackets Portal website it should match the ReadyPackets Branding colors and logo. Use the mobile architecture documents and master prompts to build this application.
+
+**Attachments reviewed:** the native mobile architecture and master build prompt; editable system/auth/release diagrams; validation notes; mobile store-requirements research; and the ReadyPackets brand material already retained in the project. The request also reiterated the standing project instructions: self-host the result, use no Manus integration or runtime dependency, and retain a complete prompt/response session record in GitHub.
+
+**Response:** The main ReadyPackets repository was cloned and inspected before implementation. The existing Express, Drizzle, browser-session, MFA, SAML, order-authorisation, upload-governance, brand-token, audit, and deployment conventions were treated as the system of record. The implementation deliberately adds a new versioned native-client boundary instead of exposing browser tRPC or cookie/CSRF contracts to an app.
+
+### Foundation implemented
+
+A `mobile/` workspace now establishes canonical design tokens, a draft OpenAPI 3.1 contract, release/privacy/accessibility documentation, and a written threat model. It retains the ReadyPackets navy (`#0D1B2A`), navy-raised, teal, and gold palette; uses the approved wording **My Business Packets**; and explicitly prohibits a WebView shell, a PWA service worker, React Native, Flutter, Capacitor, Manus dependencies, local server secrets, direct database/storage access, and native checkout in version 1.
+
+The self-hosted server gains the first secure mobile foundation: `/.well-known/openid-configuration`, `/api/mobile/v1/authorize`, `/token`, and `/revoke`; PKCE S256 verification; registered HTTPS redirect-URI validation; one-time five-minute authorization codes; short-lived access tokens; SHA-256-hashed rotating refresh tokens; family-wide revocation on reuse/expiry; active device/session validation on every bearer request; device registration; idempotency records for write operations; and stable problem responses with correlation identifiers. New tables are supplied in `migrations/005_mobile_identity.sql`, and `server/db/schema.ts` contains the matching Drizzle definitions.
+
+The API currently exposes mobile profile, dashboard, cursor-paginated order list, server-authorized order detail, device list/register, and account-deletion request endpoints. It derives order access from the existing `assertOrderAccess` and `listOrdersForUser` services rather than copying rules into the client. The browser login screen and SAML entry point preserve a validated native authorization continuation only after the existing session/MFA controls succeed. The web CSRF middleware exempts only the signature/code/bearer mobile route prefix; all browser routes retain the existing cookie/Origin/CSRF protection.
+
+### Current qualification
+
+This is an integration build and architectural foundation, not a production store submission. A future release must configure production verified app-link callbacks, execute and test the database migration, finish upload/message/document/push/staff routes, archive on a macOS/iOS runner, build/sign Android, run the physical-device accessibility/security matrix, and complete exact App Store/Play privacy and review declarations. No server secret, provider credential, customer record, signing key, or production environment value was added to version control.
+
+
+### Native client implementation and validation
+
+Two independent native source trees were added under `mobile/`, with the shared contract and design system deliberately kept outside either client runtime. The iOS project is a Swift 6 / SwiftUI Xcode project with a Keychain token actor, `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, local biometric re-entry, `ASWebAuthenticationSession`, `SecRandomCopyBytes` PKCE, universal-link return validation, a bounded encrypted authorization-attempt recovery record, system appearance, accessible Home/Orders/Profile flows, opaque public order IDs, a device list, and an in-app deletion request. Its `ReadyPackets.xcodeproj` and `project.yml` are included; final archive validation requires a macOS/Xcode runner because the build environment did not contain the Swift/Xcode toolchain.
+
+The Android project is Kotlin / Jetpack Compose, targets API 36, and includes its own Gradle wrapper, encrypted Keystore-backed token store, `SecureRandom` PKCE, Custom Tabs, HTTPS App Link callback validation, a bounded encrypted authorization-attempt recovery record, BiometricPrompt re-entry, strict no-cleartext network configuration, no broad storage permission, just-in-time microphone/notification declarations, Home/Orders/Profile flows, and an in-app deletion request. The Android project was configured with Java 17 bytecode compatibility, was compiled against a locally installed Android API 36 SDK, and passed its unit suite. The test exercises URL-safe, unpadded high-entropy PKCE generation and deterministic challenge derivation.
+
+The native source has no Manus package, SDK, connector, credential, runtime service, build-time platform integration, hosted state, WebView shell, PWA service worker, React Native, Flutter, Capacitor, customer database, server secret, payment checkout, or administrator-control bridge. The only application endpoint is the operator’s self-hosted ReadyPackets portal. App Link hosts, signing IDs, APNs/FCM configuration, upload keys, review accounts, redirect configuration, and production values remain intentionally external to source control.
+
+### Verification evidence
+
+| Gate | Result | Notes |
+|---|---:|---|
+| Portal TypeScript type check | Passed | `pnpm typecheck` completed with no errors after the mobile API changes. |
+| Mobile contract safeguards | Passed | `tests/mobileContract.test.ts`: 4/4 passed, asserting PKCE boundary, opaque order DTO use, scoped CSRF exception, Keychain/Keystore, and system-browser auth. |
+| Portal production build | Passed | `pnpm build` produced the Vite client and bundled server, including the new mobile route. |
+| Android Gradle configuration | Passed | Gradle wrapper resolved the project and task graph. |
+| Android compile and unit tests | Passed | `:app:testDebugUnitTest` passed on JDK 17 and Android API 36. Android Gradle Plugin 8.7.3 emitted a compatibility warning for API 36; the release owner should select a current API-36-supported plugin during store hardening rather than blindly suppress that warning. |
+| Full existing portal unit suite | Environment-blocked | 185 tests passed; 11 database-backed existing domain tests could not connect to `127.0.0.1:3306` because this sandbox has a MySQL client but no running MySQL server. This is not presented as a passing full-suite result. The repository CI provisions MySQL before running that suite. |
+| iOS compile/archive | Environment-blocked | The sandbox has no Xcode or Swift compiler. A dedicated macOS simulator CI job was added; it performs an unsigned simulator build. |
+
+### Response delivered
+
+The requested native ReadyPackets mobile application foundation has been implemented in the primary self-hosted repository and is ready for protected CI and a follow-up physical-device/store-hardening phase. The implementation uses ReadyPackets navy, gold, teal, approved terminology, and native platform interaction patterns while preserving the server as the authority for identity, authorization, workflows, files, payments, policies, and audit. The final response will identify the committed repository result, validation evidence, and the remaining release-gate actions without overstating store-readiness.
+
+---
+
+*This session record is being committed to the ReadyPackets GitHub repository in accordance with the standing project instruction.*

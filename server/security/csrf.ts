@@ -22,8 +22,8 @@ export const CSRF_COOKIE = `${env.cookiePrefix}rp_csrf`;
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-/** Paths that authenticate by signature rather than by cookie. */
-const EXEMPT_PREFIXES = ["/api/stripe/webhook", "/api/saml/acs", "/api/inbound/"];
+/** Paths that authenticate by signature/code/bearer token rather than by browser cookie. */
+const EXEMPT_PREFIXES = ["/api/stripe/webhook", "/api/saml/acs", "/api/inbound/", "/api/mobile/"];
 
 function hostnameOf(value: string | undefined): string | null {
   if (!value) return null;

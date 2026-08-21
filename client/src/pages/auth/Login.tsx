@@ -75,6 +75,16 @@ export function LoginPage() {
   const [code, setCode] = useState("");
   const [useBackupCode, setUseBackupCode] = useState(false);
   const magicHandled = useRef(false);
+  const mobileContinuation = (): string | null => {
+    const value = new URLSearchParams(window.location.search).get("continue");
+    return value?.startsWith("/api/mobile/v1/authorize?") && value.length <= 2048 ? value : null;
+  };
+  const resumeMobileAuthorization = (): boolean => {
+    const destination = mobileContinuation();
+    if (!destination) return false;
+    window.location.assign(destination);
+    return true;
+  };
 
   // A server-side idle timeout can leave a stale session-bound CSRF cookie in an
   // open tab. Refresh a same-origin anonymous token before any new sign-in
@@ -94,6 +104,7 @@ export function LoginPage() {
       return;
     }
     if (session.authenticated && session.user) {
+      if (resumeMobileAuthorization()) return;
       navigate(session.user.role === "customer" ? "/portal" : "/admin");
     }
   }, [session.authenticated, session.mfaPending, session.restricted, session.user, navigate]);
@@ -118,6 +129,7 @@ export function LoginPage() {
         navigate("/portal/security?change=1");
         return;
       }
+      if (resumeMobileAuthorization()) return;
       navigate(
         "role" in result && result.role !== "customer" ? "/admin" : "/portal",
       );
@@ -131,6 +143,7 @@ export function LoginPage() {
   const verifyMfa = trpc.auth.verifyMfa.useMutation({
     async onSuccess(result) {
       await session.refresh();
+      if (resumeMobileAuthorization()) return;
       navigate(
         "role" in result && result.role !== "customer" ? "/admin" : "/portal",
       );
@@ -153,6 +166,7 @@ export function LoginPage() {
       await session.refresh();
       if (result.mfaRequired) { setStage("mfa"); return; }
       if (result.mfaSetupRequired) { toast.info("MFA enrolment required", "Set up an authenticator app to complete your secure magic-link sign-in."); navigate("/portal/mfa-setup"); return; }
+      if (resumeMobileAuthorization()) return;
       navigate("/portal");
     },
     onError(error) { setFormError(errorMessage(error)); },
@@ -326,7 +340,7 @@ export function LoginPage() {
             variant="outline"
             disabled={!session.sso.enabled || maintenanceBlocking}
             leadingIcon={<ShieldCheck className="size-4" aria-hidden="true" />}
-            onClick={() => { window.location.assign("/api/saml/login"); }}
+            onClick={() => { const continuation = mobileContinuation(); window.location.assign(continuation ? `/api/saml/login?return_to=${encodeURIComponent(continuation)}` : "/api/saml/login"); }}
           >
             Continue with Single Sign-On
           </Button>

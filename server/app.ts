@@ -41,6 +41,7 @@ import { createConfigurationRestoreRouter } from "./http/configRestore.js";
 import { createBackupRestoreRouter } from "./http/backupRestore.js";
 import { getCookieConsent, savePublicCookieConsent } from "./http/cookieConsent.js";
 import { createAvatarRouter } from "./http/avatar.js";
+import { createMobileDiscoveryRouter, createMobileRouter } from "./http/mobile/index.js";
 import { createSharePointDelegatedAuthRouter } from "./http/sharepointDelegatedAuth.js";
 import { logger } from "./observability/logger.js";
 import { getMaintenanceState } from "./services/settings.js";
@@ -193,6 +194,8 @@ export function createApp(): Express {
 
   // Health probes must stay cheap and must not require a session, but they also
   // must not disclose anything useful to an unauthenticated caller.
+  app.use(createMobileDiscoveryRouter());
+
   app.get("/api/health", (_req: Request, res: Response) => {
     res.status(200).json({ status: "ok" });
   });
@@ -287,6 +290,8 @@ export function createApp(): Express {
   app.post("/api/saml/acs", express.urlencoded({ extended: false }), handleAcs);
   app.get("/api/saml/logout", handleLogout);
   app.use("/api/integrations/sharepoint", createSharePointDelegatedAuthRouter());
+  // Native OAuth/bearer routes use their own PKCE/token controls and never accept browser cookies as credentials.
+  app.use("/api/mobile/v1", createMobileRouter());
 
   /**
    * Return a same-origin CSRF cookie without accepting any caller-supplied token.
